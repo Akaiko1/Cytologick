@@ -1,0 +1,6 @@
+
+*.mrxs
+*.dat
+slide-2022-09-12T15-38-25-R1-S2/Slidedat.ini
+__pycache__/parse_xml.cpython-310.pyc
+temp.xml
