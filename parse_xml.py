@@ -2,10 +2,12 @@ from pprint import pprint
 from lxml import etree
 
 import json
+import config
 
 def extract_xml(): 
+    
     lines = []
-    with open('current\slide-2022-09-12T15-38-25-R1-S2\Data0021.dat', 'r') as f:
+    with open(config.CURRENT_SLIDE_XML, 'r') as f:
         content = f.readlines()
 
         lines.append('<data>')
@@ -44,10 +46,11 @@ def get_xml_rois():
 
         for point in xml_points.find('polygon_points').getchildren():
             points.append([point.get('polypointX'), point.get('polypointY')])
-
-        all_nodes.append({
-            f"{label}": points
-        })
+        
+        if 'Annotation' not in label:
+            all_nodes.append({
+                f"{label}": points
+            })
 
     return all_nodes
 
