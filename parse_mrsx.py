@@ -5,6 +5,7 @@ import os
 
 import numpy as np
 
+
 def main():
     OPENSLIDE_PATH = 'E:\\Github\\DemetraAI\\openslide\\bin'
 
@@ -20,20 +21,32 @@ def main():
     if not os.path.exists('results'):
         os.mkdir('results')
     
+    if not os.path.exists('masks'):
+        os.mkdir('masks')
+    
     regions = get_regions(rois)
 
     for idx, region in enumerate(regions):
         name, points, max_x, max_y, min_x, min_y = region
         name = name.strip('?)')
         folder_name = os.path.join('results', name)
+        masks_name = os.path.join('masks', name)
 
         if not os.path.exists(folder_name):
             os.mkdir(folder_name)
+        
+        if not os.path.exists(masks_name):
+            os.mkdir(masks_name)
 
         crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
         crop = np.asarray(crop)
-        cv2.drawContours(crop, [points], 0, (0, 255, 0), 2)
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+
+        mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+        cv2.drawContours(mask, [points], 0, 1, -1)
+        cv2.imwrite(os.path.join(masks_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(mask, cv2.COLOR_BGR2RGB))
+
+
 
 def get_regions(rois):
     regions = []
@@ -50,7 +63,6 @@ def get_regions(rois):
             regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
 
     return regions
-    
 
 
 if __name__ == '__main__':
