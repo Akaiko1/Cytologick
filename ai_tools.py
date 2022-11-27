@@ -101,31 +101,27 @@ def create_mask(pred_mask):
     return pred_mask[0]
 
 
-def show_predictions(model, dataset=None, num=2):
+def show_predictions(model, dataset=None, num=1):
     if dataset:
         for image, mask in dataset.take(num):
             pred_mask = model.predict(image)
             display([image[0], mask[0], create_mask(pred_mask)])
 
 
-def main():
-    # import tensorflow_datasets as tfds
-    # ddataset, info = tfds.load('oxford_iiit_pet:3.*.*', with_info=True)
-
+def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
     dataset = []
 
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
 
     images = [cv2.imread(os.path.join(images_path, f), 1) for f in os.listdir(images_path)]
+    images = [tf.convert_to_tensor(f) for f in images]
+    images = [tf.image.resize(f, (128, 128)) for f in images]
+
     masks = [cv2.imread(os.path.join(masks_path, f), 0) for f in os.listdir(masks_path)]
     masks = [cv2.resize(f, (128, 128)) for f in masks]
     masks = [np.expand_dims(f, axis=2) for f in masks]
-
-    images = [tf.convert_to_tensor(f) for f in images]
     masks = [tf.convert_to_tensor(f) for f in masks]
-
-    images = [tf.image.resize(f, (128, 128)) for f in images]
 
     for idx, image in enumerate(images):
         dataset.append(dict(
@@ -133,12 +129,8 @@ def main():
             segmentation_mask=masks[idx]
         ))
 
-    # for entry in ddataset['train']:
-    #     load_image(entry)
-
-    train_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset[:10]).to_dict(orient="list")).map(load_image)
-    test_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset[10:]).to_dict(orient="list")).map(load_image)
-
+    train_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
+    test_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
 
     train_batches = (
         train_images
@@ -151,28 +143,23 @@ def main():
 
     test_batches = test_images.batch(3)
 
-    # for images, masks in train_batches.take(2):
-    #     sample_image, sample_mask = images[0], masks[0]
-    #     display([sample_image, sample_mask])
-    
-    OUTPUT_CLASSES = 2
 
     model = unet_model(output_channels=OUTPUT_CLASSES)
     model.compile(optimizer='adam',
                 loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['accuracy'])
     
-    show_predictions(model, train_batches)
+    show_predictions(model, train_batches, 3)
 
-    EPOCHS = 200
-    VALIDATION_STEPS = 5
-
-    model_history = model.fit(train_batches, epochs=EPOCHS,
+    _ = model.fit(train_batches, epochs=EPOCHS,
                           steps_per_epoch=5,
-                          validation_steps=VALIDATION_STEPS,
+                          validation_steps=5,
                           validation_data=test_batches)
     
-    show_predictions(model, test_batches)
+    show_predictions(model, test_batches, 3)
+
+    model.save(model_path)
+
 
 if __name__ == '__main__':
-    main()
+    train_new_model('demetra', 3, 75)

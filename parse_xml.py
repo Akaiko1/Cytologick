@@ -1,13 +1,12 @@
-from pprint import pprint
 from lxml import etree
 
 import json
 import config
 
-def extract_xml(): 
+def extract_xml(slidename, filename) -> None: 
     
     lines = []
-    with open(config.CURRENT_SLIDE_XML, 'r') as f:
+    with open(slidename, 'r') as f:
         content = f.readlines()
 
         lines.append('<data>')
@@ -25,13 +24,13 @@ def extract_xml():
         lines.append('</data>')
 
 
-    with open('temp.xml', 'w') as f:
+    with open(filename, 'w') as f:
         f.writelines(lines)
 
 
-def get_xml_rois():
+def get_xml_rois(filename) -> list:
     parser = etree.XMLParser(recover=True)
-    tree = etree.parse('temp.xml', parser=parser)
+    tree = etree.parse(filename, parser=parser)
 
     root = tree.getroot()
     all_nodes = []
@@ -56,8 +55,8 @@ def get_xml_rois():
 
 
 def main():
-    extract_xml()
-    nodes = get_xml_rois()
+    extract_xml(config.CURRENT_SLIDE_XML, 'temp.xml')
+    nodes = get_xml_rois('temp.xml')
 
     with open('rois.json', 'w') as f:
         json.dump(nodes, f)

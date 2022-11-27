@@ -6,16 +6,14 @@ import os
 import numpy as np
 
 
-def main():
-    OPENSLIDE_PATH = 'E:\\Github\\DemetraAI\\openslide\\bin'
+def extract_dataset(slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
 
     with os.add_dll_directory(OPENSLIDE_PATH):
         import openslide
 
-    slide = openslide.OpenSlide(config.CURRENT_SLIDE)
-    print(slide.level_count)
+    slide = openslide.OpenSlide(slidepath)
 
-    with open('rois.json', 'r') as f:
+    with open(jsonpath, 'r') as f:
         rois = json.load(f)
     
     if not os.path.exists('results'):
@@ -29,6 +27,7 @@ def main():
     for idx, region in enumerate(regions):
         name, points, max_x, max_y, min_x, min_y = region
         name = name.strip('?)')
+
         folder_name = os.path.join('results', name)
         masks_name = os.path.join('masks', name)
 
@@ -40,10 +39,15 @@ def main():
 
         crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
         crop = np.asarray(crop)
-        cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
         mask = np.zeros(crop.shape[:2], dtype=np.uint8)
-        cv2.drawContours(mask, [points], 0, 1, -1)
+        if name in CLASSES:
+            cv2.drawContours(mask, [points], 0, int(CLASSES[name]), -1)
+        else:
+            cv2.drawContours(mask, [points], 0, 1, -1)
+
+        # TODO randomize name if file exists
+        cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
         cv2.imwrite(os.path.join(masks_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(mask, cv2.COLOR_BGR2RGB))
 
 
@@ -66,4 +70,8 @@ def get_regions(rois):
 
 
 if __name__ == '__main__':
-    main()
+    extract_dataset(config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, {
+        'Artifact': 1,
+        'cylindrical': 2,
+        'Normal superficial': 2
+    })
