@@ -81,7 +81,7 @@ def load_image(datapoint):
     return input_image, input_mask
 
 
-def display(display_list):
+def display(display_list, tensors=True):
     os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
     plt.figure(figsize=(15, 15))
 
@@ -90,7 +90,10 @@ def display(display_list):
     for i in range(len(display_list)):
         plt.subplot(1, len(display_list), i+1)
         plt.title(title[i])
-        plt.imshow(tf.keras.utils.array_to_img(display_list[i]))
+        if tensors:
+            plt.imshow(tf.keras.utils.array_to_img(display_list[i]))
+        else:
+            plt.imshow(display_list[i])
         plt.axis('off')
     plt.show()
 
@@ -135,31 +138,30 @@ def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
     train_batches = (
         train_images
         .cache()
-        .shuffle(3)
-        .batch(3)
+        .shuffle(25)
+        .batch(25)
         .repeat()
         .map(Augment())
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
-    test_batches = test_images.batch(3)
-
+    test_batches = test_images.batch(25)
 
     model = unet_model(output_channels=OUTPUT_CLASSES)
     model.compile(optimizer='adam',
                 loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['accuracy'])
     
-    show_predictions(model, train_batches, 3)
+    show_predictions(model, train_batches, 5)
 
     _ = model.fit(train_batches, epochs=EPOCHS,
                           steps_per_epoch=5,
                           validation_steps=5,
                           validation_data=test_batches)
     
-    show_predictions(model, test_batches, 3)
+    show_predictions(model, test_batches, 5)
 
     model.save(model_path)
 
 
 if __name__ == '__main__':
-    train_new_model('demetra', 3, 75)
+    train_new_model('demetra', 3, 200)

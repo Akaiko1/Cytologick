@@ -5,5 +5,6 @@ OPENSLIDE_PATH = 'E:\\Github\\DemetraAI\\openslide\\bin'
 
 DATASET_FOLDER = 'dataset'
 MASKS_FOLDER = 'masks'
-IMAGES_FOLDER = 'images'
+IMAGES_FOLDER = 'rois'
 
+IMAGE_SHAPE = (128, 128)
