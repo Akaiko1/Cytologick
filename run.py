@@ -12,6 +12,7 @@ def image_to_tensor(image):
     return image
 
 test_image = cv2.imread('test.bmp', 1)
+test_image = cv2.resize(test_image, (int(test_image.shape[1]/2), int(test_image.shape[0]/2)))
 # test_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
 
 pads = int(test_image.shape[0]%config.IMAGE_SHAPE[0]), int(test_image.shape[1]%config.IMAGE_SHAPE[1])

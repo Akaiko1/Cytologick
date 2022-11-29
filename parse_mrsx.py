@@ -7,7 +7,7 @@ import os
 import numpy as np
 
 
-def extract_dataset(slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
+def extract_atlas(slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
 
     with os.add_dll_directory(OPENSLIDE_PATH):
         import openslide
@@ -17,11 +17,11 @@ def extract_dataset(slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
     with open(jsonpath, 'r') as f:
         rois = json.load(f)
     
-    if not os.path.exists('results'):
-        os.mkdir('results')
+    if not os.path.exists('atlas'):
+        os.mkdir('atlas')
     
-    if not os.path.exists('masks'):
-        os.mkdir('masks')
+    # if not os.path.exists('masks'):
+    #     os.mkdir('masks')
     
     regions = get_regions(rois)
 
@@ -29,27 +29,27 @@ def extract_dataset(slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
         name, points, max_x, max_y, min_x, min_y = region
         name = name.strip('?)')
 
-        folder_name = os.path.join('results', name)
-        masks_name = os.path.join('masks', name)
+        folder_name = os.path.join('atlas', name)
+        # masks_name = os.path.join('masks', name)
 
         if not os.path.exists(folder_name):
             os.mkdir(folder_name)
         
-        if not os.path.exists(masks_name):
-            os.mkdir(masks_name)
+        # if not os.path.exists(masks_name):
+        #     os.mkdir(masks_name)
 
         crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
         crop = np.asarray(crop)
 
-        mask = np.zeros(crop.shape[:2], dtype=np.uint8)
-        if name in CLASSES:
-            cv2.drawContours(mask, [points], 0, int(CLASSES[name]), -1)
-        else:
-            cv2.drawContours(mask, [points], 0, 1, -1)
+        # mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+        # if name in CLASSES:
+        #     cv2.drawContours(mask, [points], 0, int(CLASSES[name]), -1)
+        # else:
+        #     cv2.drawContours(mask, [points], 0, 1, -1)
 
         # TODO randomize name if file exists
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-        cv2.imwrite(os.path.join(masks_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(mask, cv2.COLOR_BGR2RGB))
+        # cv2.imwrite(os.path.join(masks_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(mask, cv2.COLOR_BGR2RGB))
 
 def extract_rect(rect, slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
 
@@ -163,19 +163,15 @@ def main():
     #     'cylindrical': 2,
     #     'Normal superficial': 2
     # })
-
+    extract_atlas(config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, config.LABELS)
 
     with open('rois.json', 'r') as f:
         rois = json.load(f)
     
     rects = get_rects(rois)
-    rect = rects[0]['rect']
+    rect = rects[0]['rect 1']
 
-    extract_rect(rect, config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, {
-        'Artifact': 1,
-        'cylindrical': 2,
-        'Normal superficial': 2
-    })
+    extract_rect(rect, config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, config.LABELS)
 
 
 if __name__ == '__main__':
