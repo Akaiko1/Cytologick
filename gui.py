@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QComboBox, QHBoxLayout,\
-     QVBoxLayout, QLabel, QScrollArea
-from PyQt5.QtGui import QPixmap, QPalette
+     QVBoxLayout, QLabel, QScrollArea, QStackedLayout
+from PyQt5.QtGui import QPixmap, QPalette, QPainter, QBrush, QPen
+from PyQt5.QtCore import Qt
 
 import sys
 import os
@@ -10,6 +11,32 @@ import config
 with os.add_dll_directory(config.OPENSLIDE_PATH):
     import openslide
 
+class Preview(QWidget):
+
+    def __init__(self, pixmap):
+        super().__init__()
+
+        self.image = pixmap
+        
+        self.setWindowTitle("Предпросмотр")
+        self.setPreviewLayout()
+    
+    def setPreviewLayout(self):
+        layout = QVBoxLayout()
+
+        self.display = QLabel()
+        self.display.paintEvent = self.printImage
+
+        layout.addWidget(self.display)
+        self.setLayout(layout)
+
+        self.resize(self.image.width(), self.image.height())
+    
+    def printImage(self, event):
+        painter = QPainter(self.display)
+        painter.drawPixmap(self.display.rect(), self.image)
+
+
 class Menu(QWidget):
 
     def __init__(self, parent):
@@ -18,8 +45,11 @@ class Menu(QWidget):
         self.slide_list=[f for f in os.listdir(config.SLIDE_DIR) if '.mrxs' in f]
         self.levels = []
         self.parent = parent
-        self.setWindowTitle("Выбор слайда")
 
+        self.setWindowTitle("Выбор слайда")
+        self.setMenuLayout()
+
+    def setMenuLayout(self):
         layout = QVBoxLayout()
 
         self.slide_select = QComboBox()
@@ -32,6 +62,7 @@ class Menu(QWidget):
 
         layout.addWidget(self.slide_select)
         layout.addWidget(self.level_select)
+
         self.setLayout(layout)
     
     def slide_selected(self, i):
@@ -41,34 +72,47 @@ class Menu(QWidget):
         self.level_select.clear()
         self.level_select.addItems([str(e[0]) for e in enumerate(self.levels)])
         self.parent.label.setText('\n'.join(map(str, self.levels)))
-    
+
     def level_selected(self, i):
         if i < 0:
             return
-
         position = len(self.levels) - i - 1
+        self.parent.prop = int(self.levels[0][0]/self.levels[position][0])  # passing coefficient for region previev
         width, height = self.levels[position]
         slide = self.parent.current_slide.read_region((0, 0), position, (width, height))
         slide.save('gui_temp.bmp', 'bmp')
 
-        self.parent.image.setPixmap(QPixmap('gui_temp.bmp'))
-        self.parent.image.adjustSize()
-
+        self.parent.slideImage = QPixmap('gui_temp.bmp')
+        self.parent.image.resize(self.parent.slideImage.width(), self.parent.slideImage.height())
+        self.parent.image.repaint()
 
 class Viewer(QWidget):
+    doDraw = False
+    drag = False
+    slideImage = None
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Demetra AI")
+
         self.appw, self.apph = 800, 800
-        self.setGeometry(100, 100, self.appw, self.apph)
-        self.slide_menu = Menu(self)
         self.current_slide = None
 
+        self.setWindowTitle("Demetra AI")
+        self.setGeometry(100, 100, self.appw, self.apph)
+        self.setViewerLayout()
+        self.show()
+
+        self.slide_menu = Menu(self)
+        self.slide_menu.show()
+
+    def setViewerLayout(self):
         display = QHBoxLayout()
 
         self.image = QLabel()
-        self.image.mousePressEvent = self.getPos
+        self.image.mousePressEvent = self.pressPos
+        self.image.mouseMoveEvent = self.movePos
+        self.image.mouseReleaseEvent = self.releasePos
+        self.image.paintEvent = self.printRect
 
         self.scrollArea = QScrollArea()
         self.scrollArea.setWidget(self.image)
@@ -82,20 +126,66 @@ class Viewer(QWidget):
         wrapping = QVBoxLayout()
 
         self.terminal = QLabel()
+        self.terminal.setStyleSheet("background-color: black; color: white; padding: 5px")
+        self.terminal.resize(25, 200)
 
         wrapping.addLayout(display)
         wrapping.addWidget(self.terminal)
 
         self.setLayout(wrapping)
-
-        self.show()
-        self.slide_menu.show()
     
-    def getPos(self , event):
-        x = event.pos().x()
-        y = event.pos().y()
+    def showPreview(self):
+        x, y, width, height = self.p_x * self.prop, self.p_y * self.prop, (self.r_x - self.p_x) * self.prop, (self.r_y - self.p_y) * self.prop
+        region = self.current_slide.read_region((x, y), 0, (width, height))
+        region.save('gui_preview.bmp', 'bmp')
 
-        self.terminal.setText(f'click coordinates: {x}, {y}')
+        preview = Preview(QPixmap('gui_preview.bmp'))
+        preview.show()
+    
+    def pressPos(self, event):
+        self.p_x = event.pos().x()
+        self.p_y = event.pos().y()
+
+        self.drag = True
+
+        self.terminal.setText(f'Click coordinates: {self.p_x}, {self.p_y}')
+
+    def movePos(self, event):
+        if not self.drag:
+            return
+
+        self.r_x = event.pos().x()
+        self.r_y = event.pos().y()
+
+        self.doDraw = True
+
+        self.image.repaint()
+    
+    def releasePos(self , event):
+        self.r_x = event.pos().x()
+        self.r_y = event.pos().y()
+
+        self.doDraw = False
+        self.drag = False
+
+        self.terminal.setText(f'Release coordinates: {self.r_x}, {self.r_y}')
+        self.showPreview()
+    
+    def printRect(self, event):
+        if self.slideImage is None:
+            return
+        
+        painter = QPainter(self.image)
+        painter.drawPixmap(self.image.rect(), self.slideImage)
+
+        if not self.doDraw:
+            return
+
+        painter.setPen(QPen(Qt.black, 2, Qt.SolidLine))
+        painter.setBrush(QBrush(Qt.green, Qt.DiagCrossPattern))
+        painter.drawRect(self.p_x, self.p_y , self.r_x - self.p_x, self.r_y - self.p_y)
+    
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
