@@ -51,7 +51,7 @@ def extract_atlas(slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
         # cv2.imwrite(os.path.join(masks_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(mask, cv2.COLOR_BGR2RGB))
 
-def extract_rect(rect, slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
+def extract_rect(rect, slidepath, jsonpath, OPENSLIDE_PATH, rect_name='roi', ZOOM_LEVELS=[128, 256, 512], CLASSES={}):
 
     with open(jsonpath, 'r') as f:
         rois = json.load(f)
@@ -88,16 +88,17 @@ def extract_rect(rect, slidepath, jsonpath, OPENSLIDE_PATH, CLASSES={}):
         else:
             cv2.drawContours(masks, [points], 0, 1, -1)
 
-    for x in range(0, rectangle.shape[0], 256):
-        for y in range(0, rectangle.shape[1], 256):
-            roi = rectangle[x: x + 256, y: y + 256]
-            mask = masks[x: x + 256, y: y + 256]
+    for zoom in ZOOM_LEVELS:
+        for x in range(0, rectangle.shape[0], zoom):
+            for y in range(0, rectangle.shape[1], zoom):
+                roi = rectangle[x: x + zoom, y: y + zoom]
+                mask = masks[x: x + zoom, y: y + zoom]
 
-            try:
-                cv2.imwrite(os.path.join(roi_path, f'{name}_coords_{x}_{y}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
-                cv2.imwrite(os.path.join(masks_path, f'{name}_coords_{x}_{y}.bmp'), mask)
-            except cv2.error:
-                print('ROI empty: ', x, y)
+                try:
+                    cv2.imwrite(os.path.join(roi_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+                    cv2.imwrite(os.path.join(masks_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
+                except cv2.error:
+                    print('ROI empty: ', x, y)
 
 
 def get_rects(rois):
@@ -171,7 +172,7 @@ def main():
     rects = get_rects(rois)
     rect = rects[0]['rect 1']
 
-    extract_rect(rect, config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, config.LABELS)
+    extract_rect(rect, config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, CLASSES=config.LABELS)
 
 
 if __name__ == '__main__':

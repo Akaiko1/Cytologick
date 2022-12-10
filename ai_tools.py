@@ -11,15 +11,26 @@ import os
 
 
 class Augment(tf.keras.layers.Layer):
-    def __init__(self, seed=42):
+
+    def __init__(self, seed=34):
         super().__init__()
         # both use the same seed, so they'll make the same random changes.
-        self.augment_inputs = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
-        self.augment_labels = tf.keras.layers.RandomFlip(mode="horizontal", seed=seed)
+
+        self.augment_inputs = tf.keras.Sequential([
+            tf.keras.layers.RandomRotation(1., fill_mode="reflect", seed=seed),
+            tf.keras.layers.RandomTranslation(0.25, 0.25, fill_mode="reflect", seed=seed)
+        ])
+
+        self.augment_labels = tf.keras.Sequential([
+            tf.keras.layers.RandomRotation(1., fill_mode="reflect", seed=seed),
+            tf.keras.layers.RandomTranslation(0.25, 0.25, fill_mode="reflect", seed=seed)
+        ])
+
 
     def call(self, inputs, labels):
         inputs = self.augment_inputs(inputs)
         labels = self.augment_labels(labels)
+
         return inputs, labels
 
 
@@ -138,13 +149,13 @@ def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
     train_batches = (
         train_images
         .cache()
-        .shuffle(25)
-        .batch(25)
+        .shuffle(50)
+        .batch(50)
         .repeat()
         .map(Augment())
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
-    test_batches = test_images.batch(25)
+    test_batches = test_images.batch(50)
 
     model = unet_model(output_channels=OUTPUT_CLASSES)
     model.compile(optimizer='adam',
@@ -164,4 +175,4 @@ def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
 
 
 if __name__ == '__main__':
-    train_new_model('demetra', 3, 200)
+    train_new_model('demetra', 3, 300)
