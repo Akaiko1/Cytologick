@@ -1,8 +1,5 @@
 from lxml import etree
 
-import json
-import config
-
 def extract_xml(slidename, filename) -> None: 
     
     lines = []
@@ -52,15 +49,3 @@ def get_xml_rois(filename) -> list:
             })
 
     return all_nodes
-
-
-def main():
-    extract_xml(config.CURRENT_SLIDE_XML, 'temp.xml')
-    nodes = get_xml_rois('temp.xml')
-
-    with open('rois.json', 'w') as f:
-        json.dump(nodes, f)
-
-
-if __name__ == '__main__':
-    main()

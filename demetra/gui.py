@@ -3,12 +3,11 @@ from PyQt5.QtWidgets import QApplication, QWidget, QComboBox, QHBoxLayout,\
 from PyQt5.QtGui import QPixmap, QPalette, QPainter, QBrush, QPen
 from PyQt5.QtCore import Qt
 
-import sys
 import cv2
 import os
 
 import config
-import inference
+import demetra.inference as inference
 import numpy as np
 import tensorflow as tf
 
@@ -221,8 +220,3 @@ class Viewer(QWidget):
         painter.setBrush(QBrush(Qt.green, Qt.DiagCrossPattern))
         painter.drawRect(self.p_x, self.p_y , self.r_x - self.p_x, self.r_y - self.p_y)
     
-
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    mainView = Viewer()
-    sys.exit(app.exec_())

@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
-import ai_tools
+import demetra.ai as ai
 import config
 
 
@@ -23,21 +23,6 @@ def apply_model(source, model):
         for y in range(0, source_pads.shape[1], 128):
             patch = image_to_tensor(source_pads[x: x + 128, y: y + 128])
             pred_mask = model.predict(patch)
-            pathology_map[x: x + 128, y: y + 128] = ai_tools.create_mask(pred_mask)[..., 0]
+            pathology_map[x: x + 128, y: y + 128] = ai.create_mask(pred_mask)[..., 0]
 
     return pathology_map[:source.shape[0], :source.shape[1]]
-
-
-def main():
-    source = cv2.imread('test.bmp', 1)
-    source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
-
-    model = tf.keras.models.load_model('demetra')
-    pathology_map = apply_model(source, model)
-
-    ai_tools.display([source, pathology_map], tensors=False)
-
-
-
-if __name__ == '__main__':
-    main()

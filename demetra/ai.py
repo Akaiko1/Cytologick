@@ -1,5 +1,4 @@
 from tensorflow_examples.models.pix2pix import pix2pix
-from pprint import pprint
 
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -172,7 +171,3 @@ def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
     show_predictions(model, test_batches, 5)
 
     model.save(model_path)
-
-
-if __name__ == '__main__':
-    train_new_model('demetra', 3, 300)
