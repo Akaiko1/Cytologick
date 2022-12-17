@@ -1,6 +1,6 @@
 # DemetraAI
 
-## Installation instructiions
+## Installation instructions
 
 **Windows 10**
 
