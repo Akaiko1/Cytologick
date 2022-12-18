@@ -8,6 +8,8 @@ import config
 import cv2
 import os
 
+K = tf.keras.backend
+
 
 class Augment(tf.keras.layers.Layer):
 
@@ -31,6 +33,26 @@ class Augment(tf.keras.layers.Layer):
         labels = self.augment_labels(labels)
 
         return inputs, labels
+
+def dice_coef(y_true, y_pred, smooth=1e-7):
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+    intersection = K.sum(y_true_f * y_pred_f)
+    return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+
+
+def dice_coef_loss(y_true, y_pred):
+    y_true = tf.cast(y_true, tf.float32)
+    ones = tf.ones_like(y_true)
+    dice_total = 0
+
+    for idx in range(1, config.CLASSES):
+        mask = tf.cast(tf.equal(y_true, idx), tf.float32)
+        preds = tf.clip_by_value(y_pred[..., idx], 0., 1.)
+        y_true_masked = ones * mask
+        dice_total += dice_coef(y_true_masked, preds)
+
+    return 1 - dice_total/(config.CLASSES - 1)
 
 
 def unet_model(output_channels:int):
@@ -157,11 +179,9 @@ def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
     test_batches = test_images.batch(50)
 
     model = unet_model(output_channels=OUTPUT_CLASSES)
-    model.compile(optimizer='adam',
-                loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+                loss=dice_coef_loss,                 # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['accuracy'])
-    
-    show_predictions(model, train_batches, 5)
 
     _ = model.fit(train_batches, epochs=EPOCHS,
                           steps_per_epoch=5,

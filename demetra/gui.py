@@ -124,7 +124,7 @@ class Viewer(QWidget):
     doDraw = False
     drag = False
     slideImage = None
-    model = tf.keras.models.load_model('demetra_main')
+    model = tf.keras.models.load_model('demetra_main', compile=False)
 
     def __init__(self):
         super().__init__()
