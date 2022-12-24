@@ -22,9 +22,9 @@
    pip install -q git+https://github.com/tensorflow/examples.git
    ```
 
-6. Modify setting at config.py (debug config file with auxillary parameters, a subject to change later)
+6. Modify settings at config.py (debug config file with auxillary parameters, a subject to change later)
 
-   **OPENSLIDE_PATH** is necessary! This is a path to your OpenSlide installation folder
+   **OPENSLIDE_PATH** is necessary! This is an absolute path to your OpenSlide installation folder
 
    ``` python
    #region General
