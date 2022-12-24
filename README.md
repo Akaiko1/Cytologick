@@ -2,7 +2,7 @@
 
 ## Installation instructions
 
-№№№ Windows 10
+### Windows 10
 
 1. Install **python3**, version **3.10.6** or later
 
