@@ -5,8 +5,8 @@ import os
 import numpy as np
 
 
-def extract_atlas(slidepath, jsonpath, OPENSLIDE_PATH):
-    with os.add_dll_directory(OPENSLIDE_PATH):
+def extract_atlas(slidepath, jsonpath, openslide_path):
+    with os.add_dll_directory(openslide_path):
         import openslide
 
     slide = openslide.OpenSlide(slidepath)
@@ -34,8 +34,8 @@ def extract_atlas(slidepath, jsonpath, OPENSLIDE_PATH):
         # TODO randomize name if file exists
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
-def extract_rect_regions(rect, slidepath, jsonpath, OPENSLIDE_PATH, rect_name='roi', ZOOM_LEVELS=[128, 256, 512], CLASSES={}):
-    with os.add_dll_directory(OPENSLIDE_PATH):
+def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}):
+    with os.add_dll_directory(openslide_path):
         import openslide
 
     slide = openslide.OpenSlide(slidepath)
@@ -65,12 +65,12 @@ def extract_rect_regions(rect, slidepath, jsonpath, OPENSLIDE_PATH, rect_name='r
         name, points, _, _, _, _ = region
         name = name.strip('?)')
 
-        if name in CLASSES:
-            cv2.drawContours(masks, [points], 0, int(CLASSES[name]), -1)
+        if name in classes:
+            cv2.drawContours(masks, [points], 0, int(classes[name]), -1)
         else:
             cv2.drawContours(masks, [points], 0, 1, -1)
 
-    for zoom in ZOOM_LEVELS:
+    for zoom in zoom_levels:
         for x in range(0, rectangle.shape[0], zoom):
             for y in range(0, rectangle.shape[1], zoom):
                 roi = rectangle[x: x + zoom, y: y + zoom]

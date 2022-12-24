@@ -46,13 +46,13 @@ def dice_coef_loss(y_true, y_pred):
     ones = tf.ones_like(y_true)
     dice_total = 0
 
-    for idx in range(1, config.CLASSES):
+    for idx in range(config.CLASSES):
         mask = tf.cast(tf.equal(y_true, idx), tf.float32)
-        preds = tf.clip_by_value(y_pred[..., idx], 0., 1.)
         y_true_masked = ones * mask
-        dice_total += dice_coef(y_true_masked, preds)
 
-    return 1 - dice_total/(config.CLASSES - 1)
+        dice_total += dice_coef(y_true_masked, y_pred[..., idx])
+
+    return 1 - dice_total/config.CLASSES
 
 
 def unet_model(output_channels:int):
@@ -95,6 +95,8 @@ def unet_model(output_channels:int):
         padding='same')  #64x64 -> 128x128
 
     x = last(x)
+
+    x = tf.nn.sigmoid(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
@@ -179,8 +181,9 @@ def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
     test_batches = test_images.batch(50)
 
     model = unet_model(output_channels=OUTPUT_CLASSES)
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
-                loss=dice_coef_loss,                 # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    model.compile(optimizer='nadam',
+                loss=dice_coef_loss,                 
+                # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['accuracy'])
 
     _ = model.fit(train_batches, epochs=EPOCHS,
