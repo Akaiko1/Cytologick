@@ -1,4 +1,5 @@
 import json
+import glob
 import cv2
 import os
 
@@ -33,6 +34,33 @@ def extract_atlas(slidepath, jsonpath, openslide_path):
 
         # TODO randomize name if file exists
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+
+
+def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom_levels=[256]):
+
+    slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
+    print('Total slides: ', len(slides_list))
+
+    json_list = glob.glob(os.path.join(json_folder, '**', '*.json'), recursive=True)
+
+    for slide in slides_list:
+        json_name = slide.split('\\')[-1].rstrip('.mrsx') + '.json'
+        json_path = [f for f in json_list if json_name in f]
+
+        if not json_path:
+            print(f'JSON for {slide} not found')
+        
+        with open(json_path[0], 'r') as f:
+            rois = json.load(f)
+        
+        rects = extract_rects(rois)
+
+        for rect in rects:
+            rect_name, rect_coords= next(iter(rect.items()))
+            
+            extract_rect_regions(rect_coords, slide, json_path[0], openslide_path,
+             classes=classes, zoom_levels=zoom_levels, rect_name=rect_name)
+
 
 def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}):
     with os.add_dll_directory(openslide_path):
@@ -82,12 +110,13 @@ def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='r
                 except cv2.error:
                     print('ROI empty: ', x, y)
 
+
 def extract_rects(rois):
     rects = []
 
     for roi in rois:
         for anno, points in roi.items():
-            if 'rect' not in anno:
+            if 'rect' not in anno.lower():
                 continue
 
             points = [[int(p[0]), int(p[1])] for p in points]

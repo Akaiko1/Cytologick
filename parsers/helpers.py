@@ -10,7 +10,7 @@ def __get_names_count(data):
         if name in result:
             result[name] += 1
         else:
-            result[name] = 0
+            result[name] = 1
 
     return result
 
