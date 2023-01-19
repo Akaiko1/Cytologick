@@ -15,10 +15,25 @@ IMAGE_SHAPE = (128, 128)
 CLASSES = 3
 LABELS = {
     'LSIL': 2,
-    'HSIL': 2
-}
+    'HSIL': 2,
+    'Group HSIL': 2,
+    'ASCH': 2,
+    'Group atypical': 2,
+    'ASCUS': 2,
+    'Atypical': 2,
+    'Atipical': 2,
+} 
 #endregion
 
 #region GUI
 SLIDE_DIR = './current' # Only for GUI
+#endregion
+
+
+#region Packaging 
+# Must be commented when Python scripts are used!
+def user_changes_on_import():
+    pass
+
+user_changes_on_import()
 #endregion

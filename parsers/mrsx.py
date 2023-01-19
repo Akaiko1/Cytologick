@@ -36,7 +36,7 @@ def extract_atlas(slidepath, jsonpath, openslide_path):
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
 
-def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom_levels=[256]):
+def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom_levels=[256], debug=False):
 
     slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
     print('Total slides: ', len(slides_list))
@@ -54,28 +54,40 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
             rois = json.load(f)
         
         rects = extract_rects(rois)
+        print(f'Parsing {slide}: {len(rects)} rectangles total')
 
         for rect in rects:
             rect_name, rect_coords= next(iter(rect.items()))
+
+            top, bot = rect_coords
+            if bot[0] - top[0] > 8000:
+                print(f'{rect_name} larger than 8000px - skipping')
+                continue
             
             extract_rect_regions(rect_coords, slide, json_path[0], openslide_path,
-             classes=classes, zoom_levels=zoom_levels, rect_name=rect_name)
+             classes=classes, zoom_levels=zoom_levels, rect_name=rect_name, debug=debug)
 
 
-def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}):
+def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}, debug=False):
     with os.add_dll_directory(openslide_path):
         import openslide
-
+    
     slide = openslide.OpenSlide(slidepath)
 
     with open(jsonpath, 'r') as f:
         rois = json.load(f)
 
     top, bot = rect
-    regions = __get_rect_regions(rois, top)
+    regions = __get_rect_regions(rois, top, bot)
+
+    if not regions:
+        print(f'regions is none for {rect_name}, skipping')
+        return
+
+    print(f'{rect_name} contains {len(regions)} regions')
 
     rectangle = np.asarray(slide.read_region(top, 0, (bot[0] - top[0], bot[1] - top[1])))
-    masks = np.zeros(rectangle.shape[:2], dtype=np.uint8)
+    masks = np.zeros(rectangle.shape if debug else rectangle.shape[:2], dtype=np.uint8)
 
     if not os.path.exists('dataset'):
         os.mkdir('dataset')
@@ -94,9 +106,13 @@ def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='r
         name = name.strip('?)')
 
         if name in classes:
-            cv2.drawContours(masks, [points], 0, int(classes[name]), -1)
+            cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
         else:
-            cv2.drawContours(masks, [points], 0, 1, -1)
+            cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else 1, -1)
+
+    if debug:
+        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", rectangle)
+        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
 
     for zoom in zoom_levels:
         for x in range(0, rectangle.shape[0], zoom):
@@ -130,12 +146,12 @@ def extract_rects(rois):
     return rects
 
 
-def __get_rect_regions(rois, top_left):
+def __get_rect_regions(rois, top, bot):
     regions = []
     
     for roi in rois:
         for anno, points in roi.items():
-            if 'rect' in anno:
+            if 'rect' in anno.lower():
                 continue
 
             points = [[int(p[0]), int(p[1])] for p in points]
@@ -144,10 +160,15 @@ def __get_rect_regions(rois, top_left):
             max_x, min_x = max(xs), min(xs)
             max_y, min_y = max(ys), min(ys)
 
-            norm_points = [[[p[0] - top_left[0], p[1] - top_left[1]]] for p in points]
+            norm_points = [[[p[0] - top[0], p[1] - top[1]]] for p in points
+            if -100 < p[0] - top[0] < bot[0] - top[0] + 100
+            and -100 < p[1] - top[1] < bot[1] - top[1] + 100]
+
+            if not norm_points:
+                continue
+
             regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
 
-    
     return regions
 
 

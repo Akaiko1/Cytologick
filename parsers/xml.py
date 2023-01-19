@@ -42,6 +42,7 @@ def all_slides_to_xml(slides_folder: str, temp_folder='temp') -> list[tuple]:
 
     json_list = []
     for slide_name, _, xml_path in slides_with_names:
+        print(f'Processing slide {slide_name} ...')
         extract_xml(xml_path, os.path.join(temp_folder, f'{slide_name}.xml'))
         nodes = get_xml_rois(os.path.join(temp_folder, f'{slide_name}.xml'))
         json_list.append((slide_name, nodes))
@@ -57,19 +58,19 @@ def extract_xml(slidename, filename) -> None:
     with open(slidename, 'r') as f:
         content = f.readlines()
 
-        lines.append('<data>')
+    lines.append('<data>')
 
-        for line in content:
-            if len(line) < 10:
-                continue
-            if '<header>' in line:
-                continue
-            
-            line = line.replace('<data>', '<node>')
-            line = line.replace('</data>', '</node>')
-            lines.append(line)
+    for line in content:
+        if len(line) < 20:
+            continue
+        if '<header>' in line:
+            continue
+        
+        line = line.replace('<data>', '<node>')
+        line = line.replace('</data>', '</node>')
+        lines.append(line)
 
-        lines.append('</data>')
+    lines.append('</data>')
 
 
     with open(filename, 'w') as f:
@@ -86,6 +87,10 @@ def get_xml_rois(filename) -> list:
     for node in root.findall('node'):
         content = node.getchildren()[1]
         bookmark = content.find('SimpleBookmark')
+
+        if bookmark is None:  # TODO debug extraction
+            continue
+
         label = bookmark.get('Caption')
         points = []
 
