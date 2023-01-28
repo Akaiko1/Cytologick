@@ -36,6 +36,25 @@ def extract_atlas(slidepath, jsonpath, openslide_path):
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
 
+def extract_rects(rois):
+    rects = []
+
+    for roi in rois:
+        for anno, points in roi.items():
+            if 'rect' not in anno.lower():
+                continue
+
+            points = [[int(p[0]), int(p[1])] for p in points]
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            max_x, min_x = max(xs), min(xs)
+            max_y, min_y = max(ys), min(ys)
+
+            rects.append({anno: [[min_x, min_y], [max_x, max_y]]})
+    
+    return rects
+
+
 def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom_levels=[256], debug=False):
 
     slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
@@ -83,24 +102,36 @@ def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='r
     if not regions:
         print(f'regions is none for {rect_name}, skipping')
         return
-
     print(f'{rect_name} contains {len(regions)} regions')
 
     rectangle = np.asarray(slide.read_region(top, 0, (bot[0] - top[0], bot[1] - top[1])))
     masks = np.zeros(rectangle.shape if debug else rectangle.shape[:2], dtype=np.uint8)
 
-    if not os.path.exists('dataset'):
-        os.mkdir('dataset')
-
     roi_path = os.path.join('dataset', 'rois')
     masks_path = os.path.join('dataset', 'masks')
 
+    __make_dirs(roi_path, masks_path)
+    __draw_masks(classes, debug, regions, masks)
+
+    if debug:
+        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", rectangle)
+        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
+
+    __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path)
+
+
+def __make_dirs(roi_path, masks_path):
+    if not os.path.exists('dataset'):
+        os.mkdir('dataset')
+    
     if not os.path.exists(roi_path):
         os.mkdir(roi_path)
     
     if not os.path.exists(masks_path):
         os.mkdir(masks_path)
 
+
+def __draw_masks(classes, debug, regions, masks):
     for region in regions:
         name, points, _, _, _, _ = region
         name = name.strip('?)')
@@ -110,10 +141,8 @@ def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='r
         else:
             cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else 1, -1)
 
-    if debug:
-        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", rectangle)
-        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
 
+def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path):
     for zoom in zoom_levels:
         for x in range(0, rectangle.shape[0], zoom):
             for y in range(0, rectangle.shape[1], zoom):
@@ -125,25 +154,6 @@ def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='r
                     cv2.imwrite(os.path.join(masks_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
                 except cv2.error:
                     print('ROI empty: ', x, y)
-
-
-def extract_rects(rois):
-    rects = []
-
-    for roi in rois:
-        for anno, points in roi.items():
-            if 'rect' not in anno.lower():
-                continue
-
-            points = [[int(p[0]), int(p[1])] for p in points]
-            xs = [p[0] for p in points]
-            ys = [p[1] for p in points]
-            max_x, min_x = max(xs), min(xs)
-            max_y, min_y = max(ys), min(ys)
-
-            rects.append({anno: [[min_x, min_y], [max_x, max_y]]})
-    
-    return rects
 
 
 def __get_rect_regions(rois, top, bot):

@@ -30,13 +30,21 @@ class Preview(QWidget):
     def setPreviewLayout(self):
         layout = QVBoxLayout()
 
+        info_layout = QHBoxLayout()
         self.display = QLabel()
         self.display.paintEvent = self.printImage
 
-        self.button = QPushButton('Разметить HSIL, LSIL')
+        self.info = QLabel()
+        self.info.setText('Подсчёт \nрезультатов')
+        self.info.setMaximumWidth(200)
+
+        info_layout.addWidget(self.display)
+        info_layout.addWidget(self.info)
+
+        self.button = QPushButton('Разметка')
         self.button.clicked.connect(self.runModel)
 
-        layout.addWidget(self.display)
+        layout.addLayout(info_layout)
         layout.addWidget(self.button)
         self.setLayout(layout)
 
@@ -47,9 +55,9 @@ class Preview(QWidget):
         source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
 
         pathology_map = inference.apply_model(source, self.parent.model)
-        alpha_map = self.apply_colors(pathology_map)
+        map_to_display = self.process_pathology_map(pathology_map)
 
-        cv2.imwrite('gui_map.png', alpha_map)
+        cv2.imwrite('gui_map.png', map_to_display)
         self.map = QPixmap('gui_map.png')
         self.display.repaint()
 
@@ -61,6 +69,30 @@ class Preview(QWidget):
         alpha_map[:, :, 3] = np.where(pathology_map == 1, 50, alpha_map[:, :, 3])
         alpha_map[:, :, 3] = np.where(pathology_map == 2, 125, alpha_map[:, :, 3])
         return alpha_map
+    
+    def process_pathology_map(self, pathology_map):
+        markup = np.zeros((pathology_map.shape + (4,)))
+
+        all_cells = np.where((pathology_map == 1) | (pathology_map == 2) , 1, 0)
+        malignant_cells = np.where(pathology_map == 2, 1, 0)
+
+        cell_contours = cv2.findContours(all_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
+        cell_contours = [c for c in cell_contours if cv2.contourArea(c) > 500]
+        cv2.drawContours(markup, cell_contours, -1, (0,255,0), 3)
+
+        malignant_contours = cv2.findContours(malignant_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
+        malignant_contours = [c for c in malignant_contours if cv2.contourArea(c) > 50]
+
+        malignant_cell_contours = [c for c in cell_contours if
+         any([True for m in malignant_contours if cv2.pointPolygonTest(c, (int(m[0][0][0]), int(m[0][0][1])), False) > 0])]
+        cv2.drawContours(markup, malignant_cell_contours, -1, (0,0,255), -1)
+
+        self.info.setText(f'Всего клеток: {len(cell_contours)}\nВсего подозрений: {len(malignant_contours)}\nВсего злокачественных: {len(malignant_cell_contours)}')
+
+        markup[:, :, 3] = np.where(markup[:, :, 1] > 0, 200, markup[:, :, 3])  # alpha channel transparency
+        markup[:, :, 3] = np.where(markup[:, :, 2] > 0, 200, markup[:, :, 3])  # alpha channel transparency
+
+        return markup
     
     def printImage(self, event):
         painter = QPainter(self.display)
@@ -100,11 +132,10 @@ class Menu(QWidget):
     
     def slide_selected(self, i):
         self.parent.current_slide = openslide.OpenSlide(os.path.join(config.SLIDE_DIR, self.slide_list[i]))
-
         self.levels = self.parent.current_slide.level_dimensions
         self.level_select.clear()
-        self.level_select.addItems([str(e[0]) for e in enumerate(self.levels)])
-        self.parent.label.setText('\n'.join(map(str, self.levels)))
+        # set to < 5 because 5 or more will cause software to crash due to image size being too large
+        self.level_select.addItems([str(e[0]) for e in enumerate(self.levels) if e[0] < 5])
 
     def level_selected(self, i):
         if i < 0:
@@ -117,6 +148,8 @@ class Menu(QWidget):
 
         self.parent.slideImage = QPixmap('gui_temp.bmp')
         self.parent.image.resize(self.parent.slideImage.width(), self.parent.slideImage.height())
+        self.parent.scrollArea.horizontalScrollBar().setValue(int(self.parent.image.width()/3))  # code moves the slider closer to center
+        self.parent.scrollArea.verticalScrollBar().setValue(int(self.parent.image.height()/2.5))  # code moves the slider closer to center
         self.parent.image.repaint()
 
 
@@ -152,11 +185,7 @@ class Viewer(QWidget):
         self.scrollArea = QScrollArea()
         self.scrollArea.setWidget(self.image)
 
-        self.label = QLabel()
-        self.label.setText('Слайд не выбран')
-
         display.addWidget(self.scrollArea)
-        display.addWidget(self.label)
 
         wrapping = QVBoxLayout()
 
@@ -171,6 +200,12 @@ class Viewer(QWidget):
     
     def showPreview(self):
         x, y, width, height = self.p_x * self.prop, self.p_y * self.prop, (self.r_x - self.p_x) * self.prop, (self.r_y - self.p_y) * self.prop
+
+        if width < 0:
+            x, width = x + width, abs(width)
+        if height < 0:
+            y, height = y + height, abs(height)
+
         region = self.current_slide.read_region((x, y), 0, (width, height))
         region.save('gui_preview.bmp', 'bmp')
 

@@ -1,8 +1,9 @@
+import os
 
 #region General
 CURRENT_SLIDE = 'current\slide-2022-09-12T15-38-25-R1-S2.mrxs'
 CURRENT_SLIDE_XML = 'current\slide-2022-09-12T15-38-25-R1-S2\Data0021.dat'
-OPENSLIDE_PATH = 'E:\\Github\\DemetraAI\\openslide\\bin'
+OPENSLIDE_PATH = os.path.abspath('openslide\\bin') # 'E:\\Github\\DemetraAI\\openslide\\bin'
 HDD_SLIDES = 'R:\\CYTOLOGY'
 TEMP_FOLDER = 'temp'
 #endregion

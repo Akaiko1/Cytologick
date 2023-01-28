@@ -145,7 +145,7 @@ def show_predictions(model, dataset=None, num=1):
             display([image[0], mask[0], create_mask(pred_mask)])
 
 
-def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
+def train_new_model(model_path, output_classes, epochs, batch_size=64):
     dataset = []
 
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
@@ -172,23 +172,23 @@ def train_new_model(model_path, OUTPUT_CLASSES, EPOCHS):
     train_batches = (
         train_images
         .cache()
-        .shuffle(50)
-        .batch(50)
+        .shuffle(batch_size)
+        .batch(batch_size)
         .repeat()
         .map(Augment())
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
-    test_batches = test_images.batch(50)
+    test_batches = test_images.batch(batch_size)
 
-    model = unet_model(output_channels=OUTPUT_CLASSES)
+    model = unet_model(output_channels=output_classes)
     model.compile(optimizer='nadam',
                 loss=dice_coef_loss,                 
                 # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['accuracy'])
 
-    _ = model.fit(train_batches, epochs=EPOCHS,
-                          steps_per_epoch=5,
-                          validation_steps=5,
+    _ = model.fit(train_batches, epochs=epochs,
+                          steps_per_epoch=int(len(images)/batch_size),
+                          validation_steps=int(len(images)/batch_size),
                           validation_data=test_batches)
     
     show_predictions(model, test_batches, 5)
