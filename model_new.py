@@ -2,4 +2,4 @@ from demetra import ai
 
 
 if __name__ == '__main__':
-    ai.train_new_model('demetra_new', 3, 100)
+    ai.train_new_model('demetra_new', 3, 2500, batch_size=128)

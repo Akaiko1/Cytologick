@@ -78,15 +78,16 @@ class Preview(QWidget):
 
         cell_contours = cv2.findContours(all_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
         cell_contours = [c for c in cell_contours if cv2.contourArea(c) > 500]
-        cv2.drawContours(markup, cell_contours, -1, (0,255,0), 3)
+        cv2.drawContours(markup, cell_contours, -1, (0, 255, 0), 3)
 
         malignant_contours = cv2.findContours(malignant_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
         malignant_contours = [c for c in malignant_contours if cv2.contourArea(c) > 50]
 
         malignant_cell_contours = [c for c in cell_contours if
          any([True for m in malignant_contours if cv2.pointPolygonTest(c, (int(m[0][0][0]), int(m[0][0][1])), False) > 0])]
-        cv2.drawContours(markup, malignant_cell_contours, -1, (0,0,255), -1)
+        cv2.drawContours(markup, malignant_cell_contours, -1, (0, 0, 255), -1)
 
+        #TODO Extract method to set description
         self.info.setText(f'Всего клеток: {len(cell_contours)}\nВсего подозрений: {len(malignant_contours)}\nВсего злокачественных: {len(malignant_cell_contours)}')
 
         markup[:, :, 3] = np.where(markup[:, :, 1] > 0, 200, markup[:, :, 3])  # alpha channel transparency
@@ -200,6 +201,9 @@ class Viewer(QWidget):
     
     def showPreview(self):
         x, y, width, height = self.p_x * self.prop, self.p_y * self.prop, (self.r_x - self.p_x) * self.prop, (self.r_y - self.p_y) * self.prop
+
+        if not width or not height:
+            return
 
         if width < 0:
             x, width = x + width, abs(width)

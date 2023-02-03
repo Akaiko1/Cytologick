@@ -34,6 +34,7 @@ class Augment(tf.keras.layers.Layer):
 
         return inputs, labels
 
+
 def dice_coef(y_true, y_pred, smooth=1e-7):
     y_true_f = K.flatten(y_true)
     y_pred_f = K.flatten(y_pred)
