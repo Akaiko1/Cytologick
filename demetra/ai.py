@@ -56,7 +56,7 @@ def dice_coef_loss(y_true, y_pred):
     return 1 - dice_total/config.CLASSES
 
 
-def unet_model(output_channels:int):
+def get_model_p2pUnet(output_channels:int):
     """ """
     base_model = tf.keras.applications.MobileNetV2(input_shape=[128, 128, 3], include_top=False)
     layer_names = [
@@ -100,6 +100,32 @@ def unet_model(output_channels:int):
     x = tf.nn.sigmoid(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
+
+
+def get_dataset(images_path, masks_path):
+
+    images = [cv2.imread(os.path.join(images_path, f), 1) for f in os.listdir(images_path)]
+    images = [tf.convert_to_tensor(f) for f in images]
+    images = [tf.image.resize(f, (128, 128)) for f in images]
+    datapoints_total = len(images)
+
+    masks = [cv2.imread(os.path.join(masks_path, f), 0) for f in os.listdir(masks_path)]
+    masks = [cv2.resize(f, (128, 128)) for f in masks]
+    masks = [np.expand_dims(f, axis=2) for f in masks]
+    masks = [tf.convert_to_tensor(f) for f in masks]
+
+    dataset = []
+
+    for idx, image in enumerate(images):
+        dataset.append(dict(
+            image=image,
+            segmentation_mask=masks[idx]
+        ))
+
+    train_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
+    test_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
+
+    return datapoints_total, train_images, test_images
 
 
 def normalize(input_image, input_mask):
@@ -147,28 +173,11 @@ def show_predictions(model, dataset=None, num=1):
 
 
 def train_new_model(model_path, output_classes, epochs, batch_size=64):
-    dataset = []
-
+    
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
 
-    images = [cv2.imread(os.path.join(images_path, f), 1) for f in os.listdir(images_path)]
-    images = [tf.convert_to_tensor(f) for f in images]
-    images = [tf.image.resize(f, (128, 128)) for f in images]
-
-    masks = [cv2.imread(os.path.join(masks_path, f), 0) for f in os.listdir(masks_path)]
-    masks = [cv2.resize(f, (128, 128)) for f in masks]
-    masks = [np.expand_dims(f, axis=2) for f in masks]
-    masks = [tf.convert_to_tensor(f) for f in masks]
-
-    for idx, image in enumerate(images):
-        dataset.append(dict(
-            image=image,
-            segmentation_mask=masks[idx]
-        ))
-
-    train_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
-    test_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
+    datapoints_total, train_images, test_images = get_dataset(images_path, masks_path)
 
     train_batches = (
         train_images
@@ -181,17 +190,52 @@ def train_new_model(model_path, output_classes, epochs, batch_size=64):
 
     test_batches = test_images.batch(batch_size)
 
-    model = unet_model(output_channels=output_classes)
+    model = get_model_p2pUnet(output_channels=output_classes)
     model.compile(optimizer='nadam',
                 loss=dice_coef_loss,                 
                 # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['accuracy'])
 
     _ = model.fit(train_batches, epochs=epochs,
-                          steps_per_epoch=int(len(images)/batch_size),
-                          validation_steps=int(len(images)/batch_size),
+                          steps_per_epoch=int(datapoints_total/batch_size),
+                          validation_steps=int(datapoints_total/batch_size),
                           validation_data=test_batches)
     
     show_predictions(model, test_batches, 5)
 
     model.save(model_path)
+
+
+def train_current_model(model_path, epochs, batch_size=64):
+    
+    images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
+    masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
+
+    datapoints_total, train_images, test_images = get_dataset(images_path, masks_path)
+
+    train_batches = (
+        train_images
+        .cache()
+        .shuffle(batch_size)
+        .batch(batch_size)
+        .repeat()
+        .map(Augment())
+        .prefetch(buffer_size=tf.data.AUTOTUNE))
+
+    test_batches = test_images.batch(batch_size)
+
+    model = tf.keras.models.load_model('demetra_main', compile=False)
+    model.compile(optimizer='nadam',
+                loss=dice_coef_loss,                 
+                # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                metrics=['accuracy'])
+
+    _ = model.fit(train_batches, epochs=epochs,
+                          steps_per_epoch=int(datapoints_total/batch_size),
+                          validation_steps=int(datapoints_total/batch_size),
+                          validation_data=test_batches)
+    
+    show_predictions(model, test_batches, 5)
+
+    model.save(model_path)
+

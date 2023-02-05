@@ -22,7 +22,7 @@ def apply_model(source, model):
     for x in range(0, source_pads.shape[0], 128):
         for y in range(0, source_pads.shape[1], 128):
             patch = image_to_tensor(source_pads[x: x + 128, y: y + 128])
-            pred_mask = model.predict(patch)
+            pred_mask = model(patch)
             pathology_map[x: x + 128, y: y + 128] = ai.create_mask(pred_mask)[..., 0]
 
     return pathology_map[:source.shape[0], :source.shape[1]]

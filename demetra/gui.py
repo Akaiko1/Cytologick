@@ -26,28 +26,31 @@ class Preview(QWidget):
         
         self.setWindowTitle("Предпросмотр")
         self.setPreviewLayout()
+        self.setMaximumSize(1800, 1000)
     
     def setPreviewLayout(self):
-        layout = QVBoxLayout()
+        main_layout = QHBoxLayout()
 
-        info_layout = QHBoxLayout()
+        display_layout = QVBoxLayout()
+        display_widget = QWidget()
+        display_widget.setMaximumWidth(200)
+        display_widget.setLayout(display_layout)
+
         self.display = QLabel()
         self.display.paintEvent = self.printImage
 
         self.info = QLabel()
         self.info.setText('Подсчёт \nрезультатов')
-        self.info.setMaximumWidth(200)
-
-        info_layout.addWidget(self.display)
-        info_layout.addWidget(self.info)
 
         self.button = QPushButton('Разметка')
         self.button.clicked.connect(self.runModel)
 
-        layout.addLayout(info_layout)
-        layout.addWidget(self.button)
-        self.setLayout(layout)
+        display_layout.addWidget(self.info)
+        display_layout.addWidget(self.button)
+        main_layout.addWidget(self.display)
+        main_layout.addWidget(display_widget)
 
+        self.setLayout(main_layout)
         self.resize(self.image.width(), self.image.height())
     
     def runModel(self):
@@ -55,9 +58,10 @@ class Preview(QWidget):
         source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
 
         pathology_map = inference.apply_model(source, self.parent.model)
-        map_to_display = self.process_pathology_map(pathology_map)
 
+        map_to_display = self.process_pathology_map(pathology_map)
         cv2.imwrite('gui_map.png', map_to_display)
+
         self.map = QPixmap('gui_map.png')
         self.display.repaint()
 
@@ -72,28 +76,84 @@ class Preview(QWidget):
     
     def process_pathology_map(self, pathology_map):
         markup = np.zeros((pathology_map.shape + (4,)))
+        stats = {
+            'Всего объектов':0,
+            'Групп':0,
+            'Предупреждений':0,
+            'Атипичных':0,
+        }
 
         all_cells = np.where((pathology_map == 1) | (pathology_map == 2) , 1, 0)
-        malignant_cells = np.where(pathology_map == 2, 1, 0)
+        atypical_parts = np.where(pathology_map == 2, 1, 0)
 
         cell_contours = cv2.findContours(all_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
         cell_contours = [c for c in cell_contours if cv2.contourArea(c) > 500]
-        cv2.drawContours(markup, cell_contours, -1, (0, 255, 0), 3)
+        stats['Всего объектов'] = len(cell_contours)
+        cv2.drawContours(markup, cell_contours, -1, (0, 255, 0), 2)
 
-        malignant_contours = cv2.findContours(malignant_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
-        malignant_contours = [c for c in malignant_contours if cv2.contourArea(c) > 50]
+        single_cell_contours = [c for c in cell_contours if cv2.contourArea(c) <= 5000]
+        cluster_contours = [c for c in cell_contours if cv2.contourArea(c) > 5000]
+        stats['Групп'] = len(cluster_contours)
 
-        malignant_cell_contours = [c for c in cell_contours if
-         any([True for m in malignant_contours if cv2.pointPolygonTest(c, (int(m[0][0][0]), int(m[0][0][1])), False) > 0])]
-        cv2.drawContours(markup, malignant_cell_contours, -1, (0, 0, 255), -1)
+        atypical_contours = cv2.findContours(atypical_parts.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
+        atypical_contours = [a for a in atypical_contours if cv2.contourArea(a) > 250]
 
-        #TODO Extract method to set description
-        self.info.setText(f'Всего клеток: {len(cell_contours)}\nВсего подозрений: {len(malignant_contours)}\nВсего злокачественных: {len(malignant_cell_contours)}')
+        self.process_cells(markup, stats, single_cell_contours, atypical_contours)
+        self.process_clusters(markup, stats, cluster_contours, atypical_contours)
+        self.set_info_text(stats)
 
-        markup[:, :, 3] = np.where(markup[:, :, 1] > 0, 200, markup[:, :, 3])  # alpha channel transparency
-        markup[:, :, 3] = np.where(markup[:, :, 2] > 0, 200, markup[:, :, 3])  # alpha channel transparency
+        markup[:, :, 3] = np.where(markup[:, :, 2] > 0, 127, markup[:, :, 3])  # red alpha channel transparency
+        markup[:, :, 3] = np.where(markup[:, :, 1] > 0, 200, markup[:, :, 3])  # green alpha channel transparency
 
         return markup
+
+    def process_cells(self, markup, stats, single_cell_contours, atypical_contours):
+        for cell in single_cell_contours:
+            proportion = 0
+            for a_cell in atypical_contours:
+                if cv2.pointPolygonTest(cell, (int(a_cell[0][0][0]), int(a_cell[0][0][1])), False) <= 0:
+                    continue
+
+                proportion += int(cv2.contourArea(a_cell) * 100/cv2.contourArea(cell))
+
+            if not proportion:
+                continue
+
+            stats['Атипичных'] += 1
+
+            M = cv2.moments(cell)
+            t_x, t_y = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
+
+            cv2.drawContours(markup, [cell], -1, (0, 0, 255), -1)
+            cv2.drawContours(markup, [cell], -1, (0, 1, 255), 2)
+            cv2.putText(markup, f'{proportion} %', 
+                        (t_x, t_y), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 
+                        0.4,
+                        (0, 1, 0),
+                        1,
+                        -1)
+
+    def process_clusters(self, markup, stats, cluster_contours, atypical_contours):
+        for cell in cluster_contours:
+            detection = False
+            for a_cell in atypical_contours:
+                if cv2.pointPolygonTest(cell, (int(a_cell[0][0][0]), int(a_cell[0][0][1])), False) <= 0:
+                    continue
+                
+                detection = True
+                cv2.drawContours(markup, [a_cell], -1, (0, 0, 255), -1)
+            
+            if detection:
+                stats['Предупреждений'] += 1
+                cv2.drawContours(markup, [cell], -1, (0, 255, 255), 2)
+        
+
+    def set_info_text(self, stats):
+        text = ''
+        for key, val in stats.items():
+            text += f'{key}: {val}\n'
+        self.info.setText(text)
     
     def printImage(self, event):
         painter = QPainter(self.display)
