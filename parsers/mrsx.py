@@ -149,6 +149,9 @@ def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_pat
                 roi = rectangle[x: x + zoom, y: y + zoom]
                 mask = masks[x: x + zoom, y: y + zoom]
 
+                if mask.shape[0] < int(zoom/3) or mask.shape[1] < int(zoom/3):  # skip small crops
+                    continue
+
                 try:
                     cv2.imwrite(os.path.join(roi_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
                     cv2.imwrite(os.path.join(masks_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)

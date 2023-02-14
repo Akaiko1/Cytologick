@@ -6,10 +6,10 @@ from demetra import ai, inference
 
 def main():
     source = cv2.imread('test.bmp', 1)
-    source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
+    # source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
 
     model = tf.keras.models.load_model('demetra_main', compile=False)
-    pathology_map = inference.apply_model(source, model)
+    pathology_map = inference.apply_model(source, model, shapes=(256, 256))
 
     ai.display([source, pathology_map], tensors=False)
 

@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import pandas as pd
 import numpy as np
+
+import random
 import config
 import cv2
 import os
@@ -13,7 +15,7 @@ K = tf.keras.backend
 
 class Augment(tf.keras.layers.Layer):
 
-    def __init__(self, seed=34):
+    def __init__(self, seed=76):
         super().__init__()
         # both use the same seed, so they'll make the same random changes.
 
@@ -26,7 +28,6 @@ class Augment(tf.keras.layers.Layer):
             tf.keras.layers.RandomRotation(1., fill_mode="reflect", seed=seed),
             tf.keras.layers.RandomTranslation(0.25, 0.25, fill_mode="reflect", seed=seed)
         ])
-
 
     def call(self, inputs, labels):
         inputs = self.augment_inputs(inputs)
@@ -47,13 +48,13 @@ def dice_coef_loss(y_true, y_pred):
     ones = tf.ones_like(y_true)
     dice_total = 0
 
-    for idx in range(config.CLASSES):
+    for idx in range(1, config.CLASSES):  # set first argument to 1 to ignore 0 class
         mask = tf.cast(tf.equal(y_true, idx), tf.float32)
         y_true_masked = ones * mask
 
         dice_total += dice_coef(y_true_masked, y_pred[..., idx])
 
-    return 1 - dice_total/config.CLASSES
+    return 1 - (dice_total/(config.CLASSES - 1))
 
 
 def get_model_p2pUnet(output_channels:int):
@@ -68,7 +69,7 @@ def get_model_p2pUnet(output_channels:int):
     ]
     base_model_outputs = [base_model.get_layer(name).output for name in layer_names]
     down_stack = tf.keras.Model(inputs=base_model.input, outputs=base_model_outputs)
-    down_stack.trainable = False
+    down_stack.trainable = True
 
     up_stack = [
         pix2pix.upsample(512, 3),  # 4x4 -> 8x8
@@ -97,7 +98,8 @@ def get_model_p2pUnet(output_channels:int):
 
     x = last(x)
 
-    x = tf.nn.sigmoid(x)
+    softmax = tf.keras.layers.Softmax()
+    x = softmax(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
@@ -185,7 +187,7 @@ def train_new_model(model_path, output_classes, epochs, batch_size=64):
         .shuffle(batch_size)
         .batch(batch_size)
         .repeat()
-        .map(Augment())
+        .map(Augment(seed=random.randint(1, 999)))
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
     test_batches = test_images.batch(batch_size)
@@ -224,8 +226,8 @@ def train_current_model(model_path, epochs, batch_size=64):
 
     test_batches = test_images.batch(batch_size)
 
-    model = tf.keras.models.load_model('demetra_main', compile=False)
-    model.compile(optimizer='nadam',
+    model = tf.keras.models.load_model(model_path, compile=False)
+    model.compile(optimizer='adam',
                 loss=dice_coef_loss,                 
                 # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['accuracy'])
@@ -238,4 +240,3 @@ def train_current_model(model_path, epochs, batch_size=64):
     show_predictions(model, test_batches, 5)
 
     model.save(model_path)
-

@@ -55,9 +55,9 @@ class Preview(QWidget):
     
     def runModel(self):
         source = cv2.imread('gui_preview.bmp', 1)
-        source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
+        # source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
 
-        pathology_map = inference.apply_model(source, self.parent.model)
+        pathology_map = inference.apply_model(source, self.parent.model, shapes=(256, 256))
 
         map_to_display = self.process_pathology_map(pathology_map)
         cv2.imwrite('gui_map.png', map_to_display)
@@ -87,16 +87,16 @@ class Preview(QWidget):
         atypical_parts = np.where(pathology_map == 2, 1, 0)
 
         cell_contours = cv2.findContours(all_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
-        cell_contours = [c for c in cell_contours if cv2.contourArea(c) > 500]
+        cell_contours = [c for c in cell_contours if cv2.contourArea(c) > 2000]
         stats['Всего объектов'] = len(cell_contours)
-        cv2.drawContours(markup, cell_contours, -1, (0, 255, 0), 2)
+        cv2.drawContours(markup, cell_contours, -1, (0, 255, 0), 4)
 
-        single_cell_contours = [c for c in cell_contours if cv2.contourArea(c) <= 5000]
-        cluster_contours = [c for c in cell_contours if cv2.contourArea(c) > 5000]
+        single_cell_contours = [c for c in cell_contours if cv2.contourArea(c) <= 25000]
+        cluster_contours = [c for c in cell_contours if cv2.contourArea(c) > 25000]
         stats['Групп'] = len(cluster_contours)
 
         atypical_contours = cv2.findContours(atypical_parts.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
-        atypical_contours = [a for a in atypical_contours if cv2.contourArea(a) > 250]
+        atypical_contours = [a for a in atypical_contours if cv2.contourArea(a) > 1000]
 
         self.process_cells(markup, stats, single_cell_contours, atypical_contours)
         self.process_clusters(markup, stats, cluster_contours, atypical_contours)
@@ -125,13 +125,13 @@ class Preview(QWidget):
             t_x, t_y = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
 
             cv2.drawContours(markup, [cell], -1, (0, 0, 255), -1)
-            cv2.drawContours(markup, [cell], -1, (0, 1, 255), 2)
+            cv2.drawContours(markup, [cell], -1, (0, 1, 255), 4)
             cv2.putText(markup, f'{proportion} %', 
                         (t_x, t_y), 
                         cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.4,
+                        0.85,
                         (0, 1, 0),
-                        1,
+                        3,
                         -1)
 
     def process_clusters(self, markup, stats, cluster_contours, atypical_contours):
@@ -146,7 +146,7 @@ class Preview(QWidget):
             
             if detection:
                 stats['Предупреждений'] += 1
-                cv2.drawContours(markup, [cell], -1, (0, 255, 255), 2)
+                cv2.drawContours(markup, [cell], -1, (0, 255, 255), 4)
         
 
     def set_info_text(self, stats):
