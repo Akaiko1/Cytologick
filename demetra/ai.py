@@ -221,7 +221,7 @@ def train_current_model(model_path, epochs, batch_size=64):
         .shuffle(batch_size)
         .batch(batch_size)
         .repeat()
-        .map(Augment())
+        .map(Augment(seed=random.randint(1, 999)))
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
     test_batches = test_images.batch(batch_size)

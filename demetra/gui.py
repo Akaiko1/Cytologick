@@ -8,6 +8,7 @@ import os
 
 import config
 import demetra.inference as inference
+import demetra.contours as contours
 import numpy as np
 import tensorflow as tf
 
@@ -97,9 +98,13 @@ class Preview(QWidget):
 
         atypical_contours = cv2.findContours(atypical_parts.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
         atypical_contours = [a for a in atypical_contours if cv2.contourArea(a) > 1000]
-
-        self.process_cells(markup, stats, single_cell_contours, atypical_contours)
-        self.process_clusters(markup, stats, cluster_contours, atypical_contours)
+        
+        # atypical_contours = contours.smooth_contours(atypical_contours, shape=markup.shape[:2])
+        
+        self.process_cells(markup, stats,
+                            single_cell_contours, atypical_contours)
+        self.process_clusters(markup, stats,
+                               cluster_contours, atypical_contours)
         self.set_info_text(stats)
 
         markup[:, :, 3] = np.where(markup[:, :, 2] > 0, 127, markup[:, :, 3])  # red alpha channel transparency
