@@ -48,13 +48,13 @@ def dice_coef_loss(y_true, y_pred):
     ones = tf.ones_like(y_true)
     dice_total = 0
 
-    for idx in range(1, config.CLASSES):  # set first argument to 1 to ignore 0 class
+    for idx in range(0, config.CLASSES):  # set first argument to 1 to ignore 0 class
         mask = tf.cast(tf.equal(y_true, idx), tf.float32)
         y_true_masked = ones * mask
 
         dice_total += dice_coef(y_true_masked, y_pred[..., idx])
 
-    return 1 - (dice_total/(config.CLASSES - 1))
+    return 1 - (dice_total/(config.CLASSES))
 
 
 def get_model_p2pUnet(output_channels:int):

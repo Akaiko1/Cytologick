@@ -9,10 +9,10 @@ def main():
     with open('rois.json', 'r') as f:
         rois = json.load(f)
     
-    rects = mrsx.extract_rects(rois)
+    rects = mrsx.__extract_rects(rois)
     rect = rects[0]['rect 1']
 
-    mrsx.extract_rect_regions(rect, config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, classes=config.LABELS)
+    mrsx.__extract_rect_regions(rect, config.CURRENT_SLIDE, 'rois.json', config.OPENSLIDE_PATH, classes=config.LABELS)
 
 
 if __name__ == '__main__':

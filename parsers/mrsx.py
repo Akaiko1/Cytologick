@@ -36,23 +36,52 @@ def extract_atlas(slidepath, jsonpath, openslide_path):
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
 
-def extract_rects(rois):
-    rects = []
+def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug=False):
+    with os.add_dll_directory(openslide_path):
+        import openslide
 
-    for roi in rois:
-        for anno, points in roi.items():
-            if 'rect' not in anno.lower():
+    slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
+    print('Total slides: ', len(slides_list))
+
+    json_list = glob.glob(os.path.join(json_folder, '**', '*.json'), recursive=True)
+
+    roi_path = os.path.join('dataset', 'rois')
+    masks_path = os.path.join('dataset', 'masks')
+    __make_dirs(roi_path, masks_path)
+
+    for slidepath in slides_list:
+        json_name = slidepath.split('\\')[-1].rstrip('.mrsx') + '.json'
+        json_path = [f for f in json_list if json_name in f]
+
+        slide = openslide.OpenSlide(slidepath)
+
+        if not json_path:
+            print(f'JSON for {slide} not found')
+        
+        with open(json_path[0], 'r') as f:
+            rois = json.load(f)
+        
+        regions = __get_regions(rois)
+        print(f'Parsing {slide}: {len(regions)} regions total')
+
+        for _, region in enumerate(regions):
+            name, points, max_x, max_y, min_x, min_y = region
+            name = name.strip('?)')
+
+            if 'rect' in name.lower():
                 continue
+            
+            crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
+            roi = np.asarray(crop)
+            mask = np.zeros(roi.shape)
 
-            points = [[int(p[0]), int(p[1])] for p in points]
-            xs = [p[0] for p in points]
-            ys = [p[1] for p in points]
-            max_x, min_x = max(xs), min(xs)
-            max_y, min_y = max(ys), min(ys)
+            if name in classes:
+                cv2.drawContours(mask, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
+            else:
+                cv2.drawContours(mask, [points], 0, (0, 255, 0) if debug else 1, -1)
 
-            rects.append({anno: [[min_x, min_y], [max_x, max_y]]})
-    
-    return rects
+            cv2.imwrite(os.path.join(roi_path, f'{name}_coords_{max_x}_{max_y}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+            cv2.imwrite(os.path.join(masks_path, f'{name}_coords_{max_x}_{max_y}.bmp'), mask)
 
 
 def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom_levels=[256], debug=False):
@@ -72,7 +101,7 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
         with open(json_path[0], 'r') as f:
             rois = json.load(f)
         
-        rects = extract_rects(rois)
+        rects = __extract_rects(rois)
         print(f'Parsing {slide}: {len(rects)} rectangles total')
 
         for rect in rects:
@@ -83,11 +112,30 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
                 print(f'{rect_name} larger than 8000px - skipping')
                 continue
             
-            extract_rect_regions(rect_coords, slide, json_path[0], openslide_path,
+            __extract_rect_regions(rect_coords, slide, json_path[0], openslide_path,
              classes=classes, zoom_levels=zoom_levels, rect_name=rect_name, debug=debug)
 
 
-def extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}, debug=False):
+def __extract_rects(rois):
+    rects = []
+
+    for roi in rois:
+        for anno, points in roi.items():
+            if 'rect' not in anno.lower():
+                continue
+
+            points = [[int(p[0]), int(p[1])] for p in points]
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            max_x, min_x = max(xs), min(xs)
+            max_y, min_y = max(ys), min(ys)
+
+            rects.append({anno: [[min_x, min_y], [max_x, max_y]]})
+    
+    return rects
+
+
+def __extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}, debug=False):
     with os.add_dll_directory(openslide_path):
         import openslide
     
