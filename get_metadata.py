@@ -8,9 +8,9 @@ from pprint import pprint
 with os.add_dll_directory(config.OPENSLIDE_PATH):
     import openslide
 
-PROPERTIES = [('Количество слоев в файлах (максимум, минимум)', 'openslide.level-count'),
-                ('Ширина изображений в пикселях (максимум, минимум)', 'openslide.level[0].width'),
-                ('Высота изображений в пикселях (максимум, минимум)', 'openslide.level[0].height'),
+PROPERTIES = [('Количество слоев в файле (максимум, минимум)', 'openslide.level-count'),
+                ('Ширина изображения в пикселях (максимум, минимум)', 'openslide.level[0].width'),
+                ('Высота изображения в пикселях (максимум, минимум)', 'openslide.level[0].height'),
                 ('Разрешение (максимум, минимум)', 'openslide.mpp-x')]
 
 
@@ -48,14 +48,36 @@ def __pretty_bytes(size_in_bytes):
 
 def main():
     slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', '*.mrxs'), recursive=True)
+    slide_names = [s.rstrip('.mrxs').split(os.sep)[-1] for s in slides_list]
 
-    sizes = []
-    for slide_path in slides_list:
-        size = os.path.getsize(slide_path)
-        info_size = sum(f.stat().st_size for f in Path(slide_path.rstrip('.mrxs')).glob('**/*') if f.is_file())
-        sizes.append((size + info_size))
+    sizes = __get_sizes(slides_list)
+    summary = __get_summary(slides_list, sizes)
 
-    report = {
+    if not os.path.exists('meta'):
+        os.mkdir('meta')
+
+    for idx, slide_name in enumerate(slide_names):
+        info = f'Наименование слайда: {slide_name}\nРазмер файла: {sizes[idx]}\n'
+
+        for key, _ in PROPERTIES:
+            info += f'{key.rstrip(" (максимум, минимум)")}: {summary[key][idx]}\n'
+
+        with open(os.path.join('meta', f'{slide_name}.md'), 'w') as md_file:
+            md_file.write(info)
+        
+    __print_summary(summary)
+
+
+def __print_summary(summary):
+    for key, _ in PROPERTIES:
+        if key in summary:
+            summary[key] = (max(summary[key]), min(summary[key]))
+
+    pprint(summary)
+
+
+def __get_summary(slides_list, sizes):
+    summary = {
         'всего микропрепаратов размечено': len(slides_list),
         'размер файла (максимум, минимум, средний)': (__pretty_bytes(max(sizes)),
                                                        __pretty_bytes(min(sizes)),
@@ -64,13 +86,17 @@ def main():
 
     for slide in slides_list:
         slide_data = openslide.OpenSlide(slide)
-        __fill_properties(report, slide_data)
+        __fill_properties(summary, slide_data)
+    return summary
 
-    for key, _ in PROPERTIES:
-        if key in report:
-            report[key] = (max(report[key]), min(report[key]))
 
-    pprint(report)
+def __get_sizes(slides_list):
+    sizes = []
+    for slide_path in slides_list:
+        size = os.path.getsize(slide_path)
+        info_size = sum(f.stat().st_size for f in Path(slide_path.rstrip('.mrxs')).glob('**/*') if f.is_file())
+        sizes.append((size + info_size))
+    return sizes
 
 
 if __name__ == '__main__':
