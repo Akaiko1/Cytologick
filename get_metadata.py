@@ -15,8 +15,8 @@ PROPERTIES = [('Количество слоев в файле (максимум,
 
 
 def __fill_properties(report, slide_data):
-    # for entry, val in slide_data.properties.items():
-    #     print(entry, val)
+    for entry, val in slide_data.properties.items():
+        print(entry, val)
 
     for entry, key in PROPERTIES:
         value = float(slide_data.properties[key])
@@ -46,7 +46,7 @@ def __pretty_bytes(size_in_bytes):
         return '{0:.2f} TB'.format(size_in_bytes / Tera)
 
 
-def main():
+def get_set_data():
     slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', '*.mrxs'), recursive=True)
     slide_names = [s.rstrip('.mrxs').split(os.sep)[-1] for s in slides_list]
 
@@ -66,6 +66,21 @@ def main():
             md_file.write(info)
         
     __print_summary(summary)
+
+
+def get_slides_data():
+    slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', '*.mrxs'), recursive=True)
+    slide_names = [s.rstrip('.mrxs').split(os.sep)[-1] for s in slides_list]
+
+    if not os.path.exists('meta'):
+        os.mkdir('meta')
+
+    for idx, slide_name in enumerate(slides_list):
+        slide_data = openslide.OpenSlide(slide_name)
+
+        image_zero = slide_data.get_thumbnail((1024, 1024))
+        filename = f"{os.path.join('meta', slide_names[idx])}.png"
+        image_zero.save(filename, 'png')
 
 
 def __print_summary(summary):
@@ -100,4 +115,4 @@ def __get_sizes(slides_list):
 
 
 if __name__ == '__main__':
-    main()
+    get_slides_data()
