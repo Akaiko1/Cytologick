@@ -11,15 +11,20 @@ with os.add_dll_directory(config.OPENSLIDE_PATH):
 PROPERTIES = [('Количество слоев в файле (максимум, минимум)', 'openslide.level-count'),
                 ('Ширина изображения в пикселях (максимум, минимум)', 'openslide.level[0].width'),
                 ('Высота изображения в пикселях (максимум, минимум)', 'openslide.level[0].height'),
+                ('Увеличение объектива', 'openslide.objective-power'),
+                ('Информация о производителе', 'openslide.vendor'),
                 ('Разрешение (максимум, минимум)', 'openslide.mpp-x')]
 
 
 def __fill_properties(report, slide_data):
-    for entry, val in slide_data.properties.items():
-        print(entry, val)
+    # for entry, val in slide_data.properties.items():
+    #     print(entry, val)
 
     for entry, key in PROPERTIES:
-        value = float(slide_data.properties[key])
+        try:
+            value = float(slide_data.properties[key])
+        except ValueError:
+            value = slide_data.properties[key]
 
         if entry not in report.keys():
             report[entry] = [value]
@@ -57,7 +62,7 @@ def get_set_data():
         os.mkdir('meta')
 
     for idx, slide_name in enumerate(slide_names):
-        info = f'Наименование слайда: {slide_name}\nРазмер файла: {sizes[idx]}\n'
+        info = f'Наименование слайда: {slide_name}\nРазмер файла: {__pretty_bytes(sizes[idx])}\n'
 
         for key, _ in PROPERTIES:
             info += f'{key.rstrip(" (максимум, минимум)")}: {summary[key][idx]}\n'
@@ -84,6 +89,8 @@ def get_slides_data():
 
 
 def __print_summary(summary):
+    pprint(summary)
+    
     for key, _ in PROPERTIES:
         if key in summary:
             summary[key] = (max(summary[key]), min(summary[key]))
@@ -115,4 +122,5 @@ def __get_sizes(slides_list):
 
 
 if __name__ == '__main__':
-    get_slides_data()
+    # get_slides_data()
+    get_set_data()

@@ -180,14 +180,21 @@ def __make_dirs(roi_path, masks_path):
 
 
 def __draw_masks(classes, debug, regions, masks):
+    top_layer = []
     for region in regions:
         name, points, _, _, _, _ = region
         name = name.strip('?)')
 
         if name in classes:
-            cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
-        else:
-            cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else 1, -1)
+            top_layer.append(region)
+
+        cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else 1, -1)  # 1 class background info
+    
+    # double pass for class priority
+    for region in top_layer:
+        name, points, _, _, _, _ = region
+        name = name.strip('?)')
+        cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
 
 
 def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path):
