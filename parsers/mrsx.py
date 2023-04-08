@@ -1,5 +1,6 @@
 import json
 import glob
+import math
 import cv2
 import os
 
@@ -61,7 +62,7 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
         with open(json_path[0], 'r') as f:
             rois = json.load(f)
         
-        regions = __get_regions(rois)
+        regions = __get_regions(rois, slide)
         print(f'Parsing {slide}: {len(regions)} regions total')
 
         for _, region in enumerate(regions):
@@ -116,24 +117,6 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
              classes=classes, zoom_levels=zoom_levels, rect_name=rect_name, debug=debug)
 
 
-def __extract_rects(rois):
-    rects = []
-
-    for roi in rois:
-        for anno, points in roi.items():
-            if 'rect' not in anno.lower():
-                continue
-
-            points = [[int(p[0]), int(p[1])] for p in points]
-            xs = [p[0] for p in points]
-            ys = [p[1] for p in points]
-            max_x, min_x = max(xs), min(xs)
-            max_y, min_y = max(ys), min(ys)
-
-            rects.append({anno: [[min_x, min_y], [max_x, max_y]]})
-    
-    return rects
-
 
 def __extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}, debug=False):
     with os.add_dll_directory(openslide_path):
@@ -187,13 +170,16 @@ def __draw_masks(classes, debug, regions, masks):
 
         if name in classes:
             top_layer.append(region)
-
+            continue
+        
+        print(f'Normal: {name}')
         cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else 1, -1)  # 1 class background info
     
     # double pass for class priority
     for region in top_layer:
         name, points, _, _, _, _ = region
         name = name.strip('?)')
+        print(f'Atypical: {name}')
         cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
 
 
@@ -214,44 +200,102 @@ def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_pat
                     print('ROI empty: ', x, y)
 
 
-def __get_rect_regions(rois, top, bot):
-    regions = []
+def __index_close(fxy, sxy_list: list, thrsh = 25):
+    area_fxy = (fxy[1][0] - fxy[0][0]) * (fxy[1][1] - fxy[0][1])
+
+    for sxy in sxy_list:
+        area_sxy = (sxy[2][0] - sxy[1][0]) * (sxy[2][1] - sxy[1][1])
+
+        if ((math.hypot(fxy[0][0] - sxy[1][0], fxy[0][1] - sxy[1][1]) <= thrsh) or \
+            (math.hypot(fxy[1][0] - sxy[2][0], fxy[1][1] - sxy[2][1]) <= thrsh)) and \
+                ((0.8 * area_sxy <= area_fxy <= 1.2 * area_sxy) or (area_fxy < area_sxy)):
+
+            return sxy[0]
     
-    for roi in rois:
-        for anno, points in roi.items():
-            if 'rect' in anno.lower():
-                continue
-
-            points = [[int(p[0]), int(p[1])] for p in points]
-            xs = [p[0] for p in points]
-            ys = [p[1] for p in points]
-            max_x, min_x = max(xs), min(xs)
-            max_y, min_y = max(ys), min(ys)
-
-            norm_points = [[[p[0] - top[0], p[1] - top[1]]] for p in points
-            if -100 < p[0] - top[0] < bot[0] - top[0] + 100
-            and -100 < p[1] - top[1] < bot[1] - top[1] + 100]
-
-            if not norm_points:
-                continue
-
-            regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
-
-    return regions
+    return None
 
 
-def __get_regions(rois):
-    regions = []
+def __extract_rects(rois):
+    rects = []
 
     for roi in rois:
-        for anno, points in roi.items():
-            points = [[int(p[0]), int(p[1])] for p in points]
-            xs = [p[0] for p in points]
-            ys = [p[1] for p in points]
-            max_x, min_x = max(xs), min(xs)
-            max_y, min_y = max(ys), min(ys)
+        anno, points, b_rect = roi['label'], roi['points'], roi['rect']
+        if 'rect' not in anno.lower():
+            continue
 
-            norm_points = [[[p[0] - min_x, p[1] - min_y]] for p in points]
+        points = [[int(p[0]), int(p[1])] for p in points]
+        max_x, min_x = int(b_rect[2]), int(b_rect[0])
+        max_y, min_y = int(b_rect[3]), int(b_rect[1])
+
+        rects.append({anno: [[min_x, min_y], [max_x, max_y]]})
+    
+    return rects
+
+
+def __get_rect_regions(rois, top, bot):
+    regions, registry = [], []
+    
+    for idx, roi in enumerate(rois):
+
+        anno, points, b_rect = roi['label'], roi['points'], roi['rect']
+
+        if 'rect' in anno.lower():
+            regions.append(None)
+            continue
+
+        points = [[int(p[0]), int(p[1])] for p in points]
+
+        max_x, min_x = int(b_rect[2]), int(b_rect[0])
+        max_y, min_y = int(b_rect[3]), int(b_rect[1])
+        norm_points = [[[p[0] - top[0], p[1] - top[1]]] for p in points
+                        if -100 < p[0] - top[0] < bot[0] - top[0] + 100
+                          and -100 < p[1] - top[1] < bot[1] - top[1] + 100]
+
+        if not norm_points:
+            regions.append(None)
+            continue
+
+        close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
+        if close_idx is not None:
+            regions.append(None)
+            regions[close_idx] = (anno, np.asarray(norm_points), max_x, max_y, min_x, min_y)
+            registry = [r for r in registry if r[0] != close_idx]
+        else:
+            registry.append((idx, (min_x, min_y), (max_x, max_y)))
             regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
 
-    return regions
+    return [r for r in regions if r is not None]
+
+
+def __get_regions(rois, slide):
+    regions, registry = [], []
+
+    for idx, roi in enumerate(rois):
+        anno, points, b_rect = roi['label'], roi['points'], roi['rect']
+
+        if 'rect' in anno.lower():
+            regions.append(None)
+            continue
+
+        points = [[int(p[0]), int(p[1])] for p in points]
+        max_x, min_x = int(b_rect[2]), int(b_rect[0])
+        max_y, min_y = int(b_rect[3]), int(b_rect[1])
+
+        norm_points = [[[p[0] - min_x, p[1] - min_y]] for p in points]
+
+        close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
+        if close_idx is not None:
+            regions.append(None)
+            # _, _, o_max_x, o_max_y, o_min_x, o_min_y = regions[close_idx]
+            # crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
+            # orig = slide.read_region((o_min_x, o_min_y), 0, (o_max_x - o_min_x, o_max_y - o_min_y))
+            # orig, roi = np.asarray(orig), np.asarray(crop)
+            # cv2.imwrite(os.path.join(os.path.join('dataset', 'dupes'), f'{idx}_2_{close_idx}_coords_{max_x}_{max_y}.bmp'),
+            #              np.hstack((cv2.resize(orig,(256, 256)), cv2.resize(roi,(256, 256)))))
+            regions[close_idx] = (anno, np.asarray(norm_points), max_x, max_y, min_x, min_y)
+            registry = [r for r in registry if r[0] != close_idx]
+        else:
+            registry.append((idx, (min_x, min_y), (max_x, max_y)))
+            regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
+
+    return [r for r in regions if r is not None]

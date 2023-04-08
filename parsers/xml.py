@@ -87,6 +87,7 @@ def get_xml_rois(filename) -> list:
     for node in root.findall('node'):
         content = node.getchildren()[1]
         bookmark = content.find('SimpleBookmark')
+        slide_flag = content.find('slide_flag')
 
         if bookmark is None:  # TODO debug extraction
             continue
@@ -101,7 +102,10 @@ def get_xml_rois(filename) -> list:
         
         if 'Annotation' not in label:
             all_nodes.append({
-                f"{label}": points
+                'label': label,
+                'points': points,
+                'rect': [slide_flag.get('brLeft'), slide_flag.get('brTop'), 
+                         slide_flag.get('brRight'), slide_flag.get('brBottom')]
             })
 
     return all_nodes
