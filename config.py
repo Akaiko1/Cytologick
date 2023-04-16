@@ -28,6 +28,7 @@ LABELS = {
 
 #region GUI
 SLIDE_DIR = './current' # Only for GUI
+UNET_PRED_MODE = 'smooth'  # 'direct'
 #endregion
 
 #region Packaging 
