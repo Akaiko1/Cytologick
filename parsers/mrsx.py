@@ -1,3 +1,4 @@
+from collections import namedtuple
 import json
 import glob
 import math
@@ -5,6 +6,9 @@ import cv2
 import os
 
 import numpy as np
+
+
+Rectangle = namedtuple('Rectangle', 'xmin ymin xmax ymax')
 
 
 def extract_atlas(slidepath, jsonpath, openslide_path):
@@ -163,7 +167,7 @@ def __make_dirs(roi_path, masks_path):
 
 
 def __draw_masks(classes, debug, regions, masks):
-    top_layer = []
+    top_layer = []  # TODO priority should vary by level value
     for region in regions:
         name, points, _, _, _, _ = region
         name = name.strip('?)')
@@ -200,15 +204,27 @@ def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_pat
                     print('ROI empty: ', x, y)
 
 
-def __index_close(fxy, sxy_list: list, thrsh = 25):
+def __intersection(a: Rectangle, b: Rectangle):  
+    dx = min(a.xmax, b.xmax) - max(a.xmin, b.xmin)
+    dy = min(a.ymax, b.ymax) - max(a.ymin, b.ymin)
+    if (dx >= 0) and (dy >= 0):
+        return dx * dy
+    return 0
+
+
+def __index_close(fxy, sxy_list: list, thrsh = 15):
+    fxy_rect = Rectangle(fxy[0][0], fxy[0][1], fxy[1][0], fxy[1][1])
     area_fxy = (fxy[1][0] - fxy[0][0]) * (fxy[1][1] - fxy[0][1])
 
     for sxy in sxy_list:
+        sxy_rect = Rectangle(sxy[1][0], sxy[1][1], sxy[2][0], sxy[2][1])
         area_sxy = (sxy[2][0] - sxy[1][0]) * (sxy[2][1] - sxy[1][1])
 
         if ((math.hypot(fxy[0][0] - sxy[1][0], fxy[0][1] - sxy[1][1]) <= thrsh) or \
+            (math.hypot(fxy[1][0] - sxy[2][0], fxy[0][1] - sxy[1][1]) <= thrsh) or \
+            (math.hypot(fxy[0][0] - sxy[1][0], fxy[1][1] - sxy[2][1]) <= thrsh) or \
             (math.hypot(fxy[1][0] - sxy[2][0], fxy[1][1] - sxy[2][1]) <= thrsh)) and \
-                ((0.8 * area_sxy <= area_fxy <= 1.2 * area_sxy) or (area_fxy < area_sxy)):
+                ((__intersection(fxy_rect, sxy_rect) >= 0.2 * max(area_fxy, area_sxy))):
 
             return sxy[0]
     
@@ -257,12 +273,11 @@ def __get_rect_regions(rois, top, bot):
 
         close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
         if close_idx is not None:
-            regions.append(None)
-            regions[close_idx] = (anno, np.asarray(norm_points), max_x, max_y, min_x, min_y)
+            regions[close_idx] = None
             registry = [r for r in registry if r[0] != close_idx]
-        else:
-            registry.append((idx, (min_x, min_y), (max_x, max_y)))
-            regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
+
+        registry.append((idx, (min_x, min_y), (max_x, max_y)))
+        regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
 
     return [r for r in regions if r is not None]
 
@@ -285,17 +300,17 @@ def __get_regions(rois, slide):
 
         close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
         if close_idx is not None:
-            regions.append(None)
             # _, _, o_max_x, o_max_y, o_min_x, o_min_y = regions[close_idx]
             # crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
             # orig = slide.read_region((o_min_x, o_min_y), 0, (o_max_x - o_min_x, o_max_y - o_min_y))
             # orig, roi = np.asarray(orig), np.asarray(crop)
-            # cv2.imwrite(os.path.join(os.path.join('dataset', 'dupes'), f'{idx}_2_{close_idx}_coords_{max_x}_{max_y}.bmp'),
+            # cv2.imwrite(os.path.join(os.path.join('dataset', 'dupes'), f'{close_idx}_2_{idx}_coords_{max_x}_{max_y}.bmp'),
             #              np.hstack((cv2.resize(orig,(256, 256)), cv2.resize(roi,(256, 256)))))
-            regions[close_idx] = (anno, np.asarray(norm_points), max_x, max_y, min_x, min_y)
+
+            regions[close_idx] = None
             registry = [r for r in registry if r[0] != close_idx]
-        else:
-            registry.append((idx, (min_x, min_y), (max_x, max_y)))
-            regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
+
+        registry.append((idx, (min_x, min_y), (max_x, max_y)))
+        regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
 
     return [r for r in regions if r is not None]

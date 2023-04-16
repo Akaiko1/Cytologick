@@ -1,5 +1,5 @@
 def __get_names(data):
-    return [list(i.keys())[0] for i in data if 'rect' not in list(i.keys())[0].lower()]
+    return [i['label'] for i in data if 'rect' not in i['label'].lower()]
 
 
 def __get_names_count(data):

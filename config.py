@@ -4,7 +4,7 @@ import os
 CURRENT_SLIDE = 'current\slide-2022-09-12T15-38-25-R1-S2.mrxs'
 CURRENT_SLIDE_XML = 'current\slide-2022-09-12T15-38-25-R1-S2\Data0021.dat'
 OPENSLIDE_PATH = os.path.abspath('openslide\\bin') # 'E:\\Github\\DemetraAI\\openslide\\bin'
-HDD_SLIDES = 'R:\\CYTOLOGY_ED'
+HDD_SLIDES = 'R:\\CYTOLOGY'
 TEMP_FOLDER = 'temp'
 #endregion
 
@@ -29,7 +29,6 @@ LABELS = {
 #region GUI
 SLIDE_DIR = './current' # Only for GUI
 #endregion
-
 
 #region Packaging 
 # Must be commented when Python scripts are used!
