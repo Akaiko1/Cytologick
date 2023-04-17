@@ -170,19 +170,19 @@ def __draw_masks(classes, debug, regions, masks):
     top_layer = []  # TODO priority should vary by level value
     for region in regions:
         name, points, _, _, _, _ = region
-        name = name.strip('?)')
+        name = name.strip('?) ')
 
-        if name in classes:
+        if name in classes.keys():
             top_layer.append(region)
             continue
         
-        print(f'Normal: {name}')
+        # print(f'Normal: {name}')
         cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else 1, -1)  # 1 class background info
     
     # double pass for class priority
     for region in top_layer:
         name, points, _, _, _, _ = region
-        name = name.strip('?)')
+        name = name.strip('?) ')
         print(f'Atypical: {name}')
         cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
 

@@ -17,12 +17,14 @@ CLASSES = 3
 LABELS = {
     'LSIL': 2,
     'HSIL': 2,
+    'HSUL': 2,
     'Group HSIL': 2,
     'ASCH': 2,
     'Group atypical': 2,
     'ASCUS': 2,
     'Atypical': 2,
     'Atipical': 2,
+    'Atypical naked': 2,
 } 
 #endregion
 

@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QApplication, QWidget, QComboBox, QHBoxLayout,\
-     QVBoxLayout, QLabel, QScrollArea, QStackedLayout, QPushButton
+     QVBoxLayout, QLabel, QScrollArea, QStackedLayout, QPushButton, QRadioButton
 from PyQt5.QtGui import QPixmap, QPalette, QPainter, QBrush, QPen
 from PyQt5.QtCore import Qt
 
@@ -17,6 +17,7 @@ with os.add_dll_directory(config.OPENSLIDE_PATH):
 
 
 class Preview(QWidget):
+    Modes = ['smooth', 'direct']
 
     def __init__(self, parent, pixmap):
         super().__init__()
@@ -36,6 +37,14 @@ class Preview(QWidget):
         display_widget = QWidget()
         display_widget.setMaximumWidth(200)
         display_widget.setLayout(display_layout)
+
+        for mode in self.Modes:
+            radiobutton = QRadioButton(mode)
+            if mode == config.UNET_PRED_MODE:
+                radiobutton.setChecked(True)
+            radiobutton.mode = mode
+            radiobutton.toggled.connect(self.__modeSelected)
+            display_layout.addWidget(radiobutton)
 
         self.display = QLabel()
         self.display.paintEvent = self.printImage
@@ -88,7 +97,7 @@ class Preview(QWidget):
             'Атипичных':0,
         }
 
-        all_cells = np.where((pathology_map == 1) | (pathology_map == 2) , 1, 0)
+        all_cells = np.where(pathology_map != 0, 1, 0)
         atypical_parts = np.where(pathology_map == 2, 1, 0)
 
         cell_contours = cv2.findContours(all_cells.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
@@ -162,6 +171,10 @@ class Preview(QWidget):
         for key, val in stats.items():
             text += f'{key}: {val}\n'
         self.info.setText(text)
+
+    def __modeSelected(self):
+        radioButton = self.sender()
+        config.UNET_PRED_MODE = radioButton.mode
     
     def printImage(self, event):
         painter = QPainter(self.display)
