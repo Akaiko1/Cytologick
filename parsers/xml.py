@@ -61,7 +61,7 @@ def extract_xml(slidename, filename) -> None:
     lines.append('<data>')
 
     for line in content:
-        if len(line) < 20:
+        if len(line) < 100:
             continue
         if '<header>' in line:
             continue

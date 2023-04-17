@@ -7,6 +7,8 @@ import os
 
 import numpy as np
 
+import config
+
 
 Rectangle = namedtuple('Rectangle', 'xmin ymin xmax ymax')
 
@@ -183,7 +185,7 @@ def __draw_masks(classes, debug, regions, masks):
     for region in top_layer:
         name, points, _, _, _, _ = region
         name = name.strip('?) ')
-        print(f'Atypical: {name}')
+        # print(f'Atypical: {name}')
         cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
 
 
@@ -263,6 +265,7 @@ def __get_rect_regions(rois, top, bot):
 
         max_x, min_x = int(b_rect[2]), int(b_rect[0])
         max_y, min_y = int(b_rect[3]), int(b_rect[1])
+
         norm_points = [[[p[0] - top[0], p[1] - top[1]]] for p in points
                         if -100 < p[0] - top[0] < bot[0] - top[0] + 100
                           and -100 < p[1] - top[1] < bot[1] - top[1] + 100]
@@ -270,13 +273,15 @@ def __get_rect_regions(rois, top, bot):
         if not norm_points:
             regions.append(None)
             continue
+        
+        if config.EXCLUDE_DUPLICATES:
+            close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
+            if close_idx is not None:
+                regions[close_idx] = None
+                registry = [r for r in registry if r[0] != close_idx]
 
-        close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
-        if close_idx is not None:
-            regions[close_idx] = None
-            registry = [r for r in registry if r[0] != close_idx]
+            registry.append((idx, (min_x, min_y), (max_x, max_y)))
 
-        registry.append((idx, (min_x, min_y), (max_x, max_y)))
         regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
 
     return [r for r in regions if r is not None]
@@ -298,19 +303,22 @@ def __get_regions(rois, slide):
 
         norm_points = [[[p[0] - min_x, p[1] - min_y]] for p in points]
 
-        close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
-        if close_idx is not None:
-            # _, _, o_max_x, o_max_y, o_min_x, o_min_y = regions[close_idx]
-            # crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
-            # orig = slide.read_region((o_min_x, o_min_y), 0, (o_max_x - o_min_x, o_max_y - o_min_y))
-            # orig, roi = np.asarray(orig), np.asarray(crop)
-            # cv2.imwrite(os.path.join(os.path.join('dataset', 'dupes'), f'{close_idx}_2_{idx}_coords_{max_x}_{max_y}.bmp'),
-            #              np.hstack((cv2.resize(orig,(256, 256)), cv2.resize(roi,(256, 256)))))
+        if config.EXCLUDE_DUPLICATES:
+            close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
+            if close_idx is not None:
 
-            regions[close_idx] = None
-            registry = [r for r in registry if r[0] != close_idx]
+                # _, _, o_max_x, o_max_y, o_min_x, o_min_y = regions[close_idx]
+                # crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
+                # orig = slide.read_region((o_min_x, o_min_y), 0, (o_max_x - o_min_x, o_max_y - o_min_y))
+                # orig, roi = np.asarray(orig), np.asarray(crop)
+                # cv2.imwrite(os.path.join(os.path.join('dataset', 'dupes'), f'{close_idx}_2_{idx}_coords_{max_x}_{max_y}.bmp'),
+                #              np.hstack((cv2.resize(orig,(256, 256)), cv2.resize(roi,(256, 256)))))
 
-        registry.append((idx, (min_x, min_y), (max_x, max_y)))
+                regions[close_idx] = None
+                registry = [r for r in registry if r[0] != close_idx]
+
+            registry.append((idx, (min_x, min_y), (max_x, max_y)))
+
         regions.append((anno, np.asarray(norm_points), max_x, max_y, min_x, min_y))
 
     return [r for r in regions if r is not None]

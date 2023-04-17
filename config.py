@@ -33,6 +33,10 @@ SLIDE_DIR = './current' # Only for GUI
 UNET_PRED_MODE = 'smooth'  # 'direct'
 #endregion
 
+#region Dataset
+EXCLUDE_DUPLICATES = False
+#endregion
+
 #region Packaging 
 # Must be commented when Python scripts are used!
 def user_changes_on_import():
