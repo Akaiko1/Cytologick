@@ -68,7 +68,8 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
         with open(json_path[0], 'r') as f:
             rois = json.load(f)
         
-        regions = __get_regions(rois, slide)
+        regions = __get_regions(rois)
+
         print(f'Parsing {slide}: {len(regions)} regions total')
 
         for _, region in enumerate(regions):
@@ -81,6 +82,8 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
             crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
             roi = np.asarray(crop)
             mask = np.zeros(roi.shape)
+
+            __draw_other_rois(classes, debug, __get_rect_regions(rois, (min_x, min_y), (max_x, max_y)), name, mask)
 
             if name in classes:
                 cv2.drawContours(mask, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
@@ -233,6 +236,20 @@ def __index_close(fxy, sxy_list: list, thrsh = 15):
     return None
 
 
+def __draw_other_rois(classes, debug, regions, name, mask):
+    for other in regions:
+        name, points, _, _, _, _ = other
+        name = name.strip('?)')
+
+        if 'rect' in name.lower():
+            continue
+
+        if name in classes:
+            cv2.drawContours(mask, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
+        else:
+            cv2.drawContours(mask, [points], 0, (0, 255, 0) if debug else 1, -1)
+
+
 def __extract_rects(rois):
     rects = []
 
@@ -287,7 +304,7 @@ def __get_rect_regions(rois, top, bot):
     return [r for r in regions if r is not None]
 
 
-def __get_regions(rois, slide):
+def __get_regions(rois, local_coords=True):
     regions, registry = [], []
 
     for idx, roi in enumerate(rois):
@@ -301,7 +318,7 @@ def __get_regions(rois, slide):
         max_x, min_x = int(b_rect[2]), int(b_rect[0])
         max_y, min_y = int(b_rect[3]), int(b_rect[1])
 
-        norm_points = [[[p[0] - min_x, p[1] - min_y]] for p in points]
+        norm_points = [[[p[0] - min_x, p[1] - min_y]] for p in points] if local_coords else points
 
         if config.EXCLUDE_DUPLICATES:
             close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
