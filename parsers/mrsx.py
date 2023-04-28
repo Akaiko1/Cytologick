@@ -78,17 +78,29 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
 
             if 'rect' in name.lower():
                 continue
+
+            if not 100 <= max_x - min_x <= 200 or not 100 <= max_y - min_y <= 200:  # This sets min and max size for resulting roi crop (+- 2)
+                continue
             
-            crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
+            span = config.BROADEN_INDIVIDUAL_RECT
+            w_max_x, w_max_y, w_min_x, w_min_y = max_x + span, max_y + span, min_x - span, min_y - span
+
+            crop = slide.read_region((w_min_x, w_min_y), 0, (w_max_x - w_min_x, w_max_y - w_min_y))
             roi = np.asarray(crop)
             mask = np.zeros(roi.shape)
 
-            __draw_other_rois(classes, debug, __get_rect_regions(rois, (min_x, min_y), (max_x, max_y)), name, mask)
+            __draw_masks(classes, debug, __get_rect_regions(rois, (w_min_x, w_min_y), (w_max_x, w_max_y)), mask)
+            if debug:
+                 __debug_draw_contours(classes, debug, __get_rect_regions(rois, (w_min_x, w_min_y), (w_max_x, w_max_y)), roi)
+
+            roi = roi[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
+            mask = mask[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
 
             if name in classes:
                 cv2.drawContours(mask, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
-            else:
-                cv2.drawContours(mask, [points], 0, (0, 255, 0) if debug else 1, -1)
+
+            if debug and np.min(mask[:, :, 1]) > 0: # Check in green channel if all the image filled with green color
+                continue
 
             cv2.imwrite(os.path.join(roi_path, f'{name}_coords_{max_x}_{max_y}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
             cv2.imwrite(os.path.join(masks_path, f'{name}_coords_{max_x}_{max_y}.bmp'), mask)
@@ -192,6 +204,24 @@ def __draw_masks(classes, debug, regions, masks):
         cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
 
 
+def __debug_draw_contours(classes, debug, regions, image):
+    top_layer = []
+    for region in regions:
+        name, points, _, _, _, _ = region
+        name = name.strip('?) ')
+
+        if name in classes.keys():
+            top_layer.append(region)
+            continue
+        
+        cv2.drawContours(image, [points], 0, (0, 255, 0), 3)  # 1 class background info
+    
+    for region in top_layer:
+        name, points, _, _, _, _ = region
+        name = name.strip('?) ')
+        cv2.drawContours(image, [points], 0, (255, 0, 0), 3)
+
+
 def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path):
     for zoom in zoom_levels:
         for x in range(0, rectangle.shape[0], zoom):
@@ -207,6 +237,10 @@ def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_pat
                     cv2.imwrite(os.path.join(masks_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
                 except cv2.error:
                     print('ROI empty: ', x, y)
+
+
+def __points_to_rect(points, min_x, min_y):
+    return [[[p[0] - min_x, p[1] - min_y]] for p in points]
 
 
 def __intersection(a: Rectangle, b: Rectangle):  
@@ -234,20 +268,6 @@ def __index_close(fxy, sxy_list: list, thrsh = 15):
             return sxy[0]
     
     return None
-
-
-def __draw_other_rois(classes, debug, regions, name, mask):
-    for other in regions:
-        name, points, _, _, _, _ = other
-        name = name.strip('?)')
-
-        if 'rect' in name.lower():
-            continue
-
-        if name in classes:
-            cv2.drawContours(mask, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
-        else:
-            cv2.drawContours(mask, [points], 0, (0, 255, 0) if debug else 1, -1)
 
 
 def __extract_rects(rois):

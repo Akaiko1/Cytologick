@@ -35,6 +35,7 @@ UNET_PRED_MODE = 'smooth'  # 'direct'
 
 #region Dataset
 EXCLUDE_DUPLICATES = False
+BROADEN_INDIVIDUAL_RECT = 1000
 #endregion
 
 #region Packaging 
