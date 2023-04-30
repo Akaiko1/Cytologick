@@ -87,17 +87,14 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
 
             crop = slide.read_region((w_min_x, w_min_y), 0, (w_max_x - w_min_x, w_max_y - w_min_y))
             roi = np.asarray(crop)
-            mask = np.zeros(roi.shape)
+            mask = np.zeros(roi.shape) if debug else np.zeros(roi.shape[:2], dtype=np.uint8)
 
             __draw_masks(classes, debug, __get_rect_regions(rois, (w_min_x, w_min_y), (w_max_x, w_max_y)), mask)
             if debug:
-                 __debug_draw_contours(classes, debug, __get_rect_regions(rois, (w_min_x, w_min_y), (w_max_x, w_max_y)), roi)
+                 __debug_draw_contours(classes, __get_rect_regions(rois, (w_min_x, w_min_y), (w_max_x, w_max_y)), roi)
 
             roi = roi[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
             mask = mask[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
-
-            if name in classes:
-                cv2.drawContours(mask, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
 
             if debug and np.min(mask[:, :, 1]) > 0: # Check in green channel if all the image filled with green color
                 continue
@@ -166,10 +163,14 @@ def __extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name=
     __draw_masks(classes, debug, regions, masks)
 
     if debug:
-        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", rectangle)
+        __debug_draw_contours(classes, regions, rectangle)
+        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", cv2.cvtColor(rectangle, cv2.COLOR_BGR2RGB))
         cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
 
-    __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path)
+    if debug:
+        __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''))
+    else:
+        __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path)
 
 
 def __make_dirs(roi_path, masks_path):
@@ -204,7 +205,7 @@ def __draw_masks(classes, debug, regions, masks):
         cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
 
 
-def __debug_draw_contours(classes, debug, regions, image):
+def __debug_draw_contours(classes, regions, image):
     top_layer = []
     for region in regions:
         name, points, _, _, _, _ = region
@@ -229,12 +230,32 @@ def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_pat
                 roi = rectangle[x: x + zoom, y: y + zoom]
                 mask = masks[x: x + zoom, y: y + zoom]
 
-                if mask.shape[0] < int(zoom/3) or mask.shape[1] < int(zoom/3):  # skip small crops
+                if mask.shape[0] < 100 or mask.shape[1] < 100:  # skip small crops
                     continue
 
                 try:
                     cv2.imwrite(os.path.join(roi_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
                     cv2.imwrite(os.path.join(masks_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
+                except cv2.error:
+                    print('ROI empty: ', x, y)
+
+
+def __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, slide_name):
+    for zoom in zoom_levels:
+        for x in range(0, rectangle.shape[0], zoom):
+            for y in range(0, rectangle.shape[1], zoom):
+                roi = rectangle[x: x + zoom, y: y + zoom]
+                mask = masks[x: x + zoom, y: y + zoom]
+
+                if mask.shape[0] < 100 or mask.shape[1] < 100:  # skip small crops
+                    continue
+
+                try:
+                    os.makedirs(os.path.join(roi_path, slide_name), exist_ok=True)
+                    os.makedirs(os.path.join(masks_path, slide_name), exist_ok=True)
+
+                    cv2.imwrite(os.path.join(roi_path, slide_name, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+                    cv2.imwrite(os.path.join(masks_path, slide_name, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
                 except cv2.error:
                     print('ROI empty: ', x, y)
 

@@ -65,6 +65,7 @@ class Preview(QWidget):
     
     def runModel(self):
         source = cv2.imread('gui_preview.bmp', 1)
+        source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
         source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
 
         match config.UNET_PRED_MODE:

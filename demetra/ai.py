@@ -25,13 +25,14 @@ class Augment(tf.keras.layers.Layer):
         ])
 
         self.augment_labels = tf.keras.Sequential([
-            tf.keras.layers.RandomRotation(1., fill_mode="reflect", seed=seed),
-            tf.keras.layers.RandomTranslation(0.25, 0.25, fill_mode="reflect", seed=seed)
+            tf.keras.layers.RandomRotation(1., fill_mode="reflect", interpolation='nearest', seed=seed),
+            tf.keras.layers.RandomTranslation(0.25, 0.25, fill_mode="reflect", interpolation='nearest', seed=seed)
         ])
 
     def call(self, inputs, labels):
         inputs = self.augment_inputs(inputs)
         labels = self.augment_labels(labels)
+        labels = tf.cast(labels, tf.uint8)
 
         return inputs, labels
 
@@ -44,15 +45,12 @@ def dice_coef(y_true, y_pred, smooth=1e-7):
 
 
 def dice_coef_loss(y_true, y_pred):
-    y_true = tf.cast(y_true, tf.float32)
-    ones = tf.ones_like(y_true)
+    # y_true = tf.cast(y_true, tf.float32)
     dice_total = 0
 
     for idx in range(0, config.CLASSES):  # set first argument to 1 to ignore 0 class
         mask = tf.cast(tf.equal(y_true, idx), tf.float32)
-        y_true_masked = ones * mask
-
-        dice_total += dice_coef(y_true_masked, y_pred[..., idx])
+        dice_total += dice_coef(mask, y_pred[..., idx])
 
     return 1 - (dice_total/(config.CLASSES))
 
@@ -69,7 +67,7 @@ def get_model_p2pUnet(output_channels:int):
     ]
     base_model_outputs = [base_model.get_layer(name).output for name in layer_names]
     down_stack = tf.keras.Model(inputs=base_model.input, outputs=base_model_outputs)
-    down_stack.trainable = True
+    down_stack.trainable = False
 
     up_stack = [
         pix2pix.upsample(512, 3),  # 4x4 -> 8x8
@@ -94,54 +92,81 @@ def get_model_p2pUnet(output_channels:int):
     # This is the last layer of the model
     last = tf.keras.layers.Conv2DTranspose(
         filters=output_channels, kernel_size=3, strides=2,
-        padding='same')  #64x64 -> 128x128
+        padding='same', activation='softmax')  #64x64 -> 128x128
 
     x = last(x)
-
-    softmax = tf.keras.layers.Softmax()
-    x = softmax(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)
 
 
 def get_dataset(images_path, masks_path):
+    images = [os.path.join(images_path, f) for f in os.listdir(images_path)]
+    masks = [os.path.join(masks_path, f) for f in os.listdir(masks_path)]
 
-    images = [cv2.imread(os.path.join(images_path, f), 1) for f in os.listdir(images_path)]
-    images = [tf.convert_to_tensor(f) for f in images]
-    images = [tf.image.resize(f, (128, 128)) for f in images]
     datapoints_total = len(images)
 
-    masks = [cv2.imread(os.path.join(masks_path, f), 0) for f in os.listdir(masks_path)]
-    masks = [cv2.resize(f, (128, 128)) for f in masks]
-    masks = [np.expand_dims(f, axis=2) for f in masks]
-    masks = [tf.convert_to_tensor(f) for f in masks]
+    train_images = tf.data.Dataset.from_tensor_slices((images, masks)).map(__get_datapoint_images, num_parallel_calls=tf.data.AUTOTUNE)
+    test_images = tf.data.Dataset.from_tensor_slices((images, masks)).map(__get_datapoint_images, num_parallel_calls=tf.data.AUTOTUNE)
 
-    dataset = []
-
-    for idx, image in enumerate(images):
-        dataset.append(dict(
-            image=image,
-            segmentation_mask=masks[idx]
-        ))
-
-    train_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
-    test_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
-
-    return datapoints_total, train_images, test_images
+    return datapoints_total, train_images.map(__normalize), test_images.map(__normalize)
 
 
-def normalize(input_image, input_mask):
+def __get_datapoint_images(image_path, mask_path):
+    image = tf.io.read_file(image_path)
+    image = tf.io.decode_bmp(image)
+    image.set_shape([None, None, 3])
+    image = tf.image.resize(image, (128, 128))
+
+    mask = tf.io.read_file(mask_path)
+    mask = tf.io.decode_bmp(mask)
+    mask.set_shape([None, None, 1])
+    mask = tf.image.resize(mask, (128, 128), method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+
+    return image, mask
+
+
+def __normalize(input_image, input_mask):
     input_image = tf.cast(input_image, tf.float32) / 255.0
     return input_image, input_mask
 
 
-def load_image(datapoint):
-    input_image = datapoint['image']
-    input_mask = datapoint['segmentation_mask']
+# def get_dataset(images_path, masks_path):
+#     images = [cv2.imread(os.path.join(images_path, f), 1) for f in os.listdir(images_path)]
+#     images = [tf.convert_to_tensor(f) for f in images]
+#     images = [tf.image.resize(f, (128, 128)) for f in images]
+#     datapoints_total = len(images)
 
-    input_image, input_mask = normalize(input_image, input_mask)
+#     masks = [cv2.imread(os.path.join(masks_path, f), 0) for f in os.listdir(masks_path)]
+#     masks = [cv2.resize(f, (128, 128)) for f in masks]
+#     masks = [np.expand_dims(f, axis=2) for f in masks]
+#     masks = [tf.convert_to_tensor(f) for f in masks]
 
-    return input_image, input_mask
+#     dataset = []
+
+#     for idx, image in enumerate(images):
+#         dataset.append(dict(
+#             image=image,
+#             segmentation_mask=masks[idx]
+#         ))
+
+#     train_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
+#     test_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
+
+#     return datapoints_total, train_images, test_images
+
+
+# def normalize(input_image, input_mask):
+#     input_image = tf.cast(input_image, tf.float32) / 255.0
+#     return input_image, input_mask
+
+
+# def load_image(datapoint):
+#     input_image = datapoint['image']
+#     input_mask = datapoint['segmentation_mask']
+
+#     input_image, input_mask = normalize(input_image, input_mask)
+
+#     return input_image, input_mask
 
 
 def display(display_list, tensors=True):
@@ -192,6 +217,9 @@ def train_new_model(model_path, output_classes, epochs, batch_size=64):
 
     test_batches = test_images.batch(batch_size)
 
+    print("Train Dataset:", train_batches)
+    print("Val Dataset:", test_batches)
+
     model = get_model_p2pUnet(output_channels=output_classes)
     model.compile(optimizer='nadam',
                 loss=dice_coef_loss,                 
@@ -225,6 +253,9 @@ def train_current_model(model_path, epochs, batch_size=64):
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
     test_batches = test_images.batch(batch_size)
+
+    print("Train Dataset:", train_batches)
+    print("Val Dataset:", test_batches)
 
     model = tf.keras.models.load_model(model_path, compile=False)
     model.compile(optimizer='adam',

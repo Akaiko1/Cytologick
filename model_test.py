@@ -12,9 +12,15 @@ from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamP
 
 def tf_test():
     source = cv2.imread('test.bmp', 1)
+    source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
 
     model = tf.keras.models.load_model('demetra_main', compile=False)
     pathology_map = inference.apply_model(source, model, shapes=(256, 256))
+
+    canvas = np.zeros(source.shape)
+    canvas[..., 1] = np.where(pathology_map == 1, 255, 0)
+    canvas[..., 2] = np.where(pathology_map == 2, 255, 0)
+    cv2.imwrite('test_result.jpg', canvas)
 
     ai.display([source, pathology_map], tensors=False)
 
@@ -59,5 +65,5 @@ def torch_test():
 
 
 if __name__ == '__main__':
-    # tf_test()
-    torch_test()
+    tf_test()
+    # torch_test()
