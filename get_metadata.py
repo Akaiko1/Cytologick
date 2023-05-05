@@ -1,3 +1,4 @@
+import argparse
 import config
 import glob
 import os
@@ -51,9 +52,9 @@ def __pretty_bytes(size_in_bytes):
         return '{0:.2f} TB'.format(size_in_bytes / Tera)
 
 
-def get_set_data():
-    slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', '*.mrxs'), recursive=True)
-    slide_names = [s.rstrip('.mrxs').split(os.sep)[-1] for s in slides_list]
+def get_set_data(ext='.mrxs'):
+    slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
+    slide_names = [s.rstrip(f'{ext}').split(os.sep)[-1] for s in slides_list]
 
     sizes = __get_sizes(slides_list)
     summary = __get_summary(slides_list, sizes)
@@ -73,9 +74,9 @@ def get_set_data():
     __print_summary(summary)
 
 
-def get_slides_data():
-    slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', '*.mrxs'), recursive=True)
-    slide_names = [s.rstrip('.mrxs').split(os.sep)[-1] for s in slides_list]
+def get_slides_data(ext='.mrxs'):
+    slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
+    slide_names = [s.rstrip(f'{ext}').split(os.sep)[-1] for s in slides_list]
 
     if not os.path.exists('meta'):
         os.mkdir('meta')
@@ -122,5 +123,10 @@ def __get_sizes(slides_list):
 
 
 if __name__ == '__main__':
-    # get_slides_data()
-    get_set_data()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-e', '--extension', help='slide extension type', default='.svs')
+
+    args = parser.parse_args()
+
+    get_slides_data(args.extension)
+    get_set_data(args.extension)
