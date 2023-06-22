@@ -10,24 +10,36 @@ import config
 import cv2
 import os
 
+os.environ['SM_FRAMEWORK'] = 'tf.keras'
+import segmentation_models as sm
+sm.set_framework('tf.keras')
+
+from tensorflow import keras
+keras.backend.set_image_data_format('channels_last')
+
 K = tf.keras.backend
 
 
 class Augment(tf.keras.layers.Layer):
 
-    def __init__(self, seed=76):
+    def __init__(self, seed=34):
         super().__init__()
         # both use the same seed, so they'll make the same random changes.
 
         self.augment_inputs = tf.keras.Sequential([
             tf.keras.layers.RandomRotation(1., fill_mode="reflect", seed=seed),
-            tf.keras.layers.RandomTranslation(0.25, 0.25, fill_mode="reflect", seed=seed)
+            tf.keras.layers.RandomTranslation(0.35, 0.35, fill_mode="reflect", seed=seed),
+            tf.keras.layers.GaussianNoise(0.25, seed=seed),
+            tf.keras.layers.RandomZoom(0.2, fill_mode="reflect", seed=seed),
+            tf.keras.layers.RandomContrast(0.25, seed=seed)
         ])
 
         self.augment_labels = tf.keras.Sequential([
             tf.keras.layers.RandomRotation(1., fill_mode="reflect", interpolation='nearest', seed=seed),
-            tf.keras.layers.RandomTranslation(0.25, 0.25, fill_mode="reflect", interpolation='nearest', seed=seed)
+            tf.keras.layers.RandomTranslation(0.35, 0.35, fill_mode="reflect", interpolation='nearest', seed=seed),
+            tf.keras.layers.RandomZoom(0.2, fill_mode="reflect", interpolation='nearest', seed=seed)
         ])
+
 
     def call(self, inputs, labels):
         inputs = self.augment_inputs(inputs)
@@ -45,14 +57,12 @@ def dice_coef(y_true, y_pred, smooth=1e-7):
 
 
 def dice_coef_loss(y_true, y_pred):
-    # y_true = tf.cast(y_true, tf.float32)
     dice_total = 0
+    for idx in range(1, config.CLASSES):
+        partial_truth = tf.cast(tf.equal(y_true, idx), tf.float32)
+        dice_total += dice_coef(partial_truth, y_pred[..., idx])
 
-    for idx in range(0, config.CLASSES):  # set first argument to 1 to ignore 0 class
-        mask = tf.cast(tf.equal(y_true, idx), tf.float32)
-        dice_total += dice_coef(mask, y_pred[..., idx])
-
-    return 1 - (dice_total/(config.CLASSES))
+    return 1 - (dice_total/(config.CLASSES - 1))
 
 
 def get_model_p2pUnet(output_channels:int):
@@ -67,13 +77,13 @@ def get_model_p2pUnet(output_channels:int):
     ]
     base_model_outputs = [base_model.get_layer(name).output for name in layer_names]
     down_stack = tf.keras.Model(inputs=base_model.input, outputs=base_model_outputs)
-    down_stack.trainable = False
+    down_stack.trainable = True
 
     up_stack = [
-        pix2pix.upsample(512, 3),  # 4x4 -> 8x8
-        pix2pix.upsample(256, 3),  # 8x8 -> 16x16
-        pix2pix.upsample(128, 3),  # 16x16 -> 32x32
-        pix2pix.upsample(64, 3),   # 32x32 -> 64x64
+        pix2pix.upsample(512, 3, apply_dropout=True),  # 4x4 -> 8x8
+        pix2pix.upsample(256, 3, apply_dropout=True),  # 8x8 -> 16x16
+        pix2pix.upsample(128, 3, apply_dropout=True),  # 16x16 -> 32x32
+        pix2pix.upsample(64, 3, apply_dropout=True),   # 32x32 -> 64x64
     ]
 
     inputs = tf.keras.layers.Input(shape=[128, 128, 3])
@@ -92,7 +102,7 @@ def get_model_p2pUnet(output_channels:int):
     # This is the last layer of the model
     last = tf.keras.layers.Conv2DTranspose(
         filters=output_channels, kernel_size=3, strides=2,
-        padding='same', activation='softmax')  #64x64 -> 128x128
+        padding='same')  #64x64 -> 128x128
 
     x = last(x)
 
@@ -108,65 +118,35 @@ def get_dataset(images_path, masks_path):
     train_images = tf.data.Dataset.from_tensor_slices((images, masks)).map(__get_datapoint_images, num_parallel_calls=tf.data.AUTOTUNE)
     test_images = tf.data.Dataset.from_tensor_slices((images, masks)).map(__get_datapoint_images, num_parallel_calls=tf.data.AUTOTUNE)
 
-    return datapoints_total, train_images.map(__normalize), test_images.map(__normalize)
+    return datapoints_total, train_images, test_images
 
 
 def __get_datapoint_images(image_path, mask_path):
     image = tf.io.read_file(image_path)
-    image = tf.io.decode_bmp(image)
+    image = tf.io.decode_bmp(image, channels=3)
     image.set_shape([None, None, 3])
-    image = tf.image.resize(image, (128, 128))
+    image = tf.image.resize(images=image, size=(128, 128))
 
     mask = tf.io.read_file(mask_path)
     mask = tf.io.decode_bmp(mask)
     mask.set_shape([None, None, 1])
-    mask = tf.image.resize(mask, (128, 128), method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    mask = tf.image.resize(images=mask, size=(128, 128), method='nearest')
+    
+    image, mask = __normalize(image, mask)
 
     return image, mask
 
 
-def __normalize(input_image, input_mask):
-    input_image = tf.cast(input_image, tf.float32) / 255.0
-    return input_image, input_mask
+def __normalize(image, mask):
+    image = tf.cast(image, tf.float32) / 255.0
+    return image, mask
 
 
-# def get_dataset(images_path, masks_path):
-#     images = [cv2.imread(os.path.join(images_path, f), 1) for f in os.listdir(images_path)]
-#     images = [tf.convert_to_tensor(f) for f in images]
-#     images = [tf.image.resize(f, (128, 128)) for f in images]
-#     datapoints_total = len(images)
-
-#     masks = [cv2.imread(os.path.join(masks_path, f), 0) for f in os.listdir(masks_path)]
-#     masks = [cv2.resize(f, (128, 128)) for f in masks]
-#     masks = [np.expand_dims(f, axis=2) for f in masks]
-#     masks = [tf.convert_to_tensor(f) for f in masks]
-
-#     dataset = []
-
-#     for idx, image in enumerate(images):
-#         dataset.append(dict(
-#             image=image,
-#             segmentation_mask=masks[idx]
-#         ))
-
-#     train_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
-#     test_images = tf.data.Dataset.from_tensor_slices(pd.DataFrame.from_dict(dataset).to_dict(orient="list")).map(load_image)
-
-#     return datapoints_total, train_images, test_images
-
-
-# def normalize(input_image, input_mask):
-#     input_image = tf.cast(input_image, tf.float32) / 255.0
-#     return input_image, input_mask
-
-
-# def load_image(datapoint):
-#     input_image = datapoint['image']
-#     input_mask = datapoint['segmentation_mask']
-
-#     input_image, input_mask = normalize(input_image, input_mask)
-
-#     return input_image, input_mask
+def __to_categorical(image, mask):
+    mask = tf.squeeze(mask, axis=-1) 
+    mask = tf.one_hot(tf.cast(mask, tf.int32), 3)
+    mask = tf.cast(mask, tf.float32)
+    return image, mask
 
 
 def display(display_list, tensors=True):
@@ -199,6 +179,17 @@ def show_predictions(model, dataset=None, num=1):
             display([image[0], mask[0], create_mask(pred_mask)])
 
 
+CALLBACKS = [tf.keras.callbacks.ModelCheckpoint(filepath='demetra_checkpoint', monitor='val_iou_score', mode='max', save_best_only=True)]
+
+
+def add_sample_weights(image, label):
+  class_weights = tf.constant([1.0, 1.0, 2.0])
+  class_weights = class_weights/tf.reduce_sum(class_weights)
+  sample_weights = tf.gather(class_weights, indices=tf.cast(label, tf.int32))
+
+  return image, label, sample_weights
+
+
 def train_new_model(model_path, output_classes, epochs, batch_size=64):
     
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
@@ -212,31 +203,31 @@ def train_new_model(model_path, output_classes, epochs, batch_size=64):
         .shuffle(batch_size)
         .batch(batch_size)
         .repeat()
-        .map(Augment(seed=random.randint(1, 999)))
+        .map(Augment(seed=random.randint(1,999))).map(__to_categorical)
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
-    test_batches = test_images.batch(batch_size)
-
+    test_batches = test_images.batch(batch_size).map(__to_categorical)
+    
     print("Train Dataset:", train_batches)
     print("Val Dataset:", test_batches)
 
-    model = get_model_p2pUnet(output_channels=output_classes)
-    model.compile(optimizer='nadam',
-                loss=dice_coef_loss,                 
-                # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                metrics=['accuracy'])
+    model = sm.Unet('efficientnetb3', classes=output_classes, encoder_weights='imagenet', activation='softmax')
+    model.compile(optimizer='nadam',           
+                loss=sm.losses.JaccardLoss() + sm.losses.CategoricalFocalLoss(),
+                metrics=[sm.metrics.IOUScore(), sm.metrics.FScore()])
 
     _ = model.fit(train_batches, epochs=epochs,
                           steps_per_epoch=int(datapoints_total/batch_size),
                           validation_steps=int(datapoints_total/batch_size),
-                          validation_data=test_batches)
+                          validation_data=test_batches,
+                          callbacks=[])
     
-    show_predictions(model, test_batches, 5)
+    # show_predictions(model, test_batches, 5)
 
     model.save(model_path)
 
 
-def train_current_model(model_path, epochs, batch_size=64):
+def train_current_model(model_path, epochs, batch_size=64, lr=0.0001):
     
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
@@ -249,25 +240,26 @@ def train_current_model(model_path, epochs, batch_size=64):
         .shuffle(batch_size)
         .batch(batch_size)
         .repeat()
-        .map(Augment(seed=random.randint(1, 999)))
+        .map(Augment(seed=random.randint(1, 999))).map(__to_categorical)
         .prefetch(buffer_size=tf.data.AUTOTUNE))
 
-    test_batches = test_images.batch(batch_size)
-
+    test_batches = test_images.batch(batch_size).map(__to_categorical)
+    
     print("Train Dataset:", train_batches)
     print("Val Dataset:", test_batches)
 
     model = tf.keras.models.load_model(model_path, compile=False)
-    model.compile(optimizer='adam',
-                loss=dice_coef_loss,                 
-                # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                metrics=['accuracy'])
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr),  # 'adam',
+                loss=sm.losses.JaccardLoss() + sm.losses.CategoricalFocalLoss(),
+                metrics=[sm.metrics.IOUScore(), sm.metrics.FScore()])
 
     _ = model.fit(train_batches, epochs=epochs,
                           steps_per_epoch=int(datapoints_total/batch_size),
                           validation_steps=int(datapoints_total/batch_size),
-                          validation_data=test_batches)
+                          validation_data=test_batches,
+                          callbacks=CALLBACKS)
     
-    show_predictions(model, test_batches, 5)
+    # show_predictions(model, test_batches, 5)
 
     model.save(model_path)
+
