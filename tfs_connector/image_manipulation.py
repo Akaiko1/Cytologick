@@ -28,7 +28,7 @@ def pad_image(image: np.ndarray, chunk_size: Optional[Tuple[int, int]] = (128, 1
     return source_pads
 
 
-def resize_image(image: np.ndarray, size: Tuple[int, int], interpolation: int = cv2.INTER_AREA) -> np.ndarray:
+def resize_image(image: np.ndarray, size: Tuple[int, int], interpolation: int) -> np.ndarray:
     """
     Resizes image to a given size. If an image is already given size no modifications will be made.
     :param image: Source image
@@ -68,36 +68,41 @@ def __get_new_size(shape: Tuple[int, int], ann_metadata_size: Tuple[int, int]):
         return ann_metadata_size
 
     if ann_metadata_size[0] == -1:
-        return int(ann_metadata_size[1] * shape[1] / shape[0]),  ann_metadata_size[1]
+        return int(ann_metadata_size[1] * shape[1] / shape[0]), ann_metadata_size[1]
 
     if ann_metadata_size[1] == -1:
         return ann_metadata_size[0], int(ann_metadata_size[0] * shape[0] / shape[1])
 
 
 def get_image_patch(image: np.ndarray, patch_size: Tuple[int, int], patch_position: Tuple[int, int],
-                    ann_metadata_size: Tuple[int, int]) -> np.ndarray:
+                    model_input_size: Tuple[int, int], interpolation: int) -> np.ndarray:
     """
     Gets a patch of an image based on a chunk size and chunk position and resizes it to a new size
+    :param interpolation: Interpolation algorythm used to resize images. Use cv2.INTER_* constants.
     :param image: Image we get a probe from
     :param patch_size: Size of a patch
     :param patch_position: Position of a patch (in a grid of patches)
-    :param ann_metadata_size: Size of ANN input
+    :param model_input_size: Size of ANN input
     :return: Patch of an image
     """
-    pads_patch: np.ndarray = image[patch_position[0]: patch_position[0] + patch_size[0],
-                 patch_position[1]: patch_position[1] + patch_size[1]]
+    pads_patch: np.ndarray = image[
+                             patch_position[0]: patch_position[0] + patch_size[0],
+                             patch_position[1]: patch_position[1] + patch_size[1]
+                             ]
 
-    resize_to = __get_new_size(pads_patch.shape, ann_metadata_size)
+    resize_to = __get_new_size(pads_patch.shape, model_input_size)
 
-    resized_pads_patch = resize_image(pads_patch, resize_to)
+    resized_pads_patch = resize_image(pads_patch, resize_to, interpolation)
     return resized_pads_patch
 
 
 def cut_image_into_chunks(image: np.ndarray, chunk_size: Tuple[int, int],
                           model_input_size: Tuple[int, int],
+                          interpolation: int,
                           normalization: Optional[Callable[[np.ndarray], np.ndarray]] = None) -> List[np.ndarray]:
     """
     Cuts (padded) image into a chunks of given size, resized into a model_input_size
+    :param interpolation: Interpolation algorythm used to resize images. Use cv2.INTER_* constants.
     :param normalization: a normalization algorythm function
     :param image: Image to be cut into chunks
     :param chunk_size: Size of a chunk
@@ -107,7 +112,8 @@ def cut_image_into_chunks(image: np.ndarray, chunk_size: Tuple[int, int],
     result: List[np.ndarray] = []
     for x in range(0, image.shape[0], chunk_size[0]):
         for y in range(0, image.shape[1], chunk_size[1]):
-            patch = get_image_patch(image, chunk_size, (x, y), model_input_size)
+            patch = get_image_patch(image, chunk_size, (x, y), model_input_size,
+                                    interpolation=interpolation)
             input_tensor = image_to_tensor(patch, normalization=normalization)
             result.append(input_tensor)
     return result

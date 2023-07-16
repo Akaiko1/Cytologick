@@ -36,3 +36,14 @@ def get_model_input_size_from_metadata(endpoint_url: str, model_name: str, model
 
     tensor_shape = inputs[first_input_key]['tensor_shape']
     return int(tensor_shape['dim'][1]['size']), int(tensor_shape['dim'][2]['size'])
+
+
+@log_metrics('irym_tfs_connector.metrics')
+def get_number_of_classes_for_segmentation_model(endpoint_url: str, model_name: str, model_version: Union[str, int]) \
+        -> int:
+    model_metadata = get_model_metadata(endpoint_url, model_name, model_version)
+    inputs = model_metadata['signature_def']['signature_def']['serving_default']['inputs']
+    first_input_key = next(iter(inputs))
+
+    tensor_shape = inputs[first_input_key]['tensor_shape']
+    return int(tensor_shape['dim'][-1]['size'])

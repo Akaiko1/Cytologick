@@ -9,6 +9,8 @@ def get_model_predict_url(endpoint_url: str, model_name: str, model_version: Uni
     :param model_version: Version of a model
     :return: TensorFlow REST API Predict method Url
     """
+    if endpoint_url.endswith('/'):
+        endpoint_url = endpoint_url.strip('/')
     model_url = f'{endpoint_url}/v1/models/{model_name}/versions/{model_version}:predict'
     return model_url
 
@@ -21,5 +23,7 @@ def get_model_metadata_url(endpoint_url: str, model_name: str, model_version: Un
     :param model_version: Version of a model
     :return: TensorFlow REST API Metadata method Url
     """
+    if endpoint_url.endswith('/'):
+        endpoint_url = endpoint_url.strip('/')
     metadata_url = f'{endpoint_url}/v1/models/{model_name}/versions/{model_version}/metadata'
     return metadata_url

@@ -1,9 +1,10 @@
 import datetime
-import itertools
 import logging
-from multiprocessing import Pool
+import platform
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Callable
 
+import multiprocess.pool
 import numpy as np
 
 from tfs_connector import tensorflow_layer as tfl
@@ -12,15 +13,17 @@ from tfs_connector.image_manipulation import image_to_tensor
 from tfs_connector.kmp_duplicate_lib_decorator import save_and_restore_kmp_duplicate_lib_ok
 from tfs_connector.metrics import log_metrics
 from tfs_connector.model_urls import get_model_predict_url
+from tfs_connector.parallelism_mode import ParallelismMode
 
 
-@log_metrics('tfs_connector.metrics')
+@log_metrics('irym_tfs_connector.metrics')
 def apply_classification_model_parallel(images: List[np.ndarray],
                                         model_name: str,
                                         model_version: int = 1,
                                         endpoint_url: str = 'http://localhost:8501',
                                         batch_size: int = 60,
                                         thread_count: int = 3,
+                                        parallelism_mode: int = 0,
                                         normalization: Callable[[np.ndarray], np.ndarray] = None,
                                         comfort_max_batch_size: Optional[int] = None) -> List[np.ndarray]:
     """
@@ -28,6 +31,8 @@ def apply_classification_model_parallel(images: List[np.ndarray],
     requests, one request for each batch. The list of images is broken into multiple parts, each part processed in a
     separate thread. Images should be properly sized beforehand.
 
+    :param parallelism_mode: parallelism mode. Use ParallelismMode.PARALLELISM_MODE_* constants to fill correctly.
+    Default multiprocess.
     :param images: List of images (np.ndarray) to process
     :param model_name: ANN model name on TFS
     :param model_version: ANN model version
@@ -42,6 +47,18 @@ def apply_classification_model_parallel(images: List[np.ndarray],
     """
 
     main_logger = logging.getLogger('irym_tfs_connector.main')
+
+    if parallelism_mode not in ParallelismMode.ALLOWED_PARALLELISM_MODES:
+        raise ValueError(f'Parameter parallelism_mode={parallelism_mode} has value that is not '
+                         f'in allowed parallelism modes={ParallelismMode.ALLOWED_PARALLELISM_MODES}')
+
+    if platform.system() == "Windows" and parallelism_mode == ParallelismMode.PARALLELISM_MODE_MULTIPROCESS:
+        main_logger.warning('Multiprocess parallelism mode not well-suited for Windows system. '
+                            'Try use ParallelismMode.PARALLELISM_MODE_THREADPOOL.')
+
+    elif platform.system() == "Linux" and parallelism_mode == ParallelismMode.PARALLELISM_MODE_THREADPOOL:
+        main_logger.warning('Multiprocess parallelism mode not well-suited for Windows system. '
+                            'Try use ParallelismMode.PARALLELISM_MODE_MULTIPROCESS.')
 
     if thread_count == 0:
         main_logger.warning('Parameter thread_count passed == 0. Did you mean 1? '
@@ -66,15 +83,25 @@ def apply_classification_model_parallel(images: List[np.ndarray],
                               f'to perform ANN call in one sitting.')
             batch_size = max_len
 
-    with Pool() as pool:
-        params = [(idx, x, model_name, model_version, endpoint_url, batch_size, normalization) for idx, x
-                  in enumerate(images_split)]
-        result = pool.starmap(__apply_model_with_order, params)
+    result = []
 
-    __sort_results(result)
-    chained = itertools.chain.from_iterable((x[1] for x in result))
+    if parallelism_mode == ParallelismMode.PARALLELISM_MODE_MULTIPROCESS:
+        with multiprocess.pool.Pool(len(images_split)) as pool:
+            mpp_results = [pool.apply_async(apply_classification_model, (images_slice, model_name, model_version, endpoint_url, batch_size, normalization)) for images_slice in images_split]
 
-    return list(chained)
+            for mpp_result in mpp_results:
+                result.extend(mpp_result.get())
+
+    elif parallelism_mode == ParallelismMode.PARALLELISM_MODE_THREADPOOL:
+        with ThreadPoolExecutor(max_workers=len(images_split)) as executor:
+            futures = [executor.submit(apply_classification_model, images_slice, model_name, model_version, endpoint_url,
+                                       batch_size, normalization)
+                       for images_slice in images_split]
+
+            for future in futures:
+                result.extend(future.result())
+
+    return result
 
 
 @save_and_restore_kmp_duplicate_lib_ok
@@ -120,18 +147,6 @@ def apply_classification_model(images: List[np.ndarray],
     return results
 
 
-def __apply_model_with_order(thread_index: int, *args) -> Tuple[int, List[np.ndarray]]:
-    """
-    Proxy function that runs apply_classification_model on passed arguments to use in a separate thread. Is used to
-    track batches of results from different threads and restore sorting afterwards
-
-    :param thread_index: index of a thread
-    :param args: arguments set that will be passed into apply_classification_model
-    :return: List of resulting probabilities of classes (np.ndarray) grouped by thread index
-    """
-    return thread_index, apply_classification_model(*args)
-
-
 def __get_bounds_of_batches_by_size(input_list: List, batch_size: int) -> List[Tuple[int, int]]:
     """
     Creates a list of batch bounds based on a list and size of a batch. Doesn't modify a list.
@@ -169,15 +184,6 @@ def __apply_classification_model_to_batch(all_images: List[np.ndarray], batch_bo
     predictions = tfl.get_tensorflow_prediction(tensor_batch, model_predict_url)
 
     return [np.asarray(prediction, dtype=np.float32) for prediction in predictions]
-
-
-@log_metrics('irym_tfs_connector.metrics')
-def __sort_results(result: List[Tuple[int, List[np.ndarray]]]) -> None:
-    """
-    Sorts processing results by process number
-    :param result: List of tuples (process number, list of resulting images)
-    """
-    result.sort(key=lambda x: x[0])
 
 
 def parse_classification_results_into_classes_list(classification_results: List[np.ndarray]) -> np.ndarray:

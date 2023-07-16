@@ -1,9 +1,11 @@
 import datetime
-import itertools
+import json
 import logging
-from multiprocessing import Pool
+import platform
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Callable
 
+import multiprocess.pool
 import numpy as np
 
 from tfs_connector import tensorflow_layer as tfl
@@ -14,24 +16,8 @@ from tfs_connector.kmp_duplicate_lib_decorator import save_and_restore_kmp_dupli
 from tfs_connector.metadata import get_model_input_size_from_metadata
 from tfs_connector.metrics import log_metrics
 from tfs_connector.model_urls import get_model_predict_url
-
-
-@log_metrics('tfs_connector.metrics')
-def parse_segmentation_results_into_probability_and_rois(results: List[np.ndarray], probabilities_class: int) \
-        -> Tuple[float, List[np.ndarray]]:
-    """
-    Parses TF ANN results into probability (total) and ROI (regions of interests)
-    :param results: A list of masks  you got from apply_segmentation_model or apply_segmentation_model_parallel
-    :return: (Total probability, List of ROI)
-    """
-    if probabilities_class < 0:
-        raise AttributeError('Probabilities class param must be greater then 0')
-
-    probabilities = [result[:, :, probabilities_class] for result in results]
-    probs = [np.where(r > 0.5, r, 0) for r in probabilities]
-    rois = [np.where(p > 0, 1, 0) for p in probs]
-    total_prob, total_area = sum([np.sum(p) for p in probs]), sum([np.sum(r) for r in rois])
-    return (total_prob / total_area) if total_area else 0, rois
+from tfs_connector.parallelism_mode import ParallelismMode
+from tfs_connector.resize_options import ResizeOptions
 
 
 @log_metrics('irym_tfs_connector.metrics')
@@ -40,10 +26,10 @@ def apply_segmentation_model_parallel(images: List[np.ndarray],
                                       endpoint_url: str,
                                       model_version: int = 1,
                                       batch_size: int = 60,
-                                      chunk_size: Optional[Tuple[int, int]] = None,
-                                      model_input_size: Optional[Tuple[int, int]] = None,
+                                      resize_options: Optional[ResizeOptions] = None,
                                       normalization: Optional[Callable[[np.ndarray], np.ndarray]] = None,
                                       thread_count: int = 3,
+                                      parallelism_mode: int = 0,
                                       comfort_max_batch_size: Optional[int] = None) -> List[np.ndarray]:
     """
     Applies remote ANN segmentation model (served by TensorFlow Serving) to a list of images in a series of API
@@ -51,13 +37,14 @@ def apply_segmentation_model_parallel(images: List[np.ndarray],
     separate thread. In each thread each image is cut into chunks according to chunk_size parameter, then each chunk
     will be resized to model_input_size. All chunks of a batch will be smushed together and sent to TFS to process.
 
+    :param parallelism_mode: parallelism mode. Use ParallelismMode.PARALLELISM_MODE_* constants to fill correctly.
+    Default multiprocess.
+    :param resize_options: resize options. If omitted, will be replaced with ResizeOptions.default()
     :param images: List of images (np.ndarray) to process
     :param model_name: ANN model name on TFS
     :param model_version: ANN model version
     :param endpoint_url: TFS rest api endpoint URL
     :param batch_size: number of images smushed in a single query to ANN
-    :param chunk_size: size of a chunk each image would be cut into. If passed None will be set to default (256, 256).
-    :param model_input_size: size of a model input (2D). If None it will be computed from ANN metadata
     :param thread_count: number of parallel threads to run. If 0 or 1 passed single-threaded version of a function will
      be run.
     :param normalization: Normalization function to apply when image is converted into tensor
@@ -66,20 +53,34 @@ def apply_segmentation_model_parallel(images: List[np.ndarray],
     :return: Results of ANN processing, list of images (np.ndarray)
     """
 
+    start_time = datetime.datetime.utcnow()
+
     main_logger = logging.getLogger('irym_tfs_connector.main')
+
+    if parallelism_mode not in ParallelismMode.ALLOWED_PARALLELISM_MODES:
+        raise ValueError(f'Parameter parallelism_mode={parallelism_mode} has value that is not '
+                         f'in allowed parallelism modes={ParallelismMode.ALLOWED_PARALLELISM_MODES}')
+
+    if platform.system() == "Windows" and parallelism_mode == ParallelismMode.PARALLELISM_MODE_MULTIPROCESS:
+        main_logger.warning('Multiprocess parallelism mode not well-suited for Windows system. '
+                            'Try use ParallelismMode.PARALLELISM_MODE_THREADPOOL.')
+
+    elif platform.system() == "Linux" and parallelism_mode == ParallelismMode.PARALLELISM_MODE_THREADPOOL:
+        main_logger.warning('Multiprocess parallelism mode not well-suited for Windows system. '
+                            'Try use ParallelismMode.PARALLELISM_MODE_MULTIPROCESS.')
 
     if thread_count == 0:
         main_logger.warning('Parameter thread_count passed == 0. Did you mean 1? '
                             'Running single-thread version without parallelism.')
-        return apply_segmentation_model(images, endpoint_url, model_name, model_version, batch_size, chunk_size,
-                                        model_input_size, normalization=normalization)
+        return apply_segmentation_model(images, endpoint_url, model_name, model_version, batch_size, resize_options,
+                                        normalization=normalization)
 
     if thread_count == 1:
         main_logger.warning('Parameter thread_count passed == 1. '
                             'Did you mean to use single-threaded version of a function? '
                             'Running single-thread version without parallelism.')
-        return apply_segmentation_model(images, endpoint_url, model_name, model_version, batch_size, chunk_size,
-                                        model_input_size, normalization=normalization)
+        return apply_segmentation_model(images, endpoint_url, model_name, model_version, batch_size, resize_options,
+                                        normalization=normalization)
 
     images_split = [x for x in split_evenly(images, thread_count)]
 
@@ -91,16 +92,42 @@ def apply_segmentation_model_parallel(images: List[np.ndarray],
                               f'to perform ANN call in one sitting.')
             batch_size = max_len
 
-    with Pool() as pool:
-        result = pool.starmap(__apply_model_with_order, [
-            (idx, images_slice, endpoint_url, model_name, model_version,
-             batch_size, chunk_size, model_input_size, normalization) for idx, images_slice in
-            enumerate(images_split)])
+    result = []
 
-    __sort_results(result)
-    chained = itertools.chain.from_iterable((x[1] for x in result))
+    if parallelism_mode == ParallelismMode.PARALLELISM_MODE_MULTIPROCESS:
+        with multiprocess.pool.Pool(len(images_split)) as pool:
+            mpp_results = [pool.apply_async(apply_segmentation_model, (
+            images_slice, endpoint_url, model_name, model_version, batch_size, resize_options, normalization)) for
+                           images_slice in images_split]
 
-    return list(chained)
+            for mpp_result in mpp_results:
+                result.extend(mpp_result.get())
+
+    elif parallelism_mode == ParallelismMode.PARALLELISM_MODE_THREADPOOL:
+        with ThreadPoolExecutor(max_workers=len(images_split)) as executor:
+            futures = [executor.submit(apply_segmentation_model, images_slice, endpoint_url, model_name, model_version,
+                                       batch_size, resize_options, normalization)
+                       for images_slice in images_split]
+
+            for future in futures:
+                result.extend(future.result())
+
+    end_time = datetime.datetime.utcnow()
+
+    __log_stats(main_logger, end_time, start_time, images, thread_count)
+    return result
+
+
+def __log_stats(main_logger, end_time, start_time, images, thread_count):
+    interval = end_time - start_time
+    delta_string = str((end_time - start_time))
+    seconds_per_image = round(interval.total_seconds() / len(images), 4) if len(images) != 0 else 0
+    loginfo = {'images': len(images), 'threads': thread_count, 'total_seconds': interval.total_seconds(),
+               'seconds_per_image': seconds_per_image}
+    main_logger.info(f'ANN processing for {len(images)} images in '
+                     f'{thread_count} threads took {delta_string} ({interval.total_seconds()} seconds, '
+                     f'{seconds_per_image} per image.')
+    main_logger.info(json.dumps(loginfo))
 
 
 @save_and_restore_kmp_duplicate_lib_ok
@@ -110,8 +137,7 @@ def apply_segmentation_model(images: List[np.ndarray],
                              model_name: str,
                              model_version: int = 1,
                              batch_size: int = 30,
-                             chunk_size: Optional[Tuple[int, int]] = None,
-                             model_input_size: Optional[Tuple[int, int]] = None,
+                             resize_options: Optional[ResizeOptions] = None,
                              normalization: Optional[Callable[[np.ndarray], np.ndarray]] = None) -> List[np.ndarray]:
     """
     Applies remote ANN segmentation model (served by TensorFlow Serving) to a list of images in a series of API
@@ -124,20 +150,24 @@ def apply_segmentation_model(images: List[np.ndarray],
     :param model_version: ANN model version
     :param endpoint_url: TFS rest api endpoint URL
     :param batch_size: number of images smushed in a single query to ANN
-    :param chunk_size: size of a chunk each image would be cut into. If passed None will be set to (256, 256).
-    :param model_input_size: size of a model input (2D). If None it will be computed from ANN metadata
+    :param resize_options: resize options. If omitted, will be replaced with ResizeOptions.default()
     :param normalization: Normalization function to apply when image is converted into tensor
-    :param probabilities_class: Index of class to extract probability mask from
     :return: Results of ANN processing, list of images (np.ndarray)
     """
 
     if images is None or len(images) == 0:
         return []
 
-    results = []
-
     pulse_logger = logging.getLogger('irym_tfs_connector.pulse')
     flow_logger = logging.getLogger('irym_tfs_connector.flow')
+
+    if resize_options is None:
+        resize_options = ResizeOptions.default()
+
+    chunk_size = __get_chunk_size(resize_options, images)
+    model_input_size = resize_options.model_input_size
+
+    results = []
 
     if chunk_size is None:
         chunk_size = (256, 256)
@@ -160,6 +190,14 @@ def apply_segmentation_model(images: List[np.ndarray],
         if model_input_size == (-1, -1):
             flow_logger.warning(f'Model Input Size {model_input_size} means that chunks will be resized by ANN.')
 
+    else:
+        if model_input_size == chunk_size:
+            flow_logger.info(f'Model Input Size parameter received equals to Chunk Size: {model_input_size}. '
+                             f'No chunk resizing applied.')
+        else:
+            flow_logger.info(f'Model Input Size received: {model_input_size}. Chunks will be resized from {chunk_size} '
+                             f'to {model_input_size} before sending to ANN.')
+
     batches_bounds = __get_bounds_of_batches_by_size(images, batch_size)
 
     images = pad_images(images, chunk_size)
@@ -178,6 +216,8 @@ def apply_segmentation_model(images: List[np.ndarray],
                                                             model_predict_url,
                                                             chunk_size,
                                                             model_input_size,
+                                                            chunk2net_resize_interpolation=resize_options.chunk2net_resize_interpolation,
+                                                            net2map_resize_interpolation=resize_options.net2map_resize_interpolation,
                                                             normalization=normalization)
         results.extend(stack_results)
         ended = datetime.datetime.utcnow()
@@ -186,16 +226,14 @@ def apply_segmentation_model(images: List[np.ndarray],
     return results
 
 
-def __apply_model_with_order(thread_index: int, *args) -> Tuple[int, List[np.ndarray]]:
-    """
-    Proxy function that runs apply_segmentation_model on passed arguments to use in a separate thread. Is used to
-    track batches of results from different threads and restore sorting afterwards
-
-    :param thread_index: index of a thread
-    :param args: arguments set that will be passed into apply_segmentation_model
-    :return: List of resulting images grouped by thread index
-    """
-    return thread_index, apply_segmentation_model(*args)
+def __get_chunk_size(resize_options, images):
+    if resize_options.chunking_mode == ResizeOptions.CHUNKING_MODE_STATIC:
+        chunk_size = resize_options.chunk_size
+    elif resize_options.chunking_mode == ResizeOptions.CHUNKING_MODE_DYNAMIC:
+        chunk_size = resize_options.get_dynamic_chunk_size((images[0].shape[0], images[0].shape[1]))
+    else:
+        raise ValueError(f'''Chunking mode {resize_options.chunking_mode} not supported by segmentation''')
+    return chunk_size
 
 
 def __get_bounds_of_batches_by_size(input_list: List, batch_size: int) -> List[Tuple[int, int]]:
@@ -220,6 +258,8 @@ def __apply_segmentation_model_to_batch(all_images: List[np.ndarray],
                                         model_predict_url: str,
                                         chunk_size: Tuple[int, int],
                                         model_input_size: Tuple[int, int],
+                                        chunk2net_resize_interpolation: int,
+                                        net2map_resize_interpolation: int,
                                         normalization: Optional[Callable[[np.ndarray], np.ndarray]] = None) \
         -> List[np.ndarray]:
     """
@@ -240,11 +280,13 @@ def __apply_segmentation_model_to_batch(all_images: List[np.ndarray],
                                                              batch_bounds,
                                                              chunk_size,
                                                              model_input_size,
+                                                             chunk2net_resize_interpolation=chunk2net_resize_interpolation,
                                                              normalization=normalization)
 
     predictions = tfl.get_tensorflow_prediction(streamlined_chunked_batch, model_predict_url)
 
-    linear_mask = __calculate_mask_patches_for_tfs_predictions(predictions, chunk_size)
+    linear_mask = __calculate_mask_patches_for_tfs_predictions(predictions, chunk_size,
+                                                               net2map_resize_interpolation=net2map_resize_interpolation)
 
     pathology_maps = __combine_masks_into_pathology_maps(linear_mask,
                                                          batch_thickness, original_image_size,
@@ -253,7 +295,8 @@ def __apply_segmentation_model_to_batch(all_images: List[np.ndarray],
     return pathology_maps
 
 
-def __calculate_mask_patches_for_tfs_predictions(predictions: list, chunk_size: Tuple[int, int]) -> List[np.ndarray]:
+def __calculate_mask_patches_for_tfs_predictions(predictions: list, chunk_size: Tuple[int, int],
+                                                 net2map_resize_interpolation: int) -> List[np.ndarray]:
     """
     Calculates masks from TensorFlow predictions, resizes them and returns as a linear list of ndarrays
     :param predictions: A list of TensorFlow predictions
@@ -263,7 +306,7 @@ def __calculate_mask_patches_for_tfs_predictions(predictions: list, chunk_size: 
     linear_tfserving_response = []
     for prediction in predictions:
         mask_patch = np.array(prediction)
-        resized_mask_patch = resize_image(mask_patch, chunk_size)
+        resized_mask_patch = resize_image(mask_patch, chunk_size, interpolation=net2map_resize_interpolation)
         linear_tfserving_response.append(resized_mask_patch)
     return linear_tfserving_response
 
@@ -272,6 +315,7 @@ def __calculate_mask_patches_for_tfs_predictions(predictions: list, chunk_size: 
 def __create_tfs_input_for_batch(all_images: List[np.ndarray], batch_bounds: Tuple[int, int],
                                  chunk_size: Tuple[int, int],
                                  model_input_size: Tuple[int, int],
+                                 chunk2net_resize_interpolation: int,
                                  normalization: Optional[Callable[[np.ndarray], np.ndarray]] = None) \
         -> List[np.ndarray]:
     """
@@ -288,18 +332,10 @@ def __create_tfs_input_for_batch(all_images: List[np.ndarray], batch_bounds: Tup
         chunked_image: List[np.ndarray] = cut_image_into_chunks(all_images[idx],
                                                                 chunk_size,
                                                                 model_input_size,
+                                                                interpolation=chunk2net_resize_interpolation,
                                                                 normalization=normalization)
         result.extend(chunked_image)
     return result
-
-
-@log_metrics('irym_tfs_connector.metrics')
-def __sort_results(result: List[Tuple[int, List[np.ndarray]]]) -> None:
-    """
-    Sorts processing results by process number
-    :param result: List of tuples (process number, list of resulting images)
-    """
-    result.sort(key=lambda x: x[0])
 
 
 def __create_mask_default(prediction: list) -> np.ndarray:
@@ -349,8 +385,10 @@ def __combine_masks_into_pathology_maps(linear_mask: List[np.ndarray],
 
         for x in range(request_map_shape[0]):
             for y in range(request_map_shape[1]):
-                pathology_map[(x * chunk_size[0]): (x + 1) * chunk_size[0],
-                y * chunk_size[1]: (y + 1) * chunk_size[1]] = np.reshape(patchwork[x][y], chunk_shape)
+                pathology_map[
+                (x * chunk_size[0]): (x + 1) * chunk_size[0],
+                y * chunk_size[1]: (y + 1) * chunk_size[1]
+                ] = np.reshape(patchwork[x][y], chunk_shape)
         result.append(pathology_map)
 
     return result

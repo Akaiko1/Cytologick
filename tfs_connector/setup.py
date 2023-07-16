@@ -4,8 +4,8 @@ import setuptools
 #     long_description = fh.read()
 
 setuptools.setup(
-    name='tfs_connector',
-    version='0.6.0',
+    name='irym_tfs_connector',
+    version='0.8.5',
     author='mahavoid',
     description='A small library that helps feed TensorFlow Serving REST API images.',
     # long_description=long_description,
@@ -24,5 +24,8 @@ setuptools.setup(
                       'orjson'
                       'os',
                       'requests',
-                      'typing', ]
+                      'typing',
+                      'scipy',
+                      'dill',
+                      'multiprocess']
 )

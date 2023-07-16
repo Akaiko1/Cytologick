@@ -19,6 +19,8 @@ keras.backend.set_image_data_format('channels_last')
 
 K = tf.keras.backend
 
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
 
 class Augment(tf.keras.layers.Layer):
 
@@ -150,7 +152,6 @@ def __to_categorical(image, mask):
 
 
 def display(display_list, tensors=True):
-    os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
     plt.figure(figsize=(15, 15))
 
     title = ['Input Image', 'True Mask', 'Predicted Mask']
