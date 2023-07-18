@@ -29,11 +29,11 @@ def tf_test():
     source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
 
     model = tf.keras.models.load_model('demetra_main', compile=False)
-    pathology_map = inference.apply_model(source, model, shapes=(256, 256))
+    pathology_map = inference.apply_model_raw(source, model, 3, shapes=(256, 256))
 
     canvas = np.zeros(source.shape)
-    canvas[..., 1] = np.where(pathology_map == 1, 255, 0)
-    canvas[..., 2] = np.where(pathology_map == 2, 255, 0)
+    canvas[..., 1] = np.where(pathology_map[..., 1] >= 0.5, 255, 0)
+    canvas[..., 2] = np.where(pathology_map[..., 2] >= 0.5, 255, 0)
     cv2.imwrite('test_result.jpg', canvas)
 
     ai.display([source, pathology_map], tensors=False)
@@ -105,6 +105,6 @@ def tf_test_remote():
 
 
 if __name__ == '__main__':
-    #tf_test()
-    tf_test_remote()
+    tf_test()
+    # tf_test_remote()
     # torch_test()

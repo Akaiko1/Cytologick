@@ -7,7 +7,7 @@ import config
 import xml.etree.ElementTree as ET
 
 
-def main(temp_folder=config.TEMP_FOLDER, slides_folder=config.HDD_SLIDES):
+def main(temp_folder=config.TEMP_FOLDER, slides_folder=config.HDD_SLIDES_SVS):
     if not os.path.exists(temp_folder):
         os.mkdir(temp_folder)
 

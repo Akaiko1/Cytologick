@@ -1,11 +1,12 @@
 import os
 
 #region General
+# CURRENT_SLIDE = 'current\slide-2022-11-11T11-10-38-R1-S18.mrxs'
 CURRENT_SLIDE = 'current\slide-2022-09-12T15-38-25-R1-S2.mrxs'
 CURRENT_SLIDE_XML = 'current\slide-2022-09-12T15-38-25-R1-S2\Data0021.dat'
 OPENSLIDE_PATH = os.path.abspath('openslide\\bin') # 'E:\\Github\\DemetraAI\\openslide\\bin'
-HDD_SLIDES = 'R:\\CYTOLOGY'
-HDD_SLIDES_SVS = 'R:\\CYTOLOGY_2'
+HDD_SLIDES = 'E:\\CYTOLOGY'
+HDD_SLIDES_SVS = 'E:\\CYTOLOGY_2'
 TEMP_FOLDER = 'temp'
 #endregion
 
