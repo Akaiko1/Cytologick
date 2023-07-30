@@ -48,7 +48,7 @@ def tf_test_remote():
 
     start = time.time()
     resize_ops = tfs.ResizeOptions(chunk_size=(256, 256), model_input_size=(128, 128))
-    pathology_map = tfs.apply_segmentation_model_parallel([source]*4, endpoint_url='http://194.113.237.3:7500', model_name='demetra', batch_size=2,
+    pathology_map = tfs.apply_segmentation_model_parallel([source]*4, endpoint_url='http://89.249.55.67:7500', model_name='demetra', batch_size=2,
                                                   resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=4)
     pathology_map = np.asarray(ai.create_mask(pathology_map)[..., 0])[:source.shape[0], :source.shape[1]]
     print(f'Remote execution took {time.time() - start} seconds')
@@ -105,6 +105,6 @@ def tf_test_remote():
 
 
 if __name__ == '__main__':
-    tf_test()
-    # tf_test_remote()
+    # tf_test()
+    tf_test_remote()
     # torch_test()

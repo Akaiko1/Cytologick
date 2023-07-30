@@ -19,7 +19,7 @@ with os.add_dll_directory(config.OPENSLIDE_PATH):
 
 
 class Preview(QWidget):
-    Modes = ['smooth', 'direct']
+    Modes = ['smooth', 'direct', 'remote']
 
     def __init__(self, parent, pixmap):
         super().__init__()
@@ -75,6 +75,9 @@ class Preview(QWidget):
                 pathology_map = inference.apply_model(source, self.parent.model, shapes=(128, 128))
             case 'smooth':
                 pathology_map = inference.apply_model_smooth(source, self.parent.model, shape=128)
+            case 'remote':
+                pathology_map = inference.apply_remote(source)
+
 
         map_to_display = self.process_pathology_map(pathology_map)
         cv2.imwrite('gui_map.png', map_to_display)

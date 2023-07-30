@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 
 import demetra.ai as ai
+import tfs_connector as tfs
 import demetra.smooth as smooth
 import config
 
@@ -47,6 +48,17 @@ def apply_model_raw(source, model, classes, shapes=config.IMAGE_SHAPE):
             pathology_map[x: x + shapes[0], y: y + shapes[1]] = cv2.resize(prediction, shapes)
 
     return pathology_map[:source.shape[0], :source.shape[1]]
+
+
+def apply_remote(source, chunk_size=(256, 256), model_input_size=(128, 128), endpoint_url='http://89.249.55.67:7500',
+                  model_name='demetra', batch_size=2, parallelism_mode=1, thread_count=4):
+    """Aplly cloud model"""
+    resize_ops = tfs.ResizeOptions(chunk_size=chunk_size, model_input_size=model_input_size)
+    pathology_map = tfs.apply_segmentation_model_parallel([source], endpoint_url=endpoint_url, model_name=model_name, batch_size=batch_size,
+                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=parallelism_mode, thread_count=thread_count)
+    pathology_map = np.asarray(ai.create_mask(pathology_map)[..., 0])[:source.shape[0], :source.shape[1]]
+
+    return pathology_map
 
 
 def apply_model_smooth(source, model, shape=config.IMAGE_SHAPE[0]):

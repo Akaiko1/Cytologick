@@ -32,7 +32,7 @@ LABELS = {
 
 #region GUI
 SLIDE_DIR = './current' # Only for GUI
-UNET_PRED_MODE = 'smooth'  # 'direct'
+UNET_PRED_MODE = 'direct' #'smooth'
 #endregion
 
 #region Dataset
