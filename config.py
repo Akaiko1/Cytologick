@@ -14,6 +14,7 @@ TEMP_FOLDER = 'temp'
 DATASET_FOLDER = 'dataset'
 MASKS_FOLDER = 'masks' # Inside DATASET_FOLDER
 IMAGES_FOLDER = 'rois' # Inside DATASET_FOLDER
+IMAGE_CHUNK = (256, 256)
 IMAGE_SHAPE = (128, 128)
 CLASSES = 3
 LABELS = {
@@ -32,7 +33,7 @@ LABELS = {
 
 #region GUI
 SLIDE_DIR = './current' # Only for GUI
-UNET_PRED_MODE = 'direct' #'smooth'
+UNET_PRED_MODE = 'remote' # 'smooth', 'direct'
 #endregion
 
 #region Dataset

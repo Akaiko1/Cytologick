@@ -56,9 +56,8 @@ def apply_remote(source, chunk_size=(256, 256), model_input_size=(128, 128), end
     resize_ops = tfs.ResizeOptions(chunk_size=chunk_size, model_input_size=model_input_size)
     pathology_map = tfs.apply_segmentation_model_parallel([source], endpoint_url=endpoint_url, model_name=model_name, batch_size=batch_size,
                                                   resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=parallelism_mode, thread_count=thread_count)
-    pathology_map = np.asarray(ai.create_mask(pathology_map)[..., 0])[:source.shape[0], :source.shape[1]]
 
-    return pathology_map
+    return pathology_map[0][:source.shape[0], :source.shape[1]]
 
 
 def apply_model_smooth(source, model, shape=config.IMAGE_SHAPE[0]):

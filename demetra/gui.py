@@ -19,7 +19,8 @@ with os.add_dll_directory(config.OPENSLIDE_PATH):
 
 
 class Preview(QWidget):
-    Modes = ['smooth', 'direct', 'remote']
+    modes = ['smooth', 'direct', 'remote']
+    mode_names = ['Локально: избыточно', 'Локально: быстрая', 'Облако: быстрая']
 
     def __init__(self, parent, pixmap):
         super().__init__()
@@ -40,8 +41,13 @@ class Preview(QWidget):
         display_widget.setMaximumWidth(200)
         display_widget.setLayout(display_layout)
 
-        for mode in self.Modes:
-            radiobutton = QRadioButton(mode)
+        for idx, mode in enumerate(self.modes):
+            
+            # guard disabling offline modes
+            if self.parent.model is None and 'remote' not in mode:
+                continue
+
+            radiobutton = QRadioButton(self.mode_names[idx])
             if mode == config.UNET_PRED_MODE:
                 radiobutton.setChecked(True)
             radiobutton.mode = mode
@@ -68,42 +74,30 @@ class Preview(QWidget):
     def runModel(self):
         source = cv2.imread('gui_preview.bmp', 1)
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
-        source = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
+        source_resized = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
 
         match config.UNET_PRED_MODE:
             case 'direct':
-                pathology_map = inference.apply_model(source, self.parent.model, shapes=(128, 128))
+                pathology_map = inference.apply_model(source_resized, self.parent.model, shapes=(128, 128))
             case 'smooth':
-                pathology_map = inference.apply_model_smooth(source, self.parent.model, shape=128)
+                pathology_map = inference.apply_model_smooth(source_resized, self.parent.model, shape=128)
             case 'remote':
                 pathology_map = inference.apply_remote(source)
 
-
-        map_to_display = self.process_pathology_map(pathology_map)
+        map_to_display = self.process_pathology_map(pathology_map, config.UNET_PRED_MODE)
         cv2.imwrite('gui_map.png', map_to_display)
 
         self.map = QPixmap('gui_map.png')
         self.display.repaint()
 
-    # def apply_colors(self, pathology_map):
-    #     alpha_map = np.zeros((pathology_map.shape[0], pathology_map.shape[1], 4))
+    def process_pathology_map(self, pathology_map, mode):
+        if mode in ['remote']:
+            markup, stats = drawing.process_dense_pathology_map(pathology_map)
+        else:
+            markup, stats = drawing.process_sparse_pathology_map(pathology_map)
 
-    #     alpha_map[:, :, 0] = np.where(pathology_map == 1, 255, 0)
-    #     alpha_map[:, :, 2] = np.where(pathology_map == 2, 255, 0)
-    #     alpha_map[:, :, 3] = np.where(pathology_map == 1, 50, alpha_map[:, :, 3])
-    #     alpha_map[:, :, 3] = np.where(pathology_map == 2, 125, alpha_map[:, :, 3])
-    #     return alpha_map
-    
-    def process_pathology_map(self, pathology_map):
-        markup, stats = drawing.process_sparse_pathology_map(pathology_map)
         self.set_info_text(stats)
         return markup
-
-    # def process_cells(self, markup, stats, single_cell_contours, atypical_contours):
-    #     drawing.process_cells_sparse(markup, stats, single_cell_contours, atypical_contours)
-
-    # def process_clusters(self, markup, stats, cluster_contours, atypical_contours):
-    #     drawing.process_clusters_sparse(markup, stats, cluster_contours, atypical_contours)
 
     def set_info_text(self, stats):
         text = ''
@@ -178,7 +172,7 @@ class Viewer(QWidget):
     doDraw = False
     drag = False
     slideImage = None
-    model = tf.keras.models.load_model('demetra_main', compile=False)
+    model = None
 
     def __init__(self):
         super().__init__()
@@ -193,6 +187,10 @@ class Viewer(QWidget):
 
         self.slide_menu = Menu(self)
         self.slide_menu.show()
+
+        if os.path.exists('demetra_main'):
+            print('Local model located, loading')
+            self.model = tf.keras.models.load_model('demetra_main', compile=False)
 
     def setViewerLayout(self):
         display = QHBoxLayout()
@@ -230,6 +228,7 @@ class Viewer(QWidget):
         if height < 0:
             y, height = y + height, abs(height)
 
+        width, height = drawing.get_corrected_size(width, height, config.IMAGE_CHUNK[0])
         region = self.current_slide.read_region((x, y), 0, (width, height))
         region.save('gui_preview.bmp', 'bmp')
 

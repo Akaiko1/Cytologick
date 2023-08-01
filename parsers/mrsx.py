@@ -135,7 +135,6 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
              classes=classes, zoom_levels=zoom_levels, rect_name=rect_name, debug=debug)
 
 
-
 def __extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}, debug=False):
     with os.add_dll_directory(openslide_path):
         import openslide
