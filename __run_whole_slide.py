@@ -3,6 +3,7 @@ import time
 import cv2
 import config
 import random
+import demetra.graphics as graphics
 
 import numpy as np
 import tfs_connector as tfs
@@ -58,25 +59,33 @@ def main():
     print(len(probes_bin_rescaled))
 
     selected_probes = []
-    for probe in random.sample(probes_bin_rescaled, 4):
-        probe_image = slide.read_region((probe[0], probe[1]), 0, (int(sample_size[0] * downsampling_coeff), int(sample_size[1] * downsampling_coeff)))
-        probe_image = np.array(probe_image)
-        probe_image = cv2.cvtColor(probe_image, cv2.COLOR_RGBA2RGB)
-        _ = plt.imshow(probe_image)
-        plt.show()
-        selected_probes.append(probe_image)
-        print(probe_image.shape)
+    for probe in random.sample(probes_bin_rescaled, 24):
+
+        probe_w, probe_h = int(sample_size[0] * downsampling_coeff), int(sample_size[1] * downsampling_coeff)
+        probe_w, probe_h = graphics.get_corrected_size(probe_w, probe_h, 1024)
+
+        print(f'Corrected size: {probe_w, probe_h}')
+
+        for x in range(probe[0], probe[0] + probe_w, 1024):
+             for y in range(probe[1], probe[1] + probe_h, 1024):
+                probe_image = slide.read_region((x, y), 0, (1024, 1024))
+                probe_image = np.array(probe_image)
+                probe_image = cv2.cvtColor(probe_image, cv2.COLOR_RGBA2RGB)
+                # _ = plt.imshow(probe_image)
+                # plt.show()
+                selected_probes.append(probe_image)
+                # print(probe_image.shape)
     
     start = time.time()
     print(f'Selected probes quantity: {len(selected_probes)}')
     resize_ops = tfs.ResizeOptions(chunk_size=(256, 256), model_input_size=(128, 128))
-    pathology_map = tfs.apply_segmentation_model_parallel(selected_probes, endpoint_url='http://89.249.55.67:7500', model_name='demetra', batch_size=1,
-                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=4)
+    pathology_map = tfs.apply_segmentation_model_parallel(selected_probes, endpoint_url='http://89.249.55.67:7500', model_name='demetra', batch_size=2,
+                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=8)
     print(f'Remote execution took {time.time() - start} seconds')
 
-    for idx, probe in enumerate(selected_probes):
-        map = np.asarray(ai.create_mask([pathology_map[idx]]))[:probe.shape[0], :probe.shape[1]]
-        ai.display([probe, map], tensors=False)
+    # for idx, probe in enumerate(selected_probes):
+    #     map = np.asarray(ai.create_mask([pathology_map[idx]]))[:probe.shape[0], :probe.shape[1]]
+    #     ai.display([probe, map], tensors=False)
 
 
 if __name__ == '__main__':
