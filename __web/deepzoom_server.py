@@ -59,7 +59,7 @@ def __process_global(level, coords):
 
 
 DRAWING_LIST = {
-    'cnt_1': [[53844, 123139], [128, 128], [[[53844, 123139]], [[53944, 123239]], [[53874, 123179]], [[53844, 123139]]]]
+    'cnt_1': [[53844, 123139], [99, 99], [[[53844, 123139]], [[53944, 123239]], [[53874, 123179]], [[53844, 123139]]]]
 }
 
 
@@ -144,27 +144,15 @@ def create_app(config=None, config_file=None):
             tile = np.array(app.slides[slug].get_tile(level, (col, row)))
             (tile_x, tile_y), level, (tile_w, tile_h) = app.slides[slug].get_tile_coordinates(level, (col, row))
 
-            for name, drawing_stats in DRAWING_LIST.items():
-                (draw_x, draw_y), (draw_w, draw_h), cnt = drawing_stats
-                print((draw_x, draw_y), (draw_w, draw_h), name, cnt)
+            for _, drawing_stats in DRAWING_LIST.items():
+                (_, _), (_, _), cnt = drawing_stats
 
-                if level != 2:
-                    continue
+                if level > 0:
+                    tile_w, tile_h = int(tile_w/slide.level_downsamples[level]), int(tile_h/slide.level_downsamples[level])
 
-                if (tile_x <= draw_x <= tile_x + tile_w) and (tile_y <= draw_y <= tile_y + tile_h):
-                    print(f'got in range')
-                    # tile = cv2.circle(tile, (128,128), 10, (0,0,255), 2)
-                    cv2.rectangle(tile, (0,0), (128, 128), (0,255,0), -1)
+                tile_cnt = __get_tile_cnt(level, tile_x, tile_y, cnt)
+                cv2.drawContours(tile, [tile_cnt], -1, (255, 25 * level, 0), -1)
 
-                    tile_cnt = []
-                    for point in cnt:
-                        point_x, point_y = point[0][0], point[0][1]
-                        tile_cnt.append([[point_x - tile_x, point_y - tile_y]])
-                    tile_cnt = np.array(tile_cnt)
-
-                    cv2.drawContours(tile, [tile_cnt], -1, (255, 0, 0), -1)
-
-            print((tile_x, tile_y), level, (tile_w, tile_h))
             tile = PIL.Image.fromarray(np.uint8(tile))
         except KeyError:
             # Unknown slug
@@ -178,6 +166,17 @@ def create_app(config=None, config_file=None):
         resp = make_response(buf.getvalue())
         resp.mimetype = 'image/%s' % format
         return resp
+
+    def __get_tile_cnt(level, tile_x, tile_y, cnt):
+        tile_cnt = []
+        for point in cnt:
+            point_x, point_y = point[0][0] - tile_x, point[0][1] - tile_y
+            if level > 0:
+                point_x, point_y = int(point_x/slide.level_downsamples[level]), int(point_y/slide.level_downsamples[level])
+            tile_cnt.append([[point_x, point_y]])
+
+        tile_cnt = np.array(tile_cnt)
+        return tile_cnt
 
     return app
 
