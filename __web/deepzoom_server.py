@@ -57,11 +57,17 @@ def __process_global(level, coords):
             GLOBAL_PARAMS['coords'].append(coords)
         print(GLOBAL_PARAMS)
 
+
+DRAWING_LIST = {
+    'cnt_1': [[53844, 123139], [128, 128], [[[53844, 123139]], [[53944, 123239]], [[53874, 123179]], [[53844, 123139]]]]
+}
+
+
 def create_app(config=None, config_file=None):
     # Create and configure app
     app = Flask(__name__)
     app.config.from_mapping(
-        DEEPZOOM_SLIDE='slide-2022-09-12T15-38-25-R1-S2.mrxs',
+        DEEPZOOM_SLIDE='G:\Github\DemetraAI\current\slide-2022-09-12T15-38-25-R1-S2.mrxs',
         DEEPZOOM_FORMAT='jpeg',
         DEEPZOOM_TILE_SIZE=254,
         DEEPZOOM_OVERLAP=1,
@@ -128,16 +134,37 @@ def create_app(config=None, config_file=None):
     @app.route('/<slug>_files/<int:level>/<int:col>_<int:row>.<format>')
     def tile(slug, level, col, row, format):
 
-        __process_global(level, (col, row))
+        # __process_global(level, (col, row))
 
         format = format.lower()
         if format != 'jpeg' and format != 'png':
             # Not supported by Deep Zoom
             abort(404)
         try:
-            tile = app.slides[slug].get_tile(level, (col, row))
-            print(app.slides[slug].get_tile_coordinates(level, (col, row)))
-            tile = cv2.circle(np.array(tile), (128,128), 10, (0,0,255), 2)
+            tile = np.array(app.slides[slug].get_tile(level, (col, row)))
+            (tile_x, tile_y), level, (tile_w, tile_h) = app.slides[slug].get_tile_coordinates(level, (col, row))
+
+            for name, drawing_stats in DRAWING_LIST.items():
+                (draw_x, draw_y), (draw_w, draw_h), cnt = drawing_stats
+                print((draw_x, draw_y), (draw_w, draw_h), name, cnt)
+
+                if level != 2:
+                    continue
+
+                if (tile_x <= draw_x <= tile_x + tile_w) and (tile_y <= draw_y <= tile_y + tile_h):
+                    print(f'got in range')
+                    # tile = cv2.circle(tile, (128,128), 10, (0,0,255), 2)
+                    cv2.rectangle(tile, (0,0), (128, 128), (0,255,0), -1)
+
+                    tile_cnt = []
+                    for point in cnt:
+                        point_x, point_y = point[0][0], point[0][1]
+                        tile_cnt.append([[point_x - tile_x, point_y - tile_y]])
+                    tile_cnt = np.array(tile_cnt)
+
+                    cv2.drawContours(tile, [tile_cnt], -1, (255, 0, 0), -1)
+
+            print((tile_x, tile_y), level, (tile_w, tile_h))
             tile = PIL.Image.fromarray(np.uint8(tile))
         except KeyError:
             # Unknown slug
