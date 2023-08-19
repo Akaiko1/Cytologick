@@ -58,8 +58,8 @@ def main():
     probes_bin_rescaled = [[int(e * downsampling_coeff) for e in coords] for coords in probes_bin]
     print(len(probes_bin_rescaled))
 
-    selected_probes = []
-    for probe in random.sample(probes_bin_rescaled, 24):
+    selected_probes, selected_coordinate_shifts = [], []
+    for probe in random.sample(probes_bin_rescaled, 1):
 
         probe_w, probe_h = int(sample_size[0] * downsampling_coeff), int(sample_size[1] * downsampling_coeff)
         probe_w, probe_h = graphics.get_corrected_size(probe_w, probe_h, 1024)
@@ -73,15 +73,22 @@ def main():
                 probe_image = cv2.cvtColor(probe_image, cv2.COLOR_RGBA2RGB)
                 # _ = plt.imshow(probe_image)
                 # plt.show()
+                selected_coordinate_shifts.append((x, y))
                 selected_probes.append(probe_image)
                 # print(probe_image.shape)
     
+    # only for calibration
+    selected_probes = [selected_probes[0]]
+    selected_coordinate_shifts = [selected_coordinate_shifts[0]]
+
     start = time.time()
     print(f'Selected probes quantity: {len(selected_probes)}')
     resize_ops = tfs.ResizeOptions(chunk_size=(256, 256), model_input_size=(128, 128))
-    pathology_map = tfs.apply_segmentation_model_parallel(selected_probes, endpoint_url='http://89.249.55.67:7500', model_name='demetra', batch_size=2,
-                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=8)
+    pathology_map = tfs.apply_segmentation_model_parallel(selected_probes, endpoint_url='http://89.249.55.67:7501', model_name='demetra', batch_size=2,
+                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=4)
     print(f'Remote execution took {time.time() - start} seconds')
+
+    print(selected_coordinate_shifts)
 
     # for idx, probe in enumerate(selected_probes):
     #     map = np.asarray(ai.create_mask([pathology_map[idx]]))[:probe.shape[0], :probe.shape[1]]

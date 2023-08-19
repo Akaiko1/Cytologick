@@ -32,7 +32,7 @@ from unicodedata import normalize
 
 from flask import Flask, abort, make_response, render_template, url_for
 
-OPENSLIDE_PATH = os.path.abspath('G:\\Github\\DemetraAI\\openslide\\bin')
+OPENSLIDE_PATH = os.path.abspath('..\\DemetraAI\\openslide\\bin')
 with os.add_dll_directory(OPENSLIDE_PATH):
     import openslide
 
@@ -67,7 +67,7 @@ def create_app(config=None, config_file=None):
     # Create and configure app
     app = Flask(__name__)
     app.config.from_mapping(
-        DEEPZOOM_SLIDE='G:\Github\DemetraAI\current\slide-2022-09-12T15-38-25-R1-S2.mrxs',
+        DEEPZOOM_SLIDE=os.path.abspath('..\\DemetraAI\\current\\slide-2022-09-12T15-38-25-R1-S2.mrxs'),  # 'G:\Github\DemetraAI\current\slide-2022-09-12T15-38-25-R1-S2.mrxs',
         DEEPZOOM_FORMAT='jpeg',
         DEEPZOOM_TILE_SIZE=254,
         DEEPZOOM_OVERLAP=1,
