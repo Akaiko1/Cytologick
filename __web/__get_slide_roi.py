@@ -114,6 +114,6 @@ def __get_cnts_from_regions(rmaps, shifts):
         shift = shifts[idx]
         for cnt in cnts:
             shifted = [r + shift for r in cnt]
-            result[f'cnt_{idx}'] = [shifts[idx], [], [r.tolist() for r in shifted]]
+            result[f'cnt_{idx}'] = [shifts[idx], [cv2.boundingRect(np.array(shifted))], [r.tolist() for r in shifted]]
 
     return result

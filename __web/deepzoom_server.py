@@ -142,14 +142,16 @@ def create_app(config=None, config_file=None):
             tile = np.array(app.slides[slug].get_tile(level, (col, row)))
             (tile_x, tile_y), level, (tile_w, tile_h) = app.slides[slug].get_tile_coordinates(level, (col, row))
 
-            for name, drawing_stats in DRAWING_LIST.items():
-                (_, _), _, cnt = drawing_stats
+            for _, drawing_stats in DRAWING_LIST.items():
+                (_, _), rect, cnt = drawing_stats
 
                 if level > 0:
-                    tile_w, tile_h = int(tile_w/slide.level_downsamples[level]), int(tile_h/slide.level_downsamples[level])
+                    coeff = slide.level_downsamples[level]
+                    tile_w, tile_h = int(tile_w * coeff), int(tile_h * coeff)
 
-                tile_cnt = __get_tile_cnt(level, tile_x, tile_y, cnt)
-                cv2.drawContours(tile, [tile_cnt], -1, (255, 0, 0), -1)
+                if __check_cnt_tile(tile_w, tile_h, tile_x, tile_y, rect[0]):
+                    tile_cnt = __get_tile_cnt(level, tile_x, tile_y, cnt)
+                    cv2.drawContours(tile, [tile_cnt], -1, (255, 0, 0), -1)
 
             tile = PIL.Image.fromarray(np.uint8(tile))
         except KeyError:
@@ -164,6 +166,18 @@ def create_app(config=None, config_file=None):
         resp = make_response(buf.getvalue())
         resp.mimetype = 'image/%s' % format
         return resp
+    
+    def __check_cnt_tile(tile_w, tile_h, tile_x, tile_y, rect):
+
+        cnt_x, cnt_y, cnt_w, cnt_h = rect
+
+        if tile_x < cnt_x < tile_x + tile_w and tile_y < cnt_y < tile_y + tile_h:
+            return True
+        
+        if tile_x < cnt_x + cnt_w < tile_x + tile_w and tile_y < cnt_y + cnt_h < tile_y + tile_h:
+            return True
+
+        return False
 
     def __get_tile_cnt(level, tile_x, tile_y, cnt):
         tile_cnt = []
