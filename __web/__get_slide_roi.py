@@ -22,9 +22,8 @@ def get_slide(slide_path):
     return openslide.OpenSlide(slide_path)
 
 
-def main():
-    slide = get_slide(config.CURRENT_SLIDE)
-
+def get_slide_rois(slide_path):
+    slide = get_slide(slide_path)
     print(slide.level_downsamples, slide.level_dimensions, slide.level_count)
 
     region_level, region_dimensions, downsampling_coeff = slide.level_count - 2, slide.level_dimensions[slide.level_count - 2], slide.level_downsamples[slide.level_count - 2]
@@ -62,7 +61,7 @@ def main():
     print(len(probes_bin_rescaled))
 
     selected_probes, selected_coordinate_shifts = [], []
-    for probe in random.sample(probes_bin_rescaled, 1):
+    for probe in random.sample(probes_bin_rescaled, 3):
 
         probe_w, probe_h = int(sample_size[0] * downsampling_coeff), int(sample_size[1] * downsampling_coeff)
         probe_w, probe_h = graphics.get_corrected_size(probe_w, probe_h, 1024)
@@ -94,11 +93,12 @@ def main():
     print(selected_coordinate_shifts)
 
     results = __get_cnts_from_regions(pathology_maps, selected_coordinate_shifts)
-    print(results)
 
     # for idx, probe in enumerate(selected_probes):
     #     map = np.asarray(ai.create_mask([pathology_map[idx]]))[:probe.shape[0], :probe.shape[1]]
     #     ai.display([probe, map], tensors=False)
+
+    return results
 
 
 def __get_cnts_from_regions(rmaps, shifts):
@@ -117,8 +117,3 @@ def __get_cnts_from_regions(rmaps, shifts):
             result[f'cnt_{idx}'] = [shifts[idx], [], [r.tolist() for r in shifted]]
 
     return result
-
-
-
-if __name__ == '__main__':
-    main()

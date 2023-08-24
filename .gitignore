@@ -11,3 +11,4 @@ __pycache__/inference.cpython-310.pyc
 *.pyc
 ai/
 *.ini
+.DS_Store

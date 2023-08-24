@@ -14,7 +14,10 @@ import demetra.graphics as drawing
 import numpy as np
 import tensorflow as tf
 
-with os.add_dll_directory(config.OPENSLIDE_PATH):
+if hasattr(os, 'add_dll_directory'):
+    with os.add_dll_directory(config.OPENSLIDE_PATH):
+        import openslide
+else:
     import openslide
 
 
