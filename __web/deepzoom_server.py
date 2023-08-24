@@ -59,7 +59,7 @@ def __process_global(level, coords):
             GLOBAL_PARAMS['coords'].append(coords)
         print(GLOBAL_PARAMS)
 
-DRAWING_LIST = gsr.get_slide_rois(os.path.abspath(os.path.join('current', 'slide-2022-09-12T15-38-25-R1-S2.mrxs')))
+DRAWING_LIST = {}
 
 def create_app(config=None, config_file=None):
     # Create and configure app
@@ -183,88 +183,92 @@ def slugify(text):
     text = normalize('NFKD', text.lower()).encode('ascii', 'ignore').decode()
     return re.sub('[^a-z0-9]+', '-', text)
 
+def start_web():
+    global DRAWING_LIST
 
-parser = OptionParser(usage='Usage: %prog [options] [slide]')
-parser.add_option(
-    '-B',
-    '--ignore-bounds',
-    dest='DEEPZOOM_LIMIT_BOUNDS',
-    default=True,
-    action='store_false',
-    help='display entire scan area',
-)
-parser.add_option(
-    '-c', '--config', metavar='FILE', dest='config', help='config file'
-)
-parser.add_option(
-    '-d',
-    '--debug',
-    dest='DEBUG',
-    action='store_true',
-    help='run in debugging mode (insecure)',
-)
-parser.add_option(
-    '-e',
-    '--overlap',
-    metavar='PIXELS',
-    dest='DEEPZOOM_OVERLAP',
-    type='int',
-    help='overlap of adjacent tiles [1]',
-)
-parser.add_option(
-    '-f',
-    '--format',
-    metavar='{jpeg|png}',
-    dest='DEEPZOOM_FORMAT',
-    help='image format for tiles [jpeg]',
-)
-parser.add_option(
-    '-l',
-    '--listen',
-    metavar='ADDRESS',
-    dest='host',
-    default='127.0.0.1',
-    help='address to listen on [127.0.0.1]',
-)
-parser.add_option(
-    '-p',
-    '--port',
-    metavar='PORT',
-    dest='port',
-    type='int',
-    default=5000,
-    help='port to listen on [5000]',
-)
-parser.add_option(
-    '-Q',
-    '--quality',
-    metavar='QUALITY',
-    dest='DEEPZOOM_TILE_QUALITY',
-    type='int',
-    help='JPEG compression quality [75]',
-)
-parser.add_option(
-    '-s',
-    '--size',
-    metavar='PIXELS',
-    dest='DEEPZOOM_TILE_SIZE',
-    type='int',
-    help='tile size [254]',
-)
+    DRAWING_LIST = gsr.get_slide_rois(os.path.abspath(os.path.join('current', 'slide-2022-09-12T15-38-25-R1-S2.mrxs')))
 
-(opts, args) = parser.parse_args()
-config = {}
-config_file = opts.config
-# Set only those settings specified on the command line
-for k in dir(opts):
-    v = getattr(opts, k)
-    if not k.startswith('_') and v is not None:
-        config[k] = v
-# Set slide file if specified
-try:
-    config['DEEPZOOM_SLIDE'] = args[0]
-except IndexError:
-    pass
-app = create_app(config, config_file)
+    parser = OptionParser(usage='Usage: %prog [options] [slide]')
+    parser.add_option(
+        '-B',
+        '--ignore-bounds',
+        dest='DEEPZOOM_LIMIT_BOUNDS',
+        default=True,
+        action='store_false',
+        help='display entire scan area',
+    )
+    parser.add_option(
+        '-c', '--config', metavar='FILE', dest='config', help='config file'
+    )
+    parser.add_option(
+        '-d',
+        '--debug',
+        dest='DEBUG',
+        action='store_true',
+        help='run in debugging mode (insecure)',
+    )
+    parser.add_option(
+        '-e',
+        '--overlap',
+        metavar='PIXELS',
+        dest='DEEPZOOM_OVERLAP',
+        type='int',
+        help='overlap of adjacent tiles [1]',
+    )
+    parser.add_option(
+        '-f',
+        '--format',
+        metavar='{jpeg|png}',
+        dest='DEEPZOOM_FORMAT',
+        help='image format for tiles [jpeg]',
+    )
+    parser.add_option(
+        '-l',
+        '--listen',
+        metavar='ADDRESS',
+        dest='host',
+        default='127.0.0.1',
+        help='address to listen on [127.0.0.1]',
+    )
+    parser.add_option(
+        '-p',
+        '--port',
+        metavar='PORT',
+        dest='port',
+        type='int',
+        default=5000,
+        help='port to listen on [5000]',
+    )
+    parser.add_option(
+        '-Q',
+        '--quality',
+        metavar='QUALITY',
+        dest='DEEPZOOM_TILE_QUALITY',
+        type='int',
+        help='JPEG compression quality [75]',
+    )
+    parser.add_option(
+        '-s',
+        '--size',
+        metavar='PIXELS',
+        dest='DEEPZOOM_TILE_SIZE',
+        type='int',
+        help='tile size [254]',
+    )
 
-app.run(host=opts.host, port=opts.port, threaded=True)
+    (opts, args) = parser.parse_args()
+    config = {}
+    config_file = opts.config
+    # Set only those settings specified on the command line
+    for k in dir(opts):
+        v = getattr(opts, k)
+        if not k.startswith('_') and v is not None:
+            config[k] = v
+    # Set slide file if specified
+    try:
+        config['DEEPZOOM_SLIDE'] = args[0]
+    except IndexError:
+        pass
+    app = create_app(config, config_file)
+
+    app.run(host=opts.host, port=opts.port, threaded=True)
