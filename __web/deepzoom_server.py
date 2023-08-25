@@ -147,9 +147,11 @@ def create_app(config=None, config_file=None):
 
                 if level > 0:
                     coeff = slide.level_downsamples[level]
-                    tile_w, tile_h = int(tile_w * coeff), int(tile_h * coeff)
+                    sized_tile_w, sized_tile_h = int(tile_w * coeff), int(tile_h * coeff)
+                else:
+                    sized_tile_w, sized_tile_h = tile_w, tile_h
 
-                if __check_cnt_tile(tile_w, tile_h, tile_x, tile_y, rect[0]):
+                if __check_cnt_tile(sized_tile_w, sized_tile_h, tile_x, tile_y, rect[0]):
                     tile_cnt = __get_tile_cnt(level, tile_x, tile_y, cnt)
                     cv2.drawContours(tile, [tile_cnt], -1, (255, 0, 0), -1)
 
@@ -171,10 +173,10 @@ def create_app(config=None, config_file=None):
 
         cnt_x, cnt_y, cnt_w, cnt_h = rect
 
-        if tile_x < cnt_x < tile_x + tile_w and tile_y < cnt_y < tile_y + tile_h:
+        if (tile_x < cnt_x < tile_x + tile_w) and (tile_y < cnt_y < tile_y + tile_h):
             return True
         
-        if tile_x < cnt_x + cnt_w < tile_x + tile_w and tile_y < cnt_y + cnt_h < tile_y + tile_h:
+        if (tile_x < cnt_x + cnt_w < tile_x + tile_w) and (tile_y < cnt_y + cnt_h < tile_y + tile_h):
             return True
 
         return False

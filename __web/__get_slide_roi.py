@@ -61,7 +61,7 @@ def get_slide_rois(slide_path):
     print(len(probes_bin_rescaled))
 
     selected_probes, selected_coordinate_shifts = [], []
-    for probe in random.sample(probes_bin_rescaled, 3):
+    for probe in random.sample(probes_bin_rescaled, 5):
 
         probe_w, probe_h = int(sample_size[0] * downsampling_coeff), int(sample_size[1] * downsampling_coeff)
         probe_w, probe_h = graphics.get_corrected_size(probe_w, probe_h, 1024)
@@ -86,8 +86,8 @@ def get_slide_rois(slide_path):
     start = time.time()
     print(f'Selected probes quantity: {len(selected_probes)}')
     resize_ops = tfs.ResizeOptions(chunk_size=(256, 256), model_input_size=(128, 128))
-    pathology_maps = tfs.apply_segmentation_model_parallel(selected_probes, endpoint_url='http://51.250.28.160:7500', model_name='demetra', batch_size=2,
-                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=4)
+    pathology_maps = tfs.apply_segmentation_model_parallel(selected_probes, endpoint_url='http://51.250.28.160:7500', model_name='demetra', batch_size=4,
+                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=8)
     print(f'Remote execution took {time.time() - start} seconds')
 
     print(selected_coordinate_shifts)
