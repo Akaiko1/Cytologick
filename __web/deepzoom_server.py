@@ -48,6 +48,7 @@ GLOBAL_PARAMS = dict(
     coords=[]
 )
 
+
 def __process_global(level, coords):
     global GLOBAL_PARAMS
 
@@ -59,7 +60,9 @@ def __process_global(level, coords):
             GLOBAL_PARAMS['coords'].append(coords)
         print(GLOBAL_PARAMS)
 
+
 DRAWING_LIST = {}
+
 
 def create_app(config=None, config_file=None):
     # Create and configure app
@@ -116,6 +119,7 @@ def create_app(config=None, config_file=None):
             associated=associated_urls,
             properties=app.slide_properties,
             slide_mpp=app.slide_mpp,
+            regions=DRAWING_LIST
         )
 
     @app.route('/<slug>.dzi')
@@ -198,6 +202,7 @@ def create_app(config=None, config_file=None):
 def slugify(text):
     text = normalize('NFKD', text.lower()).encode('ascii', 'ignore').decode()
     return re.sub('[^a-z0-9]+', '-', text)
+
 
 def start_web():
     global DRAWING_LIST

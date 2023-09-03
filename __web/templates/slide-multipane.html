@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Slide Viewer</title>
+<title>Demetra results viewer</title>
 <meta name="viewport" content="user-scalable=no">
 
 <style type="text/css">
@@ -92,9 +92,17 @@ div#properties dd {
     {% else %}
         <span class="associated-images notice">None</span>
     {% endif %}
+    <h2> ROI located <h2>
+        <ul class="associated-rois">
+            {% for name in regions %}
+                <li><a>{{ name }}{{ regions[name][1] }}</a>
+            {% endfor %}
+        </ul>
 </div>
+
 <div id="view"></div>
-<div id="properties">
+
+<!-- <div id="properties">
     <h1>Slide properties</h1>
     {% if properties %}
         <div id="properties-inner">
@@ -108,7 +116,7 @@ div#properties dd {
     {% else %}
         <span class="notice">None</span>
     {% endif %}
-</div>
+</div> -->
 
 <script type="text/javascript" src="static/jquery.js"></script>
 <script type="text/javascript" src="static/openseadragon.js"></script>

@@ -25,6 +25,23 @@ def __get_info_tuples(slides_list, xmls_list):
     return [(f.split('\\')[-1].rstrip('.mrsx'), f, [x for x in xmls_list if f.split('\\')[-1].rstrip('.mrsx') in x][0]) for f in slides_list]
 
 
+def all_asap_to_xml(slides_folder: str, temp_folder='temp'):
+    if not os.path.exists(temp_folder):
+        os.mkdir(temp_folder)
+
+    slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
+    print('Total slides: ', len(slides_list))
+
+    xmls_list = glob.glob(os.path.join(slides_folder, '**', '*.xml'), recursive=True)
+    xmls_list = [e for e in xmls_list if '_old' not in e]
+    print('Total .xml files with markup data in .dat files: ', len(xmls_list))
+
+    for slide, xml in zip(slides_list, xmls_list):
+        print(slide, xml)
+
+    slides_with_names = __get_info_tuples(slides_list, xmls_list)
+
+
 def all_slides_to_xml(slides_folder: str, temp_folder='temp') -> list[tuple]:
     if not os.path.exists(temp_folder):
         os.mkdir(temp_folder)

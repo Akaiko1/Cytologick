@@ -5,8 +5,10 @@ import config
 
 
 def main():
-    jsons = demetra_xml.all_slides_to_xml(config.HDD_SLIDES, config.TEMP_FOLDER)
-    hp.markdown_data(jsons)
+    # jsons = demetra_xml.all_slides_to_xml(config.HDD_SLIDES, config.TEMP_FOLDER)
+    # hp.markdown_data(jsons)
+
+    jsons = demetra_xml.all_asap_to_xml('/Volumes/My Passport/CYTOLOGY', config.TEMP_FOLDER)
     
 
 if __name__ == '__main__':

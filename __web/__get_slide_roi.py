@@ -61,7 +61,7 @@ def get_slide_rois(slide_path):
     print(len(probes_bin_rescaled))
 
     selected_probes, selected_coordinate_shifts = [], []
-    for probe in random.sample(probes_bin_rescaled, 5):
+    for probe in random.sample(probes_bin_rescaled, 1):
 
         probe_w, probe_h = int(sample_size[0] * downsampling_coeff), int(sample_size[1] * downsampling_coeff)
         probe_w, probe_h = graphics.get_corrected_size(probe_w, probe_h, 1024)
