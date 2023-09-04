@@ -22,7 +22,7 @@ def __get_markup_files(list_to_filter):
 
 
 def __get_info_tuples(slides_list, xmls_list):
-    return [(f.split('\\')[-1].rstrip('.mrsx'), f, [x for x in xmls_list if f.split('\\')[-1].rstrip('.mrsx') in x][0]) for f in slides_list]
+    return [(f.split(os.sep)[-1].rstrip('.mrsx'), f, [x for x in xmls_list if f.split(os.sep)[-1].rstrip('.mrsx') in x][0]) for f in slides_list]
 
 
 def all_asap_to_xml(slides_folder: str, temp_folder='temp'):
@@ -40,6 +40,17 @@ def all_asap_to_xml(slides_folder: str, temp_folder='temp'):
         print(slide, xml)
 
     slides_with_names = __get_info_tuples(slides_list, xmls_list)
+
+    json_list = []
+    for slide_name, _, xml_path in slides_with_names:
+        print(f'Processing slide {slide_name} ... xml path: {xml_path}')
+        nodes = get_asap_rois(xml_path)
+        json_list.append((slide_name, nodes))
+
+        with open(os.path.join(temp_folder, f'{slide_name}.json'), 'w') as f:
+            json.dump(nodes, f)
+
+    return json_list
 
 
 def all_slides_to_xml(slides_folder: str, temp_folder='temp') -> list[tuple]:
@@ -92,6 +103,39 @@ def extract_xml(slidename, filename) -> None:
 
     with open(filename, 'w') as f:
         f.writelines(lines)
+
+
+def get_asap_rois(filename) -> list:
+    parser = etree.XMLParser(recover=True)
+    tree = etree.parse(filename, parser=parser)
+
+    root = tree.getroot()
+    annotations = root.find('Annotations')
+    all_nodes = []
+
+    for roi in annotations.findall('Annotation'):
+        coords = roi.find('Coordinates')
+        label = roi.get('Name')
+        points = []
+
+        for point in coords.findall('Coordinate'):
+            points.append([int(float(point.get('X'))), int(float(point.get('Y')))])
+        
+        if len(points) < 3:
+            print(f'Corrupted contour: {label}')
+            continue
+        
+        points_xs, points_ys = [p[0] for p in points], [p[1] for p in points]
+
+        if 'Annotation' not in label:
+            all_nodes.append({
+                'label': label,
+                'points': points,
+                'rect': [min(points_xs), min(points_ys), 
+                         max(points_xs), max(points_ys)]
+            })
+
+    return all_nodes
 
 
 def get_xml_rois(filename) -> list:

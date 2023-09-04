@@ -14,7 +14,10 @@ Rectangle = namedtuple('Rectangle', 'xmin ymin xmax ymax')
 
 
 def extract_atlas(slidepath, jsonpath, openslide_path):
-    with os.add_dll_directory(openslide_path):
+    if hasattr(os, 'add_dll_directory'):
+        with os.add_dll_directory(openslide_path):
+            import openslide
+    else:
         import openslide
 
     slide = openslide.OpenSlide(slidepath)
@@ -44,7 +47,10 @@ def extract_atlas(slidepath, jsonpath, openslide_path):
 
 
 def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug=False):
-    with os.add_dll_directory(openslide_path):
+    if hasattr(os, 'add_dll_directory'):
+        with os.add_dll_directory(openslide_path):
+            import openslide
+    else:
         import openslide
 
     slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
@@ -57,7 +63,7 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
     __make_dirs(roi_path, masks_path)
 
     for slidepath in slides_list:
-        json_name = slidepath.split('\\')[-1].rstrip('.mrsx') + '.json'
+        json_name = slidepath.split(os.sep)[-1].rstrip('.mrsx') + '.json'
         json_path = [f for f in json_list if json_name in f]
 
         slide = openslide.OpenSlide(slidepath)
@@ -111,7 +117,7 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
     json_list = glob.glob(os.path.join(json_folder, '**', '*.json'), recursive=True)
 
     for slide in slides_list:
-        json_name = slide.split('\\')[-1].rstrip('.mrsx') + '.json'
+        json_name = slide.split(os.sep)[-1].rstrip('.mrsx') + '.json'
         json_path = [f for f in json_list if json_name in f]
 
         if not json_path:
@@ -136,7 +142,10 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
 
 
 def __extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}, debug=False):
-    with os.add_dll_directory(openslide_path):
+    if hasattr(os, 'add_dll_directory'):
+        with os.add_dll_directory(openslide_path):
+            import openslide
+    else:
         import openslide
     
     slide = openslide.OpenSlide(slidepath)
