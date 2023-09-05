@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Доступные файлы на устройстве</title>
+</head>
+
+<style type="text/css">
+    html, body {
+        margin: 0;
+        padding: 0;
+    }
+
+    body {
+        color: #292929;
+        font: 90% Roboto, Arial, sans-serif;
+        font-weight: 300;
+    }
+
+    p {
+        padding: 0 10px;
+        line-height: 1.8;
+    }
+
+    ul li {
+        padding-right: 10px;
+        line-height: 1.6;
+    }
+
+    ol {
+    counter-reset: li; 
+    list-style: none; 
+    padding: 0;
+    text-shadow: 0 1px 0 rgba(255,255,255,.5);
+    }
+
+    ol a {
+    position: relative;
+    display: block;
+    padding: .4em .4em .4em .8em;
+    margin: .5em 0 .5em 2.5em;
+    background: #D3D4DA;
+    color: #444;
+    text-decoration: none;
+    transition: all .3s ease-out;
+    }
+
+    ol a:hover {background: #DCDDE1;}       
+    ol a:before {
+    content: counter(li);
+    counter-increment: li;
+    position: absolute;
+    left: -2.5em;
+    top: 50%;
+    margin-top: -1em;
+    background: #f9dd94;
+    height: 2em;
+    width: 2em;
+    line-height: 2em;
+    text-align: center;
+    font-weight: bold;
+    }
+
+    ol a:after {
+    position: absolute;
+    content: "";
+    border: .5em solid transparent;
+    left: -1em;
+    top: 50%;
+    margin-top: -.5em;
+    transition: all .3s ease-out;
+    }
+
+    ol a:hover:after {
+    left: -.5em;
+    border-left-color: #f9dd94;
+    }
+
+    h3 {
+        padding: 5px 20px;
+        margin: 0;
+    }
+
+    div#header {
+        position: relative;
+    }
+
+    div#header h1 {
+        height: 80px;
+        line-height: 80px;
+        margin: 0;
+        padding-left: 10px;
+        background: #e0e0e0;
+        color: #292929;
+    }
+
+    div#header a {
+        position: absolute;
+        right: 0;
+        top: 23px;
+        padding: 10px;
+        color: #006;
+    }
+
+    div#navigation {
+        background: #7cb71c;
+    }
+
+    div#navigation li {
+        list-style: none;
+    }
+
+    div#extra {
+        background: #147FA9;
+    }
+
+    div#footer {
+        background: #42444e;
+        color: #fff;
+    }
+
+    div#footer p {
+        padding: 20px 10px;
+    }
+
+    div#wrapper {
+        float: right;
+        width: 100%;
+        margin-left: -200px;
+    }
+
+    div#content {
+        margin-left: 200px;;
+    }
+
+    div#navigation {
+        float: left;
+        width: 200px;
+    }
+
+    div#extra {
+        float: left;
+        clear: left;
+        width: 200px;
+    }
+
+    div#footer {
+        clear: both;
+        width: 100%;
+    }
+</style>
+
+<body>
+    <div id="container">
+        <div id="header">
+            <h1>Demetra AI</h1>
+        </div>
+        <div id="wrapper">
+            <div id="content">
+                <ol>
+                {% for file in files %}
+                <li><a href="/{{ files.index(file) }}">{{ file }}</a>
+                {% endfor %}
+                </ol>
+            </div>
+        </div>
+        <div id="navigation">
+            <ul>
+                <li>1</li>
+                <li>2</li>
+                <li>3</li>
+                <li>4</li>
+                <li>5</li>
+            </ul>
+        </div>
+        <div id="extra">
+            <p><strong>Additional Stuff</strong></p>
+        </div>
+        <div id="footer"><p>Demetra AI</p>
+        </div>
+    </div>
+    <script type="text/javascript">AddFillerLink("content", "navigation", "extra")</script>
+</body>
+
+</html>

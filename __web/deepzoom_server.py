@@ -61,14 +61,12 @@ def __process_global(level, coords):
         print(GLOBAL_PARAMS)
 
 
-DRAWING_LIST = {}
-
-
-def create_app(config=None, config_file=None):
+def create_app(slide_path, config=None, config_file=None):
     # Create and configure app
     app = Flask(__name__)
+    app.drawing_list={}
     app.config.from_mapping(
-        DEEPZOOM_SLIDE=os.path.abspath(os.path.join('current', 'slide-2022-09-12T15-38-25-R1-S2.mrxs')),  # 'G:\Github\DemetraAI\current\slide-2022-09-12T15-38-25-R1-S2.mrxs',
+        DEEPZOOM_SLIDE=slide_path,  # 'G:\Github\DemetraAI\current\slide-2022-09-12T15-38-25-R1-S2.mrxs',
         DEEPZOOM_FORMAT='jpeg',
         DEEPZOOM_TILE_SIZE=254,
         DEEPZOOM_OVERLAP=1,
@@ -119,7 +117,7 @@ def create_app(config=None, config_file=None):
             associated=associated_urls,
             properties=app.slide_properties,
             slide_mpp=app.slide_mpp,
-            regions=DRAWING_LIST
+            regions=app.drawing_list
         )
 
     @app.route('/<slug>.dzi')
@@ -146,7 +144,7 @@ def create_app(config=None, config_file=None):
             tile = np.array(app.slides[slug].get_tile(level, (col, row)))
             (tile_x, tile_y), level, (tile_w, tile_h) = app.slides[slug].get_tile_coordinates(level, (col, row))
 
-            for _, drawing_stats in DRAWING_LIST.items():
+            for _, drawing_stats in app.drawing_list.items():
                 (_, _), rect, cnt = drawing_stats
 
                 if level > 0:
@@ -204,11 +202,7 @@ def slugify(text):
     return re.sub('[^a-z0-9]+', '-', text)
 
 
-def start_web():
-    global DRAWING_LIST
-
-    DRAWING_LIST = gsr.get_slide_rois(os.path.abspath(os.path.join('current', 'slide-2022-09-12T15-38-25-R1-S2.mrxs')))
-
+def start_web(slide_path, outside_port):
     parser = OptionParser(usage='Usage: %prog [options] [slide]')
     parser.add_option(
         '-B',
@@ -248,7 +242,7 @@ def start_web():
         '--listen',
         metavar='ADDRESS',
         dest='host',
-        default='127.0.0.1',
+        default='0.0.0.0',
         help='address to listen on [127.0.0.1]',
     )
     parser.add_option(
@@ -257,7 +251,7 @@ def start_web():
         metavar='PORT',
         dest='port',
         type='int',
-        default=5000,
+        default=5001,
         help='port to listen on [5000]',
     )
     parser.add_option(
@@ -290,6 +284,7 @@ def start_web():
         config['DEEPZOOM_SLIDE'] = args[0]
     except IndexError:
         pass
-    app = create_app(config, config_file)
+    app = create_app(slide_path, config, config_file)
+    app.drawing_list = gsr.get_slide_rois(slide_path)
 
-    app.run(host=opts.host, port=opts.port, threaded=True)
+    app.run(host=opts.host, port=outside_port, threaded=True)
