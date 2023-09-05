@@ -1,3 +1,4 @@
+import glob
 from PyQt5.QtWidgets import QApplication, QWidget, QComboBox, QHBoxLayout,\
      QVBoxLayout, QLabel, QScrollArea, QStackedLayout, QPushButton, QRadioButton
 from PyQt5.QtGui import QPixmap, QPalette, QPainter, QBrush, QPen
@@ -125,7 +126,7 @@ class Menu(QWidget):
     def __init__(self, parent):
         super().__init__()
 
-        self.slide_list=[f for f in os.listdir(config.SLIDE_DIR) if '.mrxs' in f]
+        self.slide_list=glob.glob(os.path.join(config.HDD_SLIDES, '**', '*.mrxs'), recursive=True)
         self.levels = []
         self.parent = parent
 
@@ -153,7 +154,7 @@ class Menu(QWidget):
         self.levels = self.parent.current_slide.level_dimensions
         self.level_select.clear()
         # set to < 5 because 5 or more will cause software to crash due to image size being too large
-        self.level_select.addItems([str(e[0]) for e in enumerate(self.levels) if e[0] < 5])
+        self.level_select.addItems([str(e[0]) for e in enumerate(self.levels) if e[0] < 4])
 
     def level_selected(self, i):
         if i < 0:

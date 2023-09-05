@@ -101,18 +101,31 @@ def get_slide_rois(slide_path):
     return results
 
 
+def __get_probability(probability_map, contour) -> float:
+    mask = np.zeros(probability_map.shape)
+    cv2.drawContours(mask, [contour], -1, 1, -1)
+    return (float(np.sum(np.where(mask > 0, probability_map, 0))/np.sum(mask)) - 0.5) * 2
+
+
 def __get_cnts_from_regions(rmaps, shifts):
     result = {}
 
     for idx, rmap in enumerate(rmaps):
+
+        atypical_probability_map = rmap[..., 2]
         atypical_map = np.where(rmap[..., 2] > 0.5, 255, 0)
         cnts = cv2.findContours(atypical_map.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
 
-        if not cnts:
+        filtered_cnts = []
+        for cnt in cnts:
+            if __get_probability(atypical_probability_map, cnt) >= 0.95:
+                filtered_cnts.append(cnt)
+
+        if not filtered_cnts:
             continue
 
         shift = shifts[idx]
-        for cnt in cnts:
+        for cnt in filtered_cnts:
             shifted = [r + shift for r in cnt]
             result[f'cnt_{idx}'] = [shifts[idx], [cv2.boundingRect(np.array(shifted))], [r.tolist() for r in shifted]]
 

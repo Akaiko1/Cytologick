@@ -202,7 +202,7 @@ def slugify(text):
     return re.sub('[^a-z0-9]+', '-', text)
 
 
-def start_web(slide_path, outside_port):
+def start_web(slide_path, drawing_list, outside_port):
     parser = OptionParser(usage='Usage: %prog [options] [slide]')
     parser.add_option(
         '-B',
@@ -285,6 +285,6 @@ def start_web(slide_path, outside_port):
     except IndexError:
         pass
     app = create_app(slide_path, config, config_file)
-    app.drawing_list = gsr.get_slide_rois(slide_path)
+    app.drawing_list = drawing_list
 
     app.run(host=opts.host, port=outside_port, threaded=True)

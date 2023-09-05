@@ -50,7 +50,7 @@ def apply_model_raw(source, model, classes, shapes=config.IMAGE_SHAPE):
     return pathology_map[:source.shape[0], :source.shape[1]]
 
 
-def apply_remote(source, chunk_size=(256, 256), model_input_size=(128, 128), endpoint_url='http://89.249.55.67:7500',
+def apply_remote(source, chunk_size=(256, 256), model_input_size=(128, 128), endpoint_url='http://51.250.28.160:7500',
                   model_name='demetra', batch_size=2, parallelism_mode=1, thread_count=4):
     """Aplly cloud model"""
     resize_ops = tfs.ResizeOptions(chunk_size=chunk_size, model_input_size=model_input_size)

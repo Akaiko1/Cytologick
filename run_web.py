@@ -4,6 +4,4 @@ import __web.start_web as web
 import config
 
 if __name__ == '__main__':
-    # web.start_web()
-    
     web.run(config.HDD_SLIDES)
