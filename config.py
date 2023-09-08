@@ -39,6 +39,10 @@ EXCLUDE_DUPLICATES = False
 BROADEN_INDIVIDUAL_RECT = 1000
 #endregion
 
+#region Web
+IP_EXPOSED = '127.0.0.1'
+#endregion
+
 #region Packaging 
 # Must be commented when Python scripts are used!
 def user_changes_on_import():

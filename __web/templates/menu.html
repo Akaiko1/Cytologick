@@ -161,7 +161,12 @@
             <div id="content">
                 <ol>
                 {% for file in files %}
-                <li><a href="/{{ files.index(file) }}">{{ file }}</a>
+                    {% if files.index(file) in state.keys() %}
+                        <li><a style="background-color:aquamarine;" target="_blank"
+                             href="http://{{ exp_ip }}:{{ 5002 + files.index(file)}}">{{ file }}</a>
+                    {% else %}
+                        <li><a href="/{{ files.index(file) }}">{{ file }}</a>
+                    {% endif %}
                 {% endfor %}
                 </ol>
             </div>

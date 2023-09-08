@@ -28,6 +28,8 @@ def markdown_data(jsons, md_file='stats.md'):
         markdown += f'|{name}|{len(data)}|     |     |\n' # template = markdown += f'|     |     |     |     |\n'
 
         for obj, total in info.items():
+            obj = obj.strip('?) ')
+
             if obj in objects_total:
                 objects_total[obj] += total
             else:
