@@ -26,7 +26,9 @@ def get_app():
         if index not in app.threads.keys():
             preview_window = threading.Thread(name=f'demetra_{index}',
                                         target=deep.start_web,
-                                        args=[app.files[index], gsr.get_slide_rois(app.files[index]), target_port])
+                                        args=[app.files[index],
+                                               gsr.get_slide_rois(app.files[index]),
+                                                 index, target_port])
             preview_window.setDaemon(True)
             preview_window.start()
             app.threads[index] = preview_window

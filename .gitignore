@@ -12,3 +12,4 @@ __pycache__/inference.cpython-310.pyc
 ai/
 *.ini
 .DS_Store
+*static*

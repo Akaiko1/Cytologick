@@ -25,6 +25,7 @@ import re
 
 import cv2
 import PIL
+import shutil
 import numpy as np
 import __web.__get_slide_roi as gsr
 
@@ -117,7 +118,8 @@ def create_app(slide_path, config=None, config_file=None):
             associated=associated_urls,
             properties=app.slide_properties,
             slide_mpp=app.slide_mpp,
-            regions=app.drawing_list
+            regions=app.drawing_list,
+            details=app.render_list
         )
 
     @app.route('/<slug>.dzi')
@@ -172,15 +174,11 @@ def create_app(slide_path, config=None, config_file=None):
         return resp
     
     def __check_cnt_tile(tile_w, tile_h, tile_x, tile_y, rect):
-
         cnt_x, cnt_y, cnt_w, cnt_h = rect
-
         if (tile_x < cnt_x < tile_x + tile_w) and (tile_y < cnt_y < tile_y + tile_h):
             return True
-        
         if (tile_x < cnt_x + cnt_w < tile_x + tile_w) and (tile_y < cnt_y + cnt_h < tile_y + tile_h):
             return True
-
         return False
 
     def __get_tile_cnt(level, tile_x, tile_y, cnt):
@@ -202,8 +200,45 @@ def slugify(text):
     return re.sub('[^a-z0-9]+', '-', text)
 
 
-def start_web(slide_path, drawing_list, outside_port):
+def start_web(slide_path, drawing_list, index, outside_port):
     parser = OptionParser(usage='Usage: %prog [options] [slide]')
+    __fill_parser_default(parser)
+
+    (opts, args) = parser.parse_args()
+    config = {}
+    config_file = opts.config
+    # Set only those settings specified on the command line
+    for k in dir(opts):
+        v = getattr(opts, k)
+        if not k.startswith('_') and v is not None:
+            config[k] = v
+    # Set slide file if specified
+    try:
+        config['DEEPZOOM_SLIDE'] = args[0]
+    except IndexError:
+        pass
+    app = create_app(slide_path, config, config_file)
+    app.drawing_list = drawing_list
+    app.render_list = []
+    slide = open_slide(slide_path)
+
+    temp_index_path = os.path.join('__web', 'static', 'temp', str(index))
+    if not os.path.exists(temp_index_path):
+        os.makedirs(temp_index_path)
+    else:
+        shutil.rmtree(temp_index_path)
+        os.makedirs(temp_index_path)
+
+    for key, entry in drawing_list.items():
+        (_, _), rect, cnt = entry
+        ooi_image_rgba = np.array(slide.read_region((rect[0][0], rect[0][1]), 0, (rect[0][2], rect[0][3])))
+        ooi_image = cv2.cvtColor(ooi_image_rgba, cv2.COLOR_RGBA2RGB)
+        cv2.imwrite(os.path.join(temp_index_path, f'{key}.jpg'), ooi_image)
+        app.render_list.append((key, os.path.join('static', 'temp', str(index), f'{key}.jpg')))
+
+    app.run(host=opts.host, port=outside_port, threaded=True)
+
+def __fill_parser_default(parser):
     parser.add_option(
         '-B',
         '--ignore-bounds',
@@ -270,21 +305,3 @@ def start_web(slide_path, drawing_list, outside_port):
         type='int',
         help='tile size [254]',
     )
-
-    (opts, args) = parser.parse_args()
-    config = {}
-    config_file = opts.config
-    # Set only those settings specified on the command line
-    for k in dir(opts):
-        v = getattr(opts, k)
-        if not k.startswith('_') and v is not None:
-            config[k] = v
-    # Set slide file if specified
-    try:
-        config['DEEPZOOM_SLIDE'] = args[0]
-    except IndexError:
-        pass
-    app = create_app(slide_path, config, config_file)
-    app.drawing_list = drawing_list
-
-    app.run(host=opts.host, port=outside_port, threaded=True)
