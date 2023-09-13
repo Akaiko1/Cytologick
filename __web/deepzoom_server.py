@@ -41,6 +41,10 @@ else:
 
 from openslide import ImageSlide, open_slide
 from openslide.deepzoom import DeepZoomGenerator
+from fpdf import FPDF, HTMLMixin
+
+class MyFPDF(FPDF, HTMLMixin):
+	pass
 
 SLIDE_NAME = 'slide'
 
@@ -223,12 +227,13 @@ def start_web(slide_path, drawing_list, index, outside_port):
     slide = open_slide(slide_path)
 
     temp_index_path = os.path.join('__web', 'static', 'temp', str(index))
-    if not os.path.exists(temp_index_path):
-        os.makedirs(temp_index_path)
-    else:
-        shutil.rmtree(temp_index_path)
-        os.makedirs(temp_index_path)
+    __prepare_folders(temp_index_path)
+    __render_images(drawing_list, index, app, slide, temp_index_path)
+    __render_pdf(app.render_list, temp_index_path)
 
+    app.run(host=opts.host, port=outside_port, threaded=True)
+
+def __render_images(drawing_list, index, app, slide, temp_index_path):
     for key, entry in drawing_list.items():
         (_, _), rect, cnt = entry
         ooi_image_rgba = np.array(slide.read_region((rect[0][0], rect[0][1]), 0, (rect[0][2], rect[0][3])))
@@ -236,7 +241,23 @@ def start_web(slide_path, drawing_list, index, outside_port):
         cv2.imwrite(os.path.join(temp_index_path, f'{key}.jpg'), ooi_image)
         app.render_list.append((key, os.path.join('static', 'temp', str(index), f'{key}.jpg')))
 
-    app.run(host=opts.host, port=outside_port, threaded=True)
+def __render_pdf(render_list, save_folder):
+    pdf = MyFPDF()
+    pdf.add_page()
+    
+    offset=0
+    for name, image in render_list:
+        pdf.image(os.path.join('__web', image), x=50, y=100 + int(offset * 100), w=200, h=200)
+        offset += 1
+    
+    pdf.output(os.path.join(save_folder, 'report.pdf'))
+
+def __prepare_folders(temp_index_path):
+    if not os.path.exists(temp_index_path):
+        os.makedirs(temp_index_path)
+    else:
+        shutil.rmtree(temp_index_path)
+        os.makedirs(temp_index_path)
 
 def __fill_parser_default(parser):
     parser.add_option(
