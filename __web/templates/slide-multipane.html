@@ -106,6 +106,7 @@ div#properties dd {
     <h1>Details</h1>
     {% if details %}
         <div id="properties-inner">
+            <a href="{{ meta['PDF'] }}" download="report.pdf">Download PDF</a><br>
             <dl>
             {% for entry in details %}
                 <dt>{{ entry[0] }}

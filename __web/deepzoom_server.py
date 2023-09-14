@@ -70,6 +70,7 @@ def create_app(slide_path, config=None, config_file=None):
     # Create and configure app
     app = Flask(__name__)
     app.drawing_list={}
+    app.meta={}
     app.config.from_mapping(
         DEEPZOOM_SLIDE=slide_path,  # 'G:\Github\DemetraAI\current\slide-2022-09-12T15-38-25-R1-S2.mrxs',
         DEEPZOOM_FORMAT='jpeg',
@@ -123,7 +124,8 @@ def create_app(slide_path, config=None, config_file=None):
             properties=app.slide_properties,
             slide_mpp=app.slide_mpp,
             regions=app.drawing_list,
-            details=app.render_list
+            details=app.render_list,
+            meta=app.meta,
         )
 
     @app.route('/<slug>.dzi')
@@ -229,7 +231,7 @@ def start_web(slide_path, drawing_list, index, outside_port):
     temp_index_path = os.path.join('__web', 'static', 'temp', str(index))
     __prepare_folders(temp_index_path)
     __render_images(drawing_list, index, app, slide, temp_index_path)
-    __render_pdf(app.render_list, temp_index_path)
+    __render_pdf(app, index, temp_index_path)
 
     app.run(host=opts.host, port=outside_port, threaded=True)
 
@@ -241,15 +243,20 @@ def __render_images(drawing_list, index, app, slide, temp_index_path):
         cv2.imwrite(os.path.join(temp_index_path, f'{key}.jpg'), ooi_image)
         app.render_list.append((key, os.path.join('static', 'temp', str(index), f'{key}.jpg')))
 
-def __render_pdf(render_list, save_folder):
+def __render_pdf(app, index, save_folder):
     pdf = MyFPDF()
     pdf.add_page()
+    pdf.add_font('Roboto', '', 'Roboto-Regular.ttf', uni=True)
+    pdf.set_font('Roboto', '', 14)
     
     offset=0
-    for name, image in render_list:
-        pdf.image(os.path.join('__web', image), x=50, y=100 + int(offset * 100), w=200, h=200)
+    pdf.text(x=25, y=15, txt='Автоматически сгенерированный отчет')
+    pdf.text(x=25, y=30, txt=f'Всего находок: {len(app.render_list)}')
+    for name, image in app.render_list:
+        pdf.text(x=25, y=60 + int(offset * 35), txt=f'Название находки: {name}')
+        pdf.image(os.path.join('__web', image), x=50, y=60 + int(offset * 35) + 5, w=25, h=25)
         offset += 1
-    
+    app.meta['PDF'] = os.path.join('static', 'temp', str(index), 'report.pdf')
     pdf.output(os.path.join(save_folder, 'report.pdf'))
 
 def __prepare_folders(temp_index_path):
