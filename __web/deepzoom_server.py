@@ -252,7 +252,7 @@ def __render_pdf(app, index, save_folder):
     offset=0
     pdf.text(x=25, y=15, txt='Автоматически сгенерированный отчет')
     pdf.text(x=25, y=30, txt=f'Всего находок: {len(app.render_list)}')
-    for name, image in app.render_list:
+    for name, image in app.render_list:  #TODO multiple pages
         pdf.text(x=25, y=60 + int(offset * 35), txt=f'Название находки: {name}')
         pdf.image(os.path.join('__web', image), x=50, y=60 + int(offset * 35) + 5, w=25, h=25)
         offset += 1

@@ -1,23 +1,53 @@
 import os
 import glob
+from pprint import pprint
 import threading
 import webbrowser
+
+import shutil
 
 import config
 import __web.deepzoom_server as deep
 import __web.__get_slide_roi as gsr
 
-from flask import Flask, redirect, render_template
+from flask import Flask, flash, redirect, render_template, request, url_for
 
 
-def get_app():
+ARCHIVES = ['.zip', '.rar']
+
+
+def get_app(slides_folder: str):
     app = Flask(__name__)
     app.files = []
     app.threads = {}
+    app.slides_folder = slides_folder
+    app.files = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
+
 
     @app.route("/")
     def main_page():
         return render_template('menu.html', files=app.files, state=app.threads, exp_ip=config.IP_EXPOSED)
+    
+
+    @app.route('/upload', methods=['GET', 'POST'])
+    def upload_file():
+        if request.method == 'POST':
+            if 'file' not in request.files:
+                flash('Нет файла в приложении')
+                return redirect(request.url)
+            file = request.files.get('file')
+            if any(ext in file.filename for ext in ARCHIVES):
+                file.save(file.filename)
+                shutil.unpack_archive(file.filename, os.path.join(app.slides_folder, file.filename.split('.')[-2]))
+                os.remove(file.filename)
+            else:
+                file.save(os.path.join(app.slides_folder, file.filename))
+            app.files = glob.glob(os.path.join(app.slides_folder, '**', '*.mrxs'), recursive=True)
+            return render_template('menu.html', files=app.files, state=app.threads, exp_ip=config.IP_EXPOSED)
+        else:
+            print('Not a post request')
+            return redirect(request.url)
+
 
     @app.route("/<int:index>")
     def start_file_inspection(index=0):
@@ -42,6 +72,5 @@ def get_app():
 
 
 def run(slides_folder):
-    app = get_app()
-    app.files = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
+    app = get_app(slides_folder)
     app.run(host='0.0.0.0', port=5001, threaded=True)
