@@ -22,11 +22,16 @@ def get_app(slides_folder: str):
     app.threads = {}
     app.slides_folder = slides_folder
     app.files = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
+    app.file_names = [f.split(os.sep)[-1].split('.')[-2] for f in app.files]
 
 
     @app.route("/")
     def main_page():
-        return render_template('menu.html', files=app.files, state=app.threads, exp_ip=config.IP_EXPOSED)
+        return render_template('menu.html',
+                                files=app.files,
+                                file_names=app.file_names,
+                                  state=app.threads,
+                                    exp_ip=config.IP_EXPOSED)
     
 
     @app.route('/upload', methods=['GET', 'POST'])
@@ -43,7 +48,7 @@ def get_app(slides_folder: str):
             else:
                 file.save(os.path.join(app.slides_folder, file.filename))
             app.files = glob.glob(os.path.join(app.slides_folder, '**', '*.mrxs'), recursive=True)
-            return render_template('menu.html', files=app.files, state=app.threads, exp_ip=config.IP_EXPOSED)
+            return render_template('menu.html', files=app.files, file_names=app.file_names, state=app.threads, exp_ip=config.IP_EXPOSED)
         else:
             print('Not a post request')
             return redirect(request.url)
@@ -63,10 +68,10 @@ def get_app(slides_folder: str):
             preview_window.start()
             app.threads[index] = preview_window
             webbrowser.open_new_tab(f"http://{config.IP_EXPOSED}:{target_port}")
-            return render_template('menu.html', files=app.files, state=app.threads, exp_ip=config.IP_EXPOSED)
+            return render_template('menu.html', files=app.files, file_names=app.file_names, state=app.threads, exp_ip=config.IP_EXPOSED)
         else:
             webbrowser.open_new_tab(f"http://{config.IP_EXPOSED}:{target_port}")
-            return render_template('menu.html', files=app.files, state=app.threads, exp_ip=config.IP_EXPOSED)
+            return render_template('menu.html', files=app.files, file_names=app.file_names, state=app.threads, exp_ip=config.IP_EXPOSED)
 
     return app
 

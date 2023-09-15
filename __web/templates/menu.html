@@ -19,14 +19,16 @@
                     {% for file in files %}
                         {% if files.index(file) in state.keys() %}
                             <div class="n" style="background-color:rgba(129, 147, 248, 1);" ><div class="details">
-                                <a target="_blank" href="http://{{ exp_ip }}:{{ 5002 + files.index(file)}}">{{ file }}</a>
+                                <a class="text-wrapper-4" target="_blank"
+                                 href="http://{{ exp_ip }}:{{ 5002 + files.index(file)}}">{{ file_names[files.index(file)] }}</a>
                             </div></div>
                         {% else %} 
                             <div class="n"><div class="details">
-                                <a href="/{{ files.index(file) }}">{{ file }}</a>
+                                <a class="text-wrapper-4"  href="/{{ files.index(file) }}">{{ file_names[files.index(file)] }}</a>
                             </div></div>
                         {% endif %}
                     {% endfor %}
+                    <br/>
                 </div>
                 <div class="button-add">
                     <input type="file" id="file-form" name="file" hidden/>
