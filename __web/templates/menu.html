@@ -30,12 +30,22 @@
                     {% endfor %}
                     <br/>
                 </div>
-                <div class="button-add">
+                <form method=post enctype=multipart/form-data hidden>
                     <input type="file" id="file-form" name="file" hidden/>
+                    <input type="submit" id="submit-form" name="file" hidden/>
+                </form>
+                <div class="button-add">
                     <div class="div">
                         <img class="img" src="static/img/icon-add.svg" />
                         <div class="text-wrapper-13">
-                            <label for="file-form">Добавить исследование</label>
+                            <label for="file-form">Выбрать</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="button-submit">
+                    <div class="div">
+                        <div class="text-wrapper-13">
+                            <label for="submit-form">Загрузить</label>
                         </div>
                     </div>
                 </div>
