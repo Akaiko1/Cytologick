@@ -16,19 +16,23 @@ from flask import Flask, flash, redirect, render_template, request, url_for
 ARCHIVES = ['.zip', '.rar']
 
 
+def set_names(app):
+    app.files = glob.glob(os.path.join(app.slides_folder, '**', '*.mrxs'), recursive=True)
+    app.file_names = [f.split(os.sep)[-1].split('.')[-2] for f in app.files]
+
+
 def get_app(slides_folder: str):
     app = Flask(__name__)
     app.files = []
     app.threads = {}
     app.slides_folder = slides_folder
-    app.files = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
-    app.file_names = [f.split(os.sep)[-1].split('.')[-2] for f in app.files]
+    set_names(app)
 
 
     @app.route("/")
     def main_page():
-        return render_template('menu.html',
-                                files=app.files,
+        set_names(app)
+        return render_template('menu.html', files=app.files,
                                 file_names=app.file_names,
                                   state=app.threads,
                                     exp_ip=config.IP_EXPOSED)
@@ -43,12 +47,15 @@ def get_app(slides_folder: str):
             file = request.files.get('file')
             if any(ext in file.filename for ext in ARCHIVES):
                 file.save(file.filename)
-                shutil.unpack_archive(file.filename, os.path.join(app.slides_folder, file.filename.split('.')[-2]))
+                shutil.unpack_archive(file.filename, app.slides_folder)
                 os.remove(file.filename)
             else:
                 file.save(os.path.join(app.slides_folder, file.filename))
-            app.files = glob.glob(os.path.join(app.slides_folder, '**', '*.mrxs'), recursive=True)
-            return render_template('menu.html', files=app.files, file_names=app.file_names, state=app.threads, exp_ip=config.IP_EXPOSED)
+            set_names(app)
+            return render_template('menu.html', files=app.files,
+                                    file_names=app.file_names,
+                                      state=app.threads,
+                                        exp_ip=config.IP_EXPOSED)
         else:
             print('Not a post request')
             return redirect(request.url)
@@ -68,10 +75,13 @@ def get_app(slides_folder: str):
             preview_window.start()
             app.threads[index] = preview_window
             webbrowser.open_new_tab(f"http://{config.IP_EXPOSED}:{target_port}")
-            return render_template('menu.html', files=app.files, file_names=app.file_names, state=app.threads, exp_ip=config.IP_EXPOSED)
         else:
             webbrowser.open_new_tab(f"http://{config.IP_EXPOSED}:{target_port}")
-            return render_template('menu.html', files=app.files, file_names=app.file_names, state=app.threads, exp_ip=config.IP_EXPOSED)
+
+        return render_template('menu.html', files=app.files,
+                                file_names=app.file_names,
+                                    state=app.threads,
+                                    exp_ip=config.IP_EXPOSED)
 
     return app
 
