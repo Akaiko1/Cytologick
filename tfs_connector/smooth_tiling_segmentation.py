@@ -1,16 +1,7 @@
 """
-Original code is from the following repo: 
+Отдельные элементы настоящего кода реализованы на основе кода расположенного по ссылке ниже:
 https://github.com/bnsreenu/python_for_microscopists/blob/master/229_smooth_predictions_by_blending_patches/smooth_tiled_predictions.py
 
-It is based on a work of Guillaume Chevalier, which has a MIT Licence.
-
-# MIT License
-# Copyright (c) 2017 Vooban Inc.
-# Source to original code and license:
-#     https://github.com/Vooban/Smoothly-Blend-Image-Patches
-#     https://github.com/Vooban/Smoothly-Blend-Image-Patches/blob/master/LICENSE
-
-And also there's a video https://youtu.be/HrGn4uFrMOM
 """
 import logging
 import platform
