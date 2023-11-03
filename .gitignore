@@ -17,3 +17,5 @@ openslide/
 *.png
 *.bmp
 *slide-*
+dist/
+build/
