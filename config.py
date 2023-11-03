@@ -5,7 +5,7 @@ import os
 CURRENT_SLIDE = os.path.abspath('slide-2022-09-12T15-38-25-R1-S2.mrxs') # 'current\slide-2022-09-12T15-38-25-R1-S2.mrxs'
 CURRENT_SLIDE_XML = 'current\slide-2022-09-12T15-38-25-R1-S2\Data0021.dat'
 OPENSLIDE_PATH = os.path.abspath('openslide\\bin') # 'E:\\Github\\DemetraAI\\openslide\\bin'
-HDD_SLIDES = '/Volumes/My Passport/CYTOLOGY'
+HDD_SLIDES = os.path.abspath('SLIDES')
 HDD_SLIDES_SVS = 'E:\\CYTOLOGY_2'
 TEMP_FOLDER = 'temp'
 #endregion

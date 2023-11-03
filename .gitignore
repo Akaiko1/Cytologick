@@ -13,3 +13,7 @@ ai/
 *.ini
 .DS_Store
 __web/static/temp/
+openslide/
+*.png
+*.bmp
+*slide-*
