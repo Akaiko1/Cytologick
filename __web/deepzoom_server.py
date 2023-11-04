@@ -224,9 +224,10 @@ def __render_images(drawing_list, index, app, slide, temp_index_path):
     for key, entry in drawing_list.items():
         (_, _), rect, cnt = entry
         ooi_image_rgba = np.array(slide.read_region((rect[0][0], rect[0][1]), 0, (rect[0][2], rect[0][3])))
-        ooi_image = cv2.cvtColor(ooi_image_rgba, cv2.COLOR_RGBA2RGB)
+        ooi_image = cv2.cvtColor(ooi_image_rgba, cv2.COLOR_RGBA2BGR)
         cv2.imwrite(os.path.join(temp_index_path, f'{key}.jpg'), ooi_image)
         app.render_list.append((key, os.path.join('static', 'temp', str(index), f'{key}.jpg')))
+
 
 def __render_pdf(app, index, save_folder):
     pdf = MyFPDF()
@@ -234,15 +235,23 @@ def __render_pdf(app, index, save_folder):
     pdf.add_font('Roboto', '', 'Roboto-Regular.ttf', uni=True)
     pdf.set_font('Roboto', '', 14)
     
-    offset=0
+    offset = 0
     pdf.text(x=25, y=15, txt='Автоматически сгенерированный отчет')
     pdf.text(x=25, y=30, txt=f'Всего находок: {len(app.render_list)}')
-    for name, image in app.render_list:  #TODO multiple pages
+
+    for name, image in app.render_list:
+        # Check if adding another image will exceed the page height
+        if (60 + int(offset * 35) + 35) > 290:  # assuming a page height of 297mm and a bottom margin
+            pdf.add_page()
+            offset = 0
+        
         pdf.text(x=25, y=60 + int(offset * 35), txt=f'Название находки: {name}')
         pdf.image(os.path.join('__web', image), x=50, y=60 + int(offset * 35) + 5, w=25, h=25)
         offset += 1
+        
     app.meta['PDF'] = os.path.join('static', 'temp', str(index), 'report.pdf')
     pdf.output(os.path.join(save_folder, 'report.pdf'))
+
 
 def __prepare_folders(temp_index_path):
     if not os.path.exists(temp_index_path):
