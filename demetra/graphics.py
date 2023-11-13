@@ -46,15 +46,16 @@ def process_dense_pathology_map(pathology_map):
     atypical_probability_map = pathology_map[..., 2]
     atypical_map = np.where(pathology_map[..., 2] >= 0.5, 1, 0)
     
-    atypical_contours = __get_contours(atypical_map, threshold=1200)
+    atypical_contours = __get_contours(atypical_map, threshold=500)
 
     for idx, cnt in enumerate(atypical_contours):
         stats[idx] = __get_probability(atypical_probability_map, cnt)
         cv2.drawContours(red_marks, [cnt], -1, 255, 2)
 
         M = cv2.moments(cnt)
-        texts_probs.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]), f'{stats[idx]:.2f} %'))
-        texts_labels.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]) - 20, f'label: {idx}'))
+        if M["m00"] > 0:
+            texts_probs.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]), f'{stats[idx]:.2f} %'))
+            texts_labels.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]) - 20, f'label: {idx}'))
 
 
     markup[..., 1] = np.where(pathology_map[..., 1] >= 0.5, 255, 0)
