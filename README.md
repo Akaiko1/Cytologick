@@ -22,21 +22,21 @@ To start GUI run
   
   **gui** is capable to use local models and cloud based models
 
-Temporarily to connect software to cloud hosted AI model the fastest way to alter function located in clogic\inference.py - apply_remote, you need to change endpoint and model name (**tf-serve** name)
+Temporarily, the fastest way to connect software to cloud hosted AI model is to alter function located in clogic\inference.py - **apply_remote**, you need to change endpoint and model name parameters (**tf-serve** **name**)
 
 GUI is running cloud-based model example:
 
 ![example.jpg](./assets/example.jpg)
 
-Temporarily to use local model you need to create folder "_main" in the same folder as run.py and place tensorflow files there, the software will load them automatically, if the local file is absent - only cloud options will be enabled (hosted tf-serving model)
+Temporarily, to use local model you need to create folder "_main" in the same folder as run.py and place tensorflow files there, the software will load them automatically, if the local file is absent - only cloud options will be enabled (hosted tf-serving model)
 
-Place slides **MRXS** files in 'current' folder for GUI to locate them
+Place **MRXS** slide files in 'current' folder for GUI to locate them or change the folder name in config.py
 
-The software is compatible with ASAP tool and able to process segmentation in that format and produce a dataset
+The software is compatible with ASAP tool and is able to process segmentation in that format and produce a local dataset
 
 [ASAP - Automated Slide Analysis Platform](https://computationalpathologygroup.github.io/ASAP/)
 
-The ML chain that forms dataset ant trains AI model is:
+The ML chain that forms dataset and trains AI model is:
 
 - Set the config.py parameters as desired, HDD_SLIDES - the path to segmented slides folder
 
