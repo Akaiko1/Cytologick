@@ -1,5 +1,3 @@
-from tensorflow_examples.models.pix2pix import pix2pix
-
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import pandas as pd
