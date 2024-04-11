@@ -10,8 +10,6 @@ Web GUI is based on **OpenSeaDragon**
 
 https://openseadragon.github.io
 
-
-
 ## Instructions
 
 To start GUI run
@@ -28,7 +26,7 @@ Temporarily to connect software to cloud hosted AI model the fastest way to alte
 
 GUI is running cloud-based model example:
 
-![example.jpg](/Users/akaiko/Desktop/github/Cytologick/assets/example.jpg)
+![example.jpg](./assets/example.jpg)
 
 Temporarily to use local model you need to create folder "_main" in the same folder as run.py and place tensorflow files there, the software will load them automatically, if the local file is absent - only cloud options will be enabled (hosted tf-serving model)
 
