@@ -1,4 +1,4 @@
-from demetra.gui import *
+from clogic.gui import *
 from qt_material import apply_stylesheet
 import sys
 

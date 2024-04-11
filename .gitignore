@@ -19,3 +19,6 @@ openslide/
 *slide-*
 dist/
 build/
+model/
+
+previous/

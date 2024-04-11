@@ -5,6 +5,7 @@ import config
 
 
 def main():
+    # That part is deprecated and commented out
     # jsons = demetra_xml.all_slides_to_xml(config.HDD_SLIDES, config.TEMP_FOLDER)
     # hp.markdown_data(jsons)
 

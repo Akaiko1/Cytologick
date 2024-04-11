@@ -8,9 +8,9 @@ import cv2
 import os
 
 import config
-import demetra.inference as inference
-import demetra.contours as contours
-import demetra.graphics as drawing
+import clogic.inference as inference
+import clogic.contours as contours
+import clogic.graphics as drawing
 
 import numpy as np
 import tensorflow as tf
@@ -192,9 +192,9 @@ class Viewer(QWidget):
         self.slide_menu = Menu(self)
         self.slide_menu.show()
 
-        if os.path.exists('demetra_main'):
+        if os.path.exists('_main'):
             print('Local model located, loading')
-            self.model = tf.keras.models.load_model('demetra_main', compile=False)
+            self.model = tf.keras.models.load_model('_main', compile=False)
 
     def setViewerLayout(self):
         display = QHBoxLayout()

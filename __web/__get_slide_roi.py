@@ -3,13 +3,13 @@ import time
 import cv2
 import config
 import random
-import demetra.graphics as graphics
+import clogic.graphics as graphics
 
 import numpy as np
 import tfs_connector as tfs
 import matplotlib.pyplot as plt
 
-from demetra import ai, inference
+from clogic import ai, inference
 
 if hasattr(os, 'add_dll_directory'):
     with os.add_dll_directory(config.OPENSLIDE_PATH):

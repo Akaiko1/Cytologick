@@ -16,6 +16,7 @@ from tensorflow import keras
 keras.backend.set_image_data_format('channels_last')
 
 K = tf.keras.backend
+CALLBACKS = [tf.keras.callbacks.ModelCheckpoint(filepath='demetra_checkpoint', monitor='val_iou_score', mode='max', save_best_only=True)]
 
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
@@ -47,66 +48,6 @@ class Augment(tf.keras.layers.Layer):
         labels = tf.cast(labels, tf.uint8)
 
         return inputs, labels
-
-
-def dice_coef(y_true, y_pred, smooth=1e-7):
-    y_true_f = K.flatten(y_true)
-    y_pred_f = K.flatten(y_pred)
-    intersection = K.sum(y_true_f * y_pred_f)
-    return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
-
-
-def dice_coef_loss(y_true, y_pred):
-    dice_total = 0
-    for idx in range(1, config.CLASSES):
-        partial_truth = tf.cast(tf.equal(y_true, idx), tf.float32)
-        dice_total += dice_coef(partial_truth, y_pred[..., idx])
-
-    return 1 - (dice_total/(config.CLASSES - 1))
-
-
-def get_model_p2pUnet(output_channels:int):
-    """ """
-    base_model = tf.keras.applications.MobileNetV2(input_shape=[128, 128, 3], include_top=False)
-    layer_names = [
-        'block_1_expand_relu',   # 64x64
-        'block_3_expand_relu',   # 32x32
-        'block_6_expand_relu',   # 16x16
-        'block_13_expand_relu',  # 8x8
-        'block_16_project',      # 4x4
-    ]
-    base_model_outputs = [base_model.get_layer(name).output for name in layer_names]
-    down_stack = tf.keras.Model(inputs=base_model.input, outputs=base_model_outputs)
-    down_stack.trainable = True
-
-    up_stack = [
-        pix2pix.upsample(512, 3, apply_dropout=True),  # 4x4 -> 8x8
-        pix2pix.upsample(256, 3, apply_dropout=True),  # 8x8 -> 16x16
-        pix2pix.upsample(128, 3, apply_dropout=True),  # 16x16 -> 32x32
-        pix2pix.upsample(64, 3, apply_dropout=True),   # 32x32 -> 64x64
-    ]
-
-    inputs = tf.keras.layers.Input(shape=[128, 128, 3])
-
-    # Downsampling through the model
-    skips = down_stack(inputs)
-    x = skips[-1]
-    skips = reversed(skips[:-1])
-
-    # Upsampling and establishing the skip connections
-    for up, skip in zip(up_stack, skips):
-        x = up(x)
-        concat = tf.keras.layers.Concatenate()
-        x = concat([x, skip])
-
-    # This is the last layer of the model
-    last = tf.keras.layers.Conv2DTranspose(
-        filters=output_channels, kernel_size=3, strides=2,
-        padding='same')  #64x64 -> 128x128
-
-    x = last(x)
-
-    return tf.keras.Model(inputs=inputs, outputs=x)
 
 
 def get_dataset(images_path, masks_path):
@@ -178,9 +119,6 @@ def show_predictions(model, dataset=None, num=1):
             display([image[0], mask[0], create_mask(pred_mask)])
 
 
-CALLBACKS = [tf.keras.callbacks.ModelCheckpoint(filepath='demetra_checkpoint', monitor='val_iou_score', mode='max', save_best_only=True)]
-
-
 def add_sample_weights(image, label):
   class_weights = tf.constant([1.0, 1.0, 2.0])
   class_weights = class_weights/tf.reduce_sum(class_weights)
@@ -190,6 +128,32 @@ def add_sample_weights(image, label):
 
 
 def train_new_model(model_path, output_classes, epochs, batch_size=64):
+    """
+    Train a new U-Net model with EfficientNetB3 (by default) as the encoder.
+
+    This function sets up training and validation datasets using images and masks from specified paths,
+    applies data augmentation to the training dataset, compiles the model, and then trains it.
+    The trained model is saved to the specified path.
+
+    Parameters:
+    - model_path (str): The path where the trained model should be saved.
+    - output_classes (int): The number of classes for the output layer of the U-Net model.
+    - epochs (int): The number of epochs to train the model.
+    - batch_size (int, optional): The size of the batches of data (default is 64).
+
+    The function retrieves the dataset paths from the configuration, prepares the datasets,
+    defines the model architecture, compiles it, trains it, and finally saves the trained model.
+
+    Note:
+    - The training and validation datasets are extracted from `config.DATASET_FOLDER` combining `config.IMAGES_FOLDER`
+      for images and `config.MASKS_FOLDER` for masks.
+    - Data augmentation is applied to the training dataset.
+    - The model uses the 'nadam' optimizer, a combination of Jaccard loss and Categorical Focal loss,
+      and monitors the IoU score and F-score as metrics.
+
+    The model is trained using the specified `epochs` and `batch_size`, and the progress is printed during training.
+    After training, the model is saved to `model_path`.
+    """
     
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
@@ -220,13 +184,37 @@ def train_new_model(model_path, output_classes, epochs, batch_size=64):
                           validation_steps=int(datapoints_total/batch_size),
                           validation_data=test_batches,
                           callbacks=[])
-    
-    # show_predictions(model, test_batches, 5)
 
     model.save(model_path)
 
 
 def train_current_model(model_path, epochs, batch_size=64, lr=0.0001):
+    """
+    Train an existing U-Net model by specifing the path to model files
+
+    This function sets up training and validation datasets using images and masks from specified paths,
+    applies data augmentation to the training dataset, compiles the model, and then trains it.
+    The trained model is saved to the specified path.
+
+    Parameters:
+    - model_path (str): The path where the trained model should be saved.
+    - output_classes (int): The number of classes for the output layer of the U-Net model.
+    - epochs (int): The number of epochs to train the model.
+    - lr (float, optional): The learning rate step for Adam or other optimizer.
+
+    The function retrieves the dataset paths from the configuration, prepares the datasets,
+    defines the model architecture, compiles it, trains it, and finally saves the trained model.
+
+    Note:
+    - The training and validation datasets are extracted from `config.DATASET_FOLDER` combining `config.IMAGES_FOLDER`
+      for images and `config.MASKS_FOLDER` for masks.
+    - Data augmentation is applied to the training dataset.
+    - The model uses the 'adam' optimizer, a combination of Jaccard loss and Categorical Focal loss,
+      and monitors the IoU score and F-score as metrics.
+
+    The model is trained using the specified `epochs` and `batch_size`, and the progress is printed during training.
+    After training, the model is saved to `model_path`.
+    """
     
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
@@ -257,8 +245,5 @@ def train_current_model(model_path, epochs, batch_size=64, lr=0.0001):
                           validation_steps=int(datapoints_total/batch_size),
                           validation_data=test_batches,
                           callbacks=CALLBACKS)
-    
-    # show_predictions(model, test_batches, 5)
 
     model.save(model_path)
-

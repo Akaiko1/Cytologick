@@ -1,4 +1,4 @@
-from demetra import ai
+from clogic import ai
 
 
 if __name__ == '__main__':

@@ -17,6 +17,7 @@ cryptography @ file:///Users/runner/miniforge3/conda-bld/cryptography-split_1708
 cycler==0.12.1
 dill==0.3.8
 efficientnet==1.0.0
+Flask==3.0.3
 flatbuffers @ file:///home/conda/feedstock_root/build_artifacts/python-flatbuffers_1711466727397/work
 fonttools==4.51.0
 frozenlist @ file:///Users/runner/miniforge3/conda-bld/frozenlist_1702645565720/work
@@ -30,6 +31,7 @@ idna @ file:///home/conda/feedstock_root/build_artifacts/idna_1701026962277/work
 image-classifiers==1.0.0
 imageio==2.34.0
 importlib_metadata @ file:///home/conda/feedstock_root/build_artifacts/importlib-metadata_1710971335535/work
+itsdangerous==2.1.2
 Jinja2==3.1.3
 keras @ file:///home/conda/feedstock_root/build_artifacts/keras_1700038168849/work/keras-2.15.0-py3-none-any.whl#sha256=2dcc6d2e30cf9c951064b63c1f4c404b966c59caf09e01f3549138ec8ee0dd1f
 Keras-Applications==1.0.8
@@ -50,7 +52,7 @@ opt-einsum @ file:///home/conda/feedstock_root/build_artifacts/opt_einsum_169644
 orjson==3.10.0
 packaging @ file:///home/conda/feedstock_root/build_artifacts/packaging_1710075952259/work
 pandas==1.5.2
-pillow==10.3.0
+pillow @ file:///Users/runner/miniforge3/conda-bld/pillow_1712154790137/work
 protobuf==4.24.4
 pyasn1 @ file:///home/conda/feedstock_root/build_artifacts/pyasn1_1701287008248/work
 pyasn1-modules @ file:///home/conda/feedstock_root/build_artifacts/pyasn1-modules_1695107857548/work

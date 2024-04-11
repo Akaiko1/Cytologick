@@ -2,9 +2,9 @@ import tensorflow as tf
 import numpy as np
 import cv2
 
-import demetra.ai as ai
+import clogic.ai as ai
 import tfs_connector as tfs
-import demetra.smooth as smooth
+import clogic.smooth as smooth
 import config
 
 

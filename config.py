@@ -110,4 +110,3 @@ def load_settings_from_ini():
 
 # Call the function to load settings
 load_settings_from_ini()
-pass

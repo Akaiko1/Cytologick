@@ -1,8 +1,60 @@
 # Cytologick software (WIP)
 
-## Installation instructions
+## Overview
 
-### Windows 10
+Cytologick is a Python-based software designed to automate the analysis of Pap smear scans using convolutional neural networks (CNNs). The project's codebase supports automatic dataset preparation and model training. After training and deploying the model, either locally or on the cloud, Cytologick offers visualization tools to identify and highlight unusual findings in the scans. This functionality assists users by providing detailed reports and visual annotations of the findings.
+
+**Dependecies**
+
+Web GUI is based on **OpenSeaDragon**
+
+https://openseadragon.github.io
+
+
+
+## Instructions
+
+To start GUI run
+
+- run.py
+
+- run_web.py
+  
+  web interface uses **only** tf-serving hosted models
+  
+  **gui** is capable to use local models and cloud based models
+
+Temporarily to connect software to cloud hosted AI model the fastest way to alter function located in clogic\inference.py - apply_remote, you need to change endpoint and model name (**tf-serve** name)
+
+GUI is running cloud-based model example:
+
+![example.jpg](/Users/akaiko/Desktop/github/Cytologick/assets/example.jpg)
+
+Temporarily to use local model you need to create folder "_main" in the same folder as run.py and place tensorflow files there, the software will load them automatically, if the local file is absent - only cloud options will be enabled (hosted tf-serving model)
+
+Place slides **MRXS** files in 'current' folder for GUI to locate them
+
+The software is compatible with ASAP tool and able to process segmentation in that format and produce a dataset
+
+[ASAP - Automated Slide Analysis Platform](https://computationalpathologygroup.github.io/ASAP/)
+
+The ML chain that forms dataset ant trains AI model is:
+
+- Set the config.py parameters as desired, HDD_SLIDES - the path to segmented slides folder
+
+- After that chain scripts: **get_xmls**.py -> **get_dataset**.py -> **model_new**.py -> **model_train**.py
+
+## Project Structure
+
+- `config.py` - Configuration settings for the project.
+- `clogic/` - Contains main modules.
+- `get_dataset.py` - Script to prepare the dataset.
+- `model_new.py`, `model_train.py` - Scripts for model definition and training.
+- `parsers/` - Modules for parsing SVS or MRSX data.
+- `tfs_connector/` - Contains modules that connects software to cloud deployed models.
+- `run.py`, `run_web.py` - Main executable scripts.
+
+## Installation
 
 1. Install **Conda** and create a new environment with **python3**, version **3.10.6** or later
 
@@ -10,7 +62,7 @@
 
 3. Activate new env with **cmd** or **powershell** in local folder
 
-4. Run command:
+4. Run command in terminal:
    
    ```bash
    pip install -r requirements.txt
@@ -72,8 +124,6 @@
    #endregion
    ```
 
-7. Start GUI with:
-   
-   ```bash
-   python run.py
-   ```
+## Contributing
+
+If you're interested in contributing to Cytologick, please read our contributing guidelines. We welcome issues and pull requests!
