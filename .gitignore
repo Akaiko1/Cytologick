@@ -22,3 +22,6 @@ build/
 model/
 
 previous/
+
+*jquery.js
+*openseadragon*.js

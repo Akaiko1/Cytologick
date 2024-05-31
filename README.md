@@ -4,11 +4,16 @@
 
 Cytologick is a Python-based software designed to automate the analysis of Pap smear scans using convolutional neural networks (CNNs). The project's codebase supports automatic dataset preparation and model training. After training and deploying the model, either locally or on the cloud, Cytologick offers visualization tools to identify and highlight unusual findings in the scans. This functionality assists users by providing detailed reports and visual annotations of the findings.
 
-**Dependecies**
+**Dependencies**
 
-Web GUI is based on **OpenSeaDragon**
+Web GUI is based on **OpenSeaDragon** and **jQuery**
 
 https://openseadragon.github.io
+https://jquery.com
+
+## Precompiled packages and models
+
+**Coming Soon**
 
 ## Instructions
 
@@ -52,28 +57,33 @@ The ML chain that forms dataset and trains AI model is:
 - `tfs_connector/` - Contains modules that connects software to cloud deployed models.
 - `run.py`, `run_web.py` - Main executable scripts.
 
-## Installation
+## Installation from source
 
 1. Install **Conda** and create a new environment with **python3**, version **3.10.6** or later
 
 2. Install Openslide from <https://openslide.org> refer to the manual corresponding to your current OS
 
-3. Activate new env with **cmd** or **powershell** in local folder
+3. Download (links are in the Overview section) and place to __web/static
+   - __web/static/**jquery.js**
+   - __web/static/**openseadragon-scalebar.js**
+   - __web/static/**openseadragon.js**
 
-4. Run command in terminal:
+4. Activate new env with **cmd** or **powershell** in local folder
+
+5. Run command in terminal:
    
    ```bash
    pip install -r requirements.txt
    ```
 
-5. Also run in your activated environment:
+6. Also run in your activated environment:
    
    ```bash
    conda install tensorflow
    conda install openslide-python # optional if run.py doesn't work
    ```
 
-6. Modify settings at config.py (debug config file with auxillary parameters, a subject to change later)
+7. Modify settings at config.py (debug config file with auxillary parameters, a subject to change later)
    
    **OPENSLIDE_PATH** is necessary! This is an absolute path to your OpenSlide installation folder
    
