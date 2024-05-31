@@ -9,6 +9,7 @@ Cytologick is a Python-based software designed to automate the analysis of Pap s
 Web GUI is based on **OpenSeaDragon** and **jQuery**
 
 https://openseadragon.github.io
+
 https://jquery.com
 
 ## Precompiled packages and models
