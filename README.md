@@ -1,18 +1,17 @@
-# Cytologick - Automated Pap Smear Analysis Software
+# Cytologick - Research Tool for Pap Smear Analysis
 
 ## What is Cytologick?
 
-Cytologick is a Python-based medical software that automatically analyzes Pap smear slides to detect abnormal cells using artificial intelligence. It helps medical professionals identify cellular abnormalities like LSIL, HSIL, and ASCUS by providing visual annotations and detailed reports.
+Cytologick is a Python-based research tool for analyzing Pap smear slides using artificial intelligence. This software is designed for research and educational purposes to explore automated detection of cellular abnormalities like LSIL, HSIL, and ASCUS in cytological samples.
 
 ## Features
 
-✅ **Automated Cell Detection** - AI-powered identification of abnormal cervical cells  
-✅ **MRXS Format Support** - Compatible with digital pathology slide formats  
-✅ **ASAP Integration** - Works with ASAP annotation files for training  
-✅ **Dual Interface** - Desktop application and web interface options  
-✅ **Local & Cloud AI** - Support for both offline and cloud-based models  
-✅ **Custom Training** - Train your own models on annotated datasets  
-✅ **Medical Accuracy** - Detects LSIL, HSIL, ASCUS, and ASCH abnormalities  
+- **Experimental Cell Detection** - AI-based research into abnormal cervical cell identification  
+- **MRXS Format Support** - Reads digital pathology slide formats for research  
+- **ASAP Integration** - Compatible with ASAP annotation files for dataset creation  
+- **Desktop Interface** - PyQt5-based application for slide analysis  
+- **Model Training** - Train custom U-Net models on annotated datasets  
+- **Research Focus** - Experimental detection of LSIL, HSIL, ASCUS, and ASCH patterns  
 
 ![Cytologick Example](./assets/example.jpg)
 
@@ -92,13 +91,13 @@ conda activate cytologick
 # Run the application
 python run.py
 ```
-Opens a desktop application that can use both local and cloud-based AI models.
+Opens a desktop research application for experimental slide analysis.
 
-### 2. Web Interface (Under Construction)
+### 2. Web Interface (Experimental)
 ```bash
 python run_web.py
 ```
-⚠️ **Note**: Web interface is currently under development. Use desktop application for stable analysis.
+⚠️ **Note**: Web interface is experimental and under development.
 
 ## Getting Started
 
@@ -117,9 +116,9 @@ python run.py
 
 ### 3. Using the Interface
 1. **Load Slide**: Select your MRXS file from the file browser
-2. **Run Analysis**: Click analyze to detect abnormal cells
-3. **View Results**: Abnormal areas will be highlighted with annotations
-4. **Export Report**: Save results for medical review
+2. **Run Analysis**: Click analyze to run experimental detection
+3. **View Results**: Areas of interest will be highlighted with annotations
+4. **Export Results**: Save analysis results for research purposes
 
 ### Advanced: Training Your Own Models
 
@@ -193,7 +192,7 @@ For best performance and offline analysis:
 - No internet connection required
 - Faster inference (no network latency)
 - Full privacy - data stays on your machine
-- More reliable for clinical use
+- Better for research reproducibility
 
 ### Option 2: Cloud-Based Models
 Remote models hosted on **TensorFlow Serving** infrastructure. Requires internet connection.
@@ -222,9 +221,9 @@ Cytologick uses ASAP annotation format for training data. See `annotation_exampl
 3. Label each rectangle with appropriate cell type
 4. Save as XML annotation file
 
-## Cell Types Detected
+## Cell Types (Research Focus)
 
-Cytologick can identify these cervical cell abnormalities:
+Cytologick research focuses on these cervical cell patterns:
 - **LSIL** - Low-grade Squamous Intraepithelial Lesion
 - **HSIL** - High-grade Squamous Intraepithelial Lesion  
 - **ASCUS** - Atypical Squamous Cells of Undetermined Significance
@@ -232,7 +231,7 @@ Cytologick can identify these cervical cell abnormalities:
 
 ## Keywords
 
-Pap smear analysis, cervical cancer screening, cytology AI, medical image analysis, LSIL detection, HSIL detection, ASCUS detection, pathology automation, deep learning healthcare, digital pathology, medical diagnosis, EfficientNet U-Net, TensorFlow medical imaging
+Pap smear research, cytology AI, medical image analysis research, LSIL detection research, HSIL detection research, ASCUS detection research, digital pathology research, deep learning, U-Net segmentation, TensorFlow, computer vision research
 
 ## Contributing
 

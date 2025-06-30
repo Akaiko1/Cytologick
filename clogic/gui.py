@@ -24,7 +24,7 @@ else:
 
 class Preview(QWidget):
     modes = ['smooth', 'direct', 'remote']
-    mode_names = ['Локально: избыточно', 'Локально: быстрая', 'Облако: быстрая']
+    mode_names = ['Local: Comprehensive', 'Local: Fast', 'Cloud: Fast']
 
     def __init__(self, parent, pixmap):
         super().__init__()
@@ -33,7 +33,7 @@ class Preview(QWidget):
         self.image = pixmap
         self.map = None
         
-        self.setWindowTitle("Предпросмотр")
+        self.setWindowTitle("Preview")
         self.setPreviewLayout()
         self.setMaximumSize(2000, 1200)
     
@@ -62,9 +62,9 @@ class Preview(QWidget):
         self.display.paintEvent = self.printImage
 
         self.info = QLabel()
-        self.info.setText('Подсчёт \nрезультатов')
+        self.info.setText('Analysis \nResults')
 
-        self.button = QPushButton('Разметка')
+        self.button = QPushButton('Analyze')
         self.button.clicked.connect(self.runModel)
 
         display_layout.addWidget(self.info)
@@ -130,7 +130,7 @@ class Menu(QWidget):
         self.levels = []
         self.parent = parent
 
-        self.setWindowTitle("Выбор слайда")
+        self.setWindowTitle("Select Slide")
         self.setMenuLayout()
 
     def setMenuLayout(self):
@@ -184,7 +184,7 @@ class Viewer(QWidget):
         self.appw, self.apph = 800, 800
         self.current_slide = None
 
-        self.setWindowTitle("Demetra AI")
+        self.setWindowTitle("Cytologick")
         self.setGeometry(100, 100, self.appw, self.apph)
         self.setViewerLayout()
         self.show()

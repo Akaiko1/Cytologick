@@ -26,7 +26,7 @@ We welcome contributions from the medical, AI, and software development communit
 
 ### 1. Fork the Repository
 ```bash
-git clone https://github.com/[username]/Cytologick.git
+git clone https://github.com/Akaiko1/Cytologick.git
 cd Cytologick
 git checkout -b feature/your-feature-name
 ```

@@ -9,7 +9,7 @@ If you use Cytologick in your research, please cite this software:
   title={Cytologick: Automated Pap Smear Analysis Software},
   author={Cytologick Development Team},
   year={2024},
-  url={https://github.com/[username]/Cytologick},
+  url={https://github.com/Akaiko1/Cytologick},
   note={AI-powered cytology screening tool for cervical cancer detection},
   version={1.0}
 }
@@ -17,11 +17,11 @@ If you use Cytologick in your research, please cite this software:
 
 ## APA Citation
 
-Cytologick Development Team. (2024). *Cytologick: Automated Pap Smear Analysis Software* (Version 1.0) [Computer software]. https://github.com/[username]/Cytologick
+Cytologick Development Team. (2024). *Cytologick: Automated Pap Smear Analysis Software* (Version 1.0) [Computer software]. https://github.com/Akaiko1/Cytologick
 
 ## IEEE Citation
 
-Cytologick Development Team, "Cytologick: Automated Pap Smear Analysis Software," 2024. [Online]. Available: https://github.com/[username]/Cytologick
+Cytologick Development Team, "Cytologick: Automated Pap Smear Analysis Software," 2024. [Online]. Available: https://github.com/Akaiko1/Cytologick
 
 ## Related Publications
 
