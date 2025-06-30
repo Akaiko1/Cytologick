@@ -1,0 +1,108 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Demetra results viewer</title>
+<meta name="viewport" content="user-scalable=no">
+
+<head>
+    <link rel="stylesheet" href="static/screens/preview/globals.css" />
+    <link rel="stylesheet" href="static/screens/preview/styleguide.css" />
+    <link rel="stylesheet" href="static/screens/preview/style.css" />
+</head>
+
+<body>
+    <div class="page-hover-mark">
+        <div class="div">
+            <div class="button-analysis">
+                <div class="analys">
+                    <img class="icon-report" src="static/screens/preview/img/icon-report-2.svg" />
+                    <div class="text-wrapper">
+                        <a href="{{ meta['PDF'] }}" download="report.pdf">Скачать отчет</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="result">
+                <div class="text-wrapper-22"> Координаты регионов интереса </div>
+                    {% for name in regions %}
+                    <div class="text-wrapper-21">Маркировка: {{ name }}</div>
+                    <div class="text-wrapper-21">Координаты: {{ regions[name][1][0][:2] }}</div>
+                    <br>
+                    {% endfor %}
+            </div>
+            
+            <div class="overlap" id="view"></div>
+
+            {% if details %}
+                <div class="scroll-frame">
+                    <div class="text-wrapper-22">Детализация</div>
+                    <div class="frame">
+                        {% for entry in details %}
+                        <div class="ao">
+                            <img class="element" src="{{ entry[1] }}" />
+                            <div class="text-wrapper-24">{{ entry[0] }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% else %}
+                <span class="notice">None</span>
+            {% endif %}
+            <img class="logo" src="static/screens/preview/img/logo.png" />
+        </div>
+    </div>
+</body>
+
+<script type="text/javascript" src="static/jquery.js"></script>
+<script type="text/javascript" src="static/openseadragon.js"></script>
+<script type="text/javascript" src="static/openseadragon-scalebar.js"></script>
+<script type="text/javascript">
+$(function() {
+    var dzi_data = {{ dzi_data|default('{}')|safe }};
+    var viewer = new OpenSeadragon({
+        id: "view",
+        prefixUrl: "static/images/",
+        timeout: 120000,
+        animationTime: 0.5,
+        blendTime: 0.1,
+        constrainDuringPan: true,
+        maxZoomPixelRatio: 2,
+        minZoomImageRatio: 1,
+        visibilityRatio: 1,
+        zoomPerScroll: 2,
+    });
+    viewer.scalebar({
+        xOffset: 10,
+        yOffset: 10,
+        barThickness: 3,
+        color: '#555555',
+        fontColor: '#333333',
+        backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    });
+
+    function open_slide(url, mpp) {
+        var tile_source;
+        if (dzi_data[url]) {
+            // DZI XML provided as template argument (deepzoom_tile.py)
+            tile_source = new OpenSeadragon.DziTileSource(
+                    OpenSeadragon.DziTileSource.prototype.configure(
+                    OpenSeadragon.parseXml(dzi_data[url]), url));
+        } else {
+            // DZI XML fetched from server (deepzoom_server.py)
+            tile_source = url;
+        }
+        viewer.open(tile_source);
+        viewer.scalebar({
+            pixelsPerMeter: mpp ? (1e6 / mpp) : 0,
+        });
+    }
+
+    open_slide("{{ slide_url }}", parseFloat('{{ slide_mpp }}'));
+    $(".load-slide").on("click", function(ev) {
+        $(".current-slide").removeClass("current-slide");
+        $(this).parent().addClass("current-slide");
+        open_slide($(this).attr('data-url'),
+                parseFloat($(this).attr('data-mpp')));
+        ev.preventDefault();
+    });
+});
+</script>

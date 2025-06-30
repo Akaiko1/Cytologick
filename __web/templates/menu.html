@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Доступные файлы на устройстве</title>
+
+    <link rel="stylesheet" href="static/css/globals.css" />
+    <link rel="stylesheet" href="static/css/styleguide.css" />
+    <link rel="stylesheet" href="static/css/style.css" />
+</head>
+
+<body>
+    <div class="main">
+        <div class="page-main">
+            <img class="logo" src="static/img/logo.png" />
+            <div class="overlap">
+                <div class="patients">
+                    {% for file in files %}
+                        {% if files.index(file) in state.keys() %}
+                            <div class="n" style="background-color:rgba(129, 147, 248, 1);" ><div class="details">
+                                <a class="text-wrapper-4" target="_blank"
+                                 href="http://{{ exp_ip }}:{{ 5002 + files.index(file)}}">{{ file_names[files.index(file)] }}</a>
+                            </div></div>
+                        {% else %} 
+                            <div class="n"><div class="details">
+                                <a class="text-wrapper-4"  href="/{{ files.index(file) }}">{{ file_names[files.index(file)] }}</a>
+                            </div></div>
+                        {% endif %}
+                    {% endfor %}
+                    <br/>
+                </div>
+                <form action="/upload" method=post enctype=multipart/form-data hidden>
+                    <input type="file" id="file-form" name="file" hidden/>
+                    <input type="submit" id="submit-form" hidden/>
+                </form>
+                <div class="button-add">
+                    <div class="div">
+                        <img class="img" src="static/img/icon-add.svg" />
+                        <div class="text-wrapper-13">
+                            <label for="file-form">Выбрать</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="button-submit">
+                    <div class="div">
+                        <div class="text-wrapper-13">
+                            <label for="submit-form">Загрузить</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script type="text/javascript">AddFillerLink("content", "navigation", "extra")</script>
+</body>
+
+</html>

@@ -1,0 +1,8 @@
+:root {
+  --button: rgba(129, 147, 248, 1);
+  --variable-collection-grey-disable: rgba(165, 164, 165, 1);
+  --variable-collection-hover: rgba(4, 195, 198, 0.04);
+  --variable-collection-white-main: rgba(255, 255, 255, 1);
+  --variable-collection-button-action: rgba(226, 242, 242, 1);
+  --variable-collection-black-main: rgba(35, 41, 53, 1);
+}

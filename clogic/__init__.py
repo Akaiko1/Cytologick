@@ -1,0 +1,1 @@
+from .smooth import predict_img_with_smooth_windowing
