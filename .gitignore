@@ -25,3 +25,9 @@ previous/
 
 *jquery.js
 *openseadragon*.js
+
+*.md
+
+config.yaml
+
+.claude/

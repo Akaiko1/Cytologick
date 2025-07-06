@@ -1,5 +1,6 @@
 import configparser
 import os
+import yaml
 
 #region General
 # CURRENT_SLIDE = 'current\slide-2022-11-11T11-10-38-R1-S18.mrxs'
@@ -44,69 +45,89 @@ BROADEN_INDIVIDUAL_RECT = 1000
 IP_EXPOSED = '127.0.0.1'
 #endregion
 
-# Define a function to load settings from .ini file
-def load_settings_from_ini():
+def load_config():
+    config_files = ['config.yaml', 'config.yml', 'config.ini']
+    
+    for config_file in config_files:
+        if os.path.exists(config_file):
+            print(f'{config_file} detected')
+            
+            if config_file.endswith(('.yaml', '.yml')):
+                _load_yaml_config(config_file)
+            elif config_file.endswith('.ini'):
+                _load_ini_config(config_file)
+            return
+
+def _load_yaml_config(config_file):
+    with open(config_file, 'r') as file:
+        config = yaml.safe_load(file)
+    
+    _update_globals_from_dict(config)
+
+def _load_ini_config(config_file):
     config = configparser.ConfigParser()
-    ini_file = 'config.ini'  # Name of your .ini file
-    if os.path.exists(ini_file):
-        print('config.ini detected')
-        config.read(ini_file)
-        
-        # Update global variables based on .ini file
-        global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
-        global DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
-        global SLIDE_DIR, UNET_PRED_MODE, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED
+    config.read(config_file)
+    
+    config_dict = {
+        'general': dict(config['General']) if 'General' in config else {},
+        'neural_network': dict(config['Neural Network']) if 'Neural Network' in config else {},
+        'gui': dict(config['GUI']) if 'GUI' in config else {},
+        'dataset': dict(config['Dataset']) if 'Dataset' in config else {},
+        'web': dict(config['Web']) if 'Web' in config else {}
+    }
+    
+    _update_globals_from_dict(config_dict)
 
-        # General Section
-        if 'General' in config:
-            if 'CURRENT_SLIDE' in config['General']:
-                CURRENT_SLIDE = os.path.abspath(config['General']['CURRENT_SLIDE'])
-            if 'CURRENT_SLIDE_XML' in config['General']:
-                CURRENT_SLIDE_XML = config['General']['CURRENT_SLIDE_XML']
-            if 'OPENSLIDE_PATH' in config['General']:
-                OPENSLIDE_PATH = os.path.abspath(config['General']['OPENSLIDE_PATH'])
-            if 'HDD_SLIDES' in config['General']:
-                HDD_SLIDES = os.path.abspath(config['General']['HDD_SLIDES'])
-            if 'HDD_SLIDES_SVS' in config['General']:
-                HDD_SLIDES_SVS = config['General']['HDD_SLIDES_SVS']
-            if 'TEMP_FOLDER' in config['General']:
-                TEMP_FOLDER = config['General']['TEMP_FOLDER']
+def _update_globals_from_dict(config):
+    global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
+    global DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
+    global SLIDE_DIR, UNET_PRED_MODE, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED
+    
+    general = config.get('general', {})
+    if 'current_slide' in general:
+        CURRENT_SLIDE = os.path.abspath(general['current_slide'])
+    if 'current_slide_xml' in general:
+        CURRENT_SLIDE_XML = general['current_slide_xml']
+    if 'openslide_path' in general:
+        OPENSLIDE_PATH = os.path.abspath(general['openslide_path'])
+    if 'hdd_slides' in general:
+        HDD_SLIDES = os.path.abspath(general['hdd_slides'])
+    if 'hdd_slides_svs' in general:
+        HDD_SLIDES_SVS = general['hdd_slides_svs']
+    if 'temp_folder' in general:
+        TEMP_FOLDER = general['temp_folder']
+    
+    neural_network = config.get('neural_network', {})
+    if 'dataset_folder' in neural_network:
+        DATASET_FOLDER = neural_network['dataset_folder']
+    if 'masks_folder' in neural_network:
+        MASKS_FOLDER = neural_network['masks_folder']
+    if 'images_folder' in neural_network:
+        IMAGES_FOLDER = neural_network['images_folder']
+    if 'image_chunk' in neural_network:
+        IMAGE_CHUNK = tuple(neural_network['image_chunk'])
+    if 'image_shape' in neural_network:
+        IMAGE_SHAPE = tuple(neural_network['image_shape'])
+    if 'classes' in neural_network:
+        CLASSES = neural_network['classes']
+    if 'labels' in neural_network:
+        LABELS = neural_network['labels']
+    
+    gui = config.get('gui', {})
+    if 'slide_dir' in gui:
+        SLIDE_DIR = gui['slide_dir']
+    if 'unet_pred_mode' in gui:
+        UNET_PRED_MODE = gui['unet_pred_mode']
+    
+    dataset = config.get('dataset', {})
+    if 'exclude_duplicates' in dataset:
+        EXCLUDE_DUPLICATES = dataset['exclude_duplicates']
+    if 'broaden_individual_rect' in dataset:
+        BROADEN_INDIVIDUAL_RECT = dataset['broaden_individual_rect']
+    
+    web = config.get('web', {})
+    if 'ip_exposed' in web:
+        IP_EXPOSED = web['ip_exposed']
 
-        # Neural Network Section
-        if 'Neural Network' in config:
-            if 'DATASET_FOLDER' in config['Neural Network']:
-                DATASET_FOLDER = config['Neural Network']['DATASET_FOLDER']
-            if 'MASKS_FOLDER' in config['Neural Network']:
-                MASKS_FOLDER = config['Neural Network']['MASKS_FOLDER']
-            if 'IMAGES_FOLDER' in config['Neural Network']:
-                IMAGES_FOLDER = config['Neural Network']['IMAGES_FOLDER']
-            if 'IMAGE_CHUNK' in config['Neural Network']:
-                IMAGE_CHUNK = tuple(map(int, config['Neural Network']['IMAGE_CHUNK'].split(',')))
-            if 'IMAGE_SHAPE' in config['Neural Network']:
-                IMAGE_SHAPE = tuple(map(int, config['Neural Network']['IMAGE_SHAPE'].split(',')))
-            if 'CLASSES' in config['Neural Network']:
-                CLASSES = int(config['Neural Network']['CLASSES'])
-            if 'LABELS' in config['Neural Network']:
-                LABELS = eval(config['Neural Network']['LABELS'])
-
-        # GUI Section
-        if 'GUI' in config:
-            if 'SLIDE_DIR' in config['GUI']:
-                SLIDE_DIR = config['GUI']['SLIDE_DIR']
-            if 'UNET_PRED_MODE' in config['GUI']:
-                UNET_PRED_MODE = config['GUI']['UNET_PRED_MODE']
-
-        # Dataset Section
-        if 'Dataset' in config:
-            if 'EXCLUDE_DUPLICATES' in config['Dataset']:
-                EXCLUDE_DUPLICATES = config.getboolean('Dataset', 'EXCLUDE_DUPLICATES')
-            if 'BROADEN_INDIVIDUAL_RECT' in config['Dataset']:
-                BROADEN_INDIVIDUAL_RECT = int(config['Dataset']['BROADEN_INDIVIDUAL_RECT'])
-
-        # Web Section
-        if 'Web' in config:
-            if 'IP_EXPOSED' in config['Web']:
-                IP_EXPOSED = config['Web']['IP_EXPOSED']
-
-# Call the function to load settings
-load_settings_from_ini()
+# Load configuration
+load_config()
