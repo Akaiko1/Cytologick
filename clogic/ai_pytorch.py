@@ -74,6 +74,10 @@ class CytologyDataset(Dataset):
             image = transformed['image']
             mask = transformed['mask']
         
+        # Ensure mask is long type for loss computation
+        if isinstance(mask, torch.Tensor):
+            mask = mask.long()
+        
         return image, mask
 
 
@@ -96,7 +100,7 @@ def get_train_transforms():
             ),
         ], p=0.8),
         A.OneOf([
-            A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+            A.GaussNoise(var_limit=50.0, p=0.5),
             A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.25, p=0.5),
         ], p=0.5),
         A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
