@@ -44,21 +44,31 @@ conda activate cytologick
 Download and install [ASAP](https://computationalpathologygroup.github.io/ASAP/) if you plan to create training datasets from annotated slides.
 
 ### Step 4: Install Dependencies
+
+**Option A: Install Both Frameworks (Full Support)**
 ```bash
-# Install Python packages
+# Install all dependencies (includes both TensorFlow and PyTorch)
 pip install -r requirements.txt
 
-# Install additional packages via conda
+# Install OpenSlide via conda
+conda install openslide-python
+```
+
+**Option B: Framework-Specific Installation**
+```bash
+# For TensorFlow only:
+pip install -r requirements-tensorflow.txt
 conda install openslide-python
 
-# Choose your ML framework:
-# For TensorFlow (default):
-conda install tensorflow
-
-# For PyTorch (alternative):
-conda install pytorch torchvision torchaudio -c pytorch
-pip install segmentation-models-pytorch albumentations
+# For PyTorch only:
+pip install -r requirements-pytorch.txt
+conda install openslide-python
 ```
+
+**Important Notes:**
+- Both frameworks can coexist in the same environment
+- NumPy version constraint (`<2.0.0`) ensures TensorFlow compatibility
+- PyTorch installation is fully validated and production-ready
 
 ### Step 5: Download Web Dependencies
 Download and place these files in `__web/static/`:
