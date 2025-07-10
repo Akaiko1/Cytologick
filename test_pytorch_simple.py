@@ -17,10 +17,10 @@ def test_pytorch_dependencies():
         import albumentations as A
         from albumentations.pytorch import ToTensorV2
         print("✅ All PyTorch dependencies available")
-        return True
+        assert True
     except ImportError as e:
         print(f"❌ Missing PyTorch dependency: {e}")
-        return False
+        assert False, f"Missing PyTorch dependency: {e}"
 
 def test_pytorch_model_creation():
     """Test PyTorch model creation."""
@@ -35,10 +35,10 @@ def test_pytorch_model_creation():
             activation='softmax2d'
         )
         print("✅ U-Net model created successfully")
-        return True
+        assert model is not None
     except Exception as e:
         print(f"❌ Model creation failed: {e}")
-        return False
+        assert False, f"Model creation failed: {e}"
 
 def test_pytorch_training_components():
     """Test PyTorch training components from our implementation."""
@@ -77,12 +77,12 @@ def test_pytorch_training_components():
         f1 = f1_score(predictions, targets, num_classes)
         print(f"✅ Metrics work: IoU={iou:.4f}, F1={f1:.4f}")
         
-        return True
+        assert True
     except Exception as e:
         print(f"❌ Training components failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"Training components failed: {e}"
 
 def test_pytorch_inference_components():
     """Test PyTorch inference components."""
@@ -104,12 +104,12 @@ def test_pytorch_inference_components():
         mask = create_mask_pytorch(pred)
         print(f"✅ Mask creation: {pred.shape} -> {mask.shape}")
         
-        return True
+        assert True
     except Exception as e:
         print(f"❌ Inference components failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"Inference components failed: {e}"
 
 def test_end_to_end_pipeline():
     """Test end-to-end PyTorch pipeline."""
@@ -138,12 +138,12 @@ def test_end_to_end_pipeline():
         print(f"✅ End-to-end pipeline: {test_image.shape} -> {result.shape}")
         print(f"   Result range: [{result.min()}, {result.max()}]")
         
-        return True
+        assert True
     except Exception as e:
         print(f"❌ End-to-end pipeline failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False, f"End-to-end pipeline failed: {e}"
 
 def main():
     """Run all PyTorch tests."""

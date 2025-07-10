@@ -92,15 +92,15 @@ def get_train_transforms():
         A.Resize(128, 128),
         A.OneOf([
             A.Rotate(limit=360, p=0.5),
-            A.ShiftScaleRotate(
-                shift_limit=0.35, 
-                scale_limit=0.2, 
-                rotate_limit=360, 
+            A.Affine(
+                translate_percent=0.35,
+                scale=(0.8, 1.2),
+                rotate=(-360, 360),
                 p=0.5
             ),
         ], p=0.8),
         A.OneOf([
-            A.GaussNoise(var_limit=50.0, p=0.5),
+            A.GaussNoise(std_range=(0.1, 0.3), p=0.5),
             A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.25, p=0.5),
         ], p=0.5),
         A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),

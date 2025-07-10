@@ -165,7 +165,7 @@ def load_pytorch_model(model_path: str, num_classes: int = 3):
         activation='softmax2d'
     )
     
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model.load_state_dict(torch.load(model_path, map_location=DEVICE, weights_only=True))
     model.eval()
     
     return model
