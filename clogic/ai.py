@@ -34,7 +34,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 KERAS_BACKEND = tf.keras.backend
 MODEL_CALLBACKS = [
     tf.keras.callbacks.ModelCheckpoint(
-        filepath='demetra_checkpoint',
+        filepath='demetra_checkpoint.keras',
         monitor='val_iou_score',
         mode='max',
         save_best_only=True

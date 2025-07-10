@@ -5,7 +5,7 @@ import yaml
 #region General
 # CURRENT_SLIDE = 'current\slide-2022-11-11T11-10-38-R1-S18.mrxs'
 CURRENT_SLIDE = os.path.abspath('slide-2022-09-12T15-38-25-R1-S2.mrxs') # 'current\slide-2022-09-12T15-38-25-R1-S2.mrxs'
-CURRENT_SLIDE_XML = 'current\slide-2022-09-12T15-38-25-R1-S2\Data0021.dat'
+CURRENT_SLIDE_XML = 'current\\slide-2022-09-12T15-38-25-R1-S2\\Data0021.dat'
 OPENSLIDE_PATH = os.path.abspath('openslide\\bin') # 'E:\\Github\\DemetraAI\\openslide\\bin'
 HDD_SLIDES = os.path.abspath('current')
 HDD_SLIDES_SVS = 'E:\\CYTOLOGY_2'
@@ -13,6 +13,7 @@ TEMP_FOLDER = 'temp'
 #endregion
 
 #region Neural Network
+FRAMEWORK = 'tensorflow'  # 'tensorflow' or 'pytorch'
 DATASET_FOLDER = 'dataset'
 MASKS_FOLDER = 'masks' # Inside DATASET_FOLDER
 IMAGES_FOLDER = 'rois' # Inside DATASET_FOLDER
@@ -80,7 +81,7 @@ def _load_ini_config(config_file):
 
 def _update_globals_from_dict(config):
     global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
-    global DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
+    global FRAMEWORK, DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
     global SLIDE_DIR, UNET_PRED_MODE, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED
     
     general = config.get('general', {})
@@ -98,6 +99,8 @@ def _update_globals_from_dict(config):
         TEMP_FOLDER = general['temp_folder']
     
     neural_network = config.get('neural_network', {})
+    if 'framework' in neural_network:
+        FRAMEWORK = neural_network['framework']
     if 'dataset_folder' in neural_network:
         DATASET_FOLDER = neural_network['dataset_folder']
     if 'masks_folder' in neural_network:

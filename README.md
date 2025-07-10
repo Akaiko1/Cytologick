@@ -10,7 +10,8 @@ Cytologick is a Python-based research tool for analyzing Pap smear slides using 
 - **MRXS Format Support** - Reads digital pathology slide formats for research  
 - **ASAP Integration** - Compatible with ASAP annotation files for dataset creation  
 - **Desktop Interface** - PyQt5-based application for slide analysis  
-- **Model Training** - Train custom U-Net models on annotated datasets  
+- **Model Training** - Train custom U-Net models on annotated datasets with TensorFlow or PyTorch
+- **Dual Framework Support** - Choose between TensorFlow and PyTorch backends
 - **Research Focus** - Experimental detection of LSIL, HSIL, ASCUS, and ASCH patterns  
 
 ![Cytologick Example](./assets/example.jpg)
@@ -48,8 +49,15 @@ Download and install [ASAP](https://computationalpathologygroup.github.io/ASAP/)
 pip install -r requirements.txt
 
 # Install additional packages via conda
-conda install tensorflow
 conda install openslide-python
+
+# Choose your ML framework:
+# For TensorFlow (default):
+conda install tensorflow
+
+# For PyTorch (alternative):
+conda install pytorch torchvision torchaudio -c pytorch
+pip install segmentation-models-pytorch albumentations
 ```
 
 ### Step 5: Download Web Dependencies
@@ -59,7 +67,7 @@ Download and place these files in `__web/static/`:
 - openseadragon-scalebar.js
 
 ### Step 6: Configure Settings
-Edit `config.py` or create `config.ini` to set your paths:
+Edit `config.py` or create `config.yaml` to set your paths:
 
 **Required Settings:**
 ```python
@@ -69,8 +77,19 @@ SLIDE_DIR = "./current"  # Folder containing your MRXS files
 
 **Optional Settings:**
 ```python
+FRAMEWORK = "tensorflow"  # Choose "tensorflow" or "pytorch"
 IP_EXPOSED = "127.0.0.1"  # Web interface IP
 UNET_PRED_MODE = "remote"  # Use cloud models
+```
+
+**Or use YAML config (config.yaml):**
+```yaml
+neural_network:
+  framework: tensorflow  # Options: 'tensorflow', 'pytorch'
+general:
+  openslide_path: C:/path/to/openslide/bin
+gui:
+  slide_dir: ./current
 ```
 
 ## What You Need
@@ -145,7 +164,14 @@ HDD_SLIDES = "/path/to/your_data_folder"
 DATASET_FOLDER = "dataset"
 ```
 
-#### Step 3: Run Training Pipeline
+#### Step 3: Choose Your Framework
+Set your preferred framework in `config.yaml`:
+```yaml
+neural_network:
+  framework: pytorch  # or "tensorflow"
+```
+
+#### Step 4: Run Training Pipeline
 ```bash
 # Extract annotations from ASAP XML files
 python get_xmls.py
@@ -153,18 +179,31 @@ python get_xmls.py
 # Create training dataset from extracted annotations
 python get_dataset.py
 
-# Define neural network architecture
+# Train new model (automatically uses configured framework)
 python model_new.py
 
-# Train the model (this will take several hours)
+# Continue training existing model
 python model_train.py
 ```
 
-#### Step 4: Use Your Trained Model
+**Framework-specific training:**
+- **TensorFlow**: Uses `clogic.ai` module with segmentation_models
+- **PyTorch**: Uses `clogic.ai_pytorch` module with segmentation_models_pytorch
+
+#### Step 5: Use Your Trained Model
 After training completes, copy the trained model to use locally:
+
+**For TensorFlow models:**
 ```bash
 # Copy trained model to local folder
 cp -r trained_model_output/ _main/
+```
+
+**For PyTorch models:**
+```bash
+# PyTorch models are saved as .pth files
+# Copy to _main/ folder and update inference code if needed
+cp _new_pytorch_best.pth _main/model.pth
 ```
 
 Your custom model will now be used automatically when you run `python run.py`.
@@ -184,7 +223,8 @@ For best performance and offline analysis:
    - The application will automatically detect and load local models
 
 3. **Model requirements:**
-   - TensorFlow SavedModel format
+   - **TensorFlow**: SavedModel format in `_main/` folder
+   - **PyTorch**: State dict (.pth files) in `_main/` folder  
    - Input shape: (128, 128, 3)
    - Output: Segmentation mask for cell classification
 
@@ -231,7 +271,7 @@ Cytologick research focuses on these cervical cell patterns:
 
 ## Keywords
 
-Pap smear research, cytology AI, medical image analysis research, LSIL detection research, HSIL detection research, ASCUS detection research, digital pathology research, deep learning, U-Net segmentation, TensorFlow, computer vision research
+Pap smear research, cytology AI, medical image analysis research, LSIL detection research, HSIL detection research, ASCUS detection research, digital pathology research, deep learning, U-Net segmentation, TensorFlow, PyTorch, computer vision research
 
 ## Contributing
 
