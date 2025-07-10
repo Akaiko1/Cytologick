@@ -4,15 +4,15 @@
 
 Cytologick is a Python-based research tool for analyzing Pap smear slides using artificial intelligence. This software is designed for research and educational purposes to explore automated detection of cellular abnormalities like LSIL, HSIL, and ASCUS in cytological samples.
 
-## Features
+## What it does
 
-- **Experimental Cell Detection** - AI-based research into abnormal cervical cell identification  
-- **MRXS Format Support** - Reads digital pathology slide formats for research  
-- **ASAP Integration** - Compatible with ASAP annotation files for dataset creation  
-- **Desktop Interface** - PyQt5-based application for slide analysis  
-- **Model Training** - Train custom U-Net models on annotated datasets with TensorFlow or PyTorch
-- **Dual Framework Support** - Choose between TensorFlow and PyTorch backends
-- **Research Focus** - Experimental detection of LSIL, HSIL, ASCUS, and ASCH patterns  
+- Loads MRXS slide files
+- Trains U-Net segmentation models on annotated cell data
+- Supports both TensorFlow and PyTorch frameworks
+- Provides Qt desktop interface for viewing slides
+- Runs inference on slide regions
+- Works with ASAP annotation files
+- Detects LSIL, HSIL, ASCUS, and ASCH cell patterns  
 
 ![Cytologick Example](./assets/example.jpg)
 
@@ -65,10 +65,10 @@ pip install -r requirements-pytorch.txt
 conda install openslide-python
 ```
 
-**Important Notes:**
-- Both frameworks can coexist in the same environment
-- NumPy version constraint (`<2.0.0`) ensures TensorFlow compatibility
-- PyTorch installation is fully validated and production-ready
+**Notes:**
+- Both frameworks can be installed together
+- NumPy version constraint (`<2.0.0`) required for TensorFlow compatibility
+- Framework selection done via config file
 
 ### Step 5: Download Web Dependencies
 Download and place these files in `__web/static/`:
@@ -238,14 +238,14 @@ For best performance and offline analysis:
    - Input shape: (128, 128, 3)
    - Output: Segmentation mask for cell classification
 
-**Benefits of local models:**
-- No internet connection required
-- Faster inference (no network latency)
-- Full privacy - data stays on your machine
-- Better for research reproducibility
+**Local model characteristics:**
+- Runs offline (no internet required)
+- Inference speed depends on your hardware
+- Data processed locally
+- Model weights loaded into memory on startup
 
-### Option 2: Cloud-Based Models
-Remote models hosted on **TensorFlow Serving** infrastructure. Requires internet connection.
+### Option 2: Remote Models
+Models running on remote servers via TensorFlow Serving. Requires internet connection.
 
 **To use custom cloud models:**
 1. Edit `clogic/inference.py`
@@ -253,7 +253,7 @@ Remote models hosted on **TensorFlow Serving** infrastructure. Requires internet
    - `endpoint_url`: Your TensorFlow Serving endpoint
    - `model_name`: Your model's name on the server
 
-**Note:** Remote models use TensorFlow Serving backend for scalable inference.
+Remote models send data over network to TensorFlow Serving endpoints.
 
 ## Understanding Annotations
 
