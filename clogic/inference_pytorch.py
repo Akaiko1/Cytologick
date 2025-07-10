@@ -100,7 +100,7 @@ def apply_model_pytorch(source, model, shapes=config.IMAGE_SHAPE):
                 
                 pathology_map[x: x + shapes[0], y: y + shapes[1]] = prediction_resized
 
-    return pathology_map[:source.shape[0], :source.shape[1]]
+    return pathology_map[:source.shape[0], :source.shape[1]].astype(np.uint8)
 
 
 def apply_model_raw_pytorch(source, model, classes, shapes=config.IMAGE_SHAPE):
@@ -144,7 +144,7 @@ def apply_model_raw_pytorch(source, model, classes, shapes=config.IMAGE_SHAPE):
                 
                 pathology_map[x: x + shapes[0], y: y + shapes[1]] = prediction_resized
 
-    return pathology_map[:source.shape[0], :source.shape[1]]
+    return pathology_map[:source.shape[0], :source.shape[1]].astype(np.float32)
 
 
 def load_pytorch_model(model_path: str, num_classes: int = 3):

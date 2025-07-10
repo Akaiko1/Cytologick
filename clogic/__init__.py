@@ -8,9 +8,15 @@ def _lazy_import():
         if config.FRAMEWORK.lower() == 'pytorch':
             from . import ai_pytorch
             from . import inference_pytorch
+            # Expose modules at package level
+            globals()['ai_pytorch'] = ai_pytorch
+            globals()['inference_pytorch'] = inference_pytorch
         else:
             from . import ai
             from . import inference
+            # Expose modules at package level
+            globals()['ai'] = ai
+            globals()['inference'] = inference
     except ImportError:
         # Handle import issues gracefully
         pass
@@ -19,3 +25,12 @@ def _lazy_import():
 import os
 if 'pytest' not in os.environ.get('_', '') and 'PYTEST_CURRENT_TEST' not in os.environ:
     _lazy_import()
+else:
+    # In testing environment, import both frameworks for testing
+    try:
+        from . import ai_pytorch
+        from . import inference_pytorch
+        from . import ai
+        from . import inference
+    except ImportError:
+        pass
