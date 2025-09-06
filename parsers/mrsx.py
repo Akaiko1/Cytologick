@@ -63,13 +63,16 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
     __make_dirs(roi_path, masks_path)
 
     for slidepath in slides_list:
-        json_name = slidepath.split(os.sep)[-1].rstrip('.mrsx') + '.json'
+        # Derive expected JSON name robustly from slide filename
+        base_name = os.path.splitext(os.path.basename(slidepath))[0]
+        json_name = f"{base_name}.json"
         json_path = [f for f in json_list if json_name in f]
 
         slide = openslide.OpenSlide(slidepath)
 
         if not json_path:
-            print(f'JSON for {slide} not found')
+            print(f'JSON for {slidepath} not found, skipping')
+            continue
         
         with open(json_path[0], 'r') as f:
             rois = json.load(f)
@@ -117,11 +120,14 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
     json_list = glob.glob(os.path.join(json_folder, '**', '*.json'), recursive=True)
 
     for slide in slides_list:
-        json_name = slide.split(os.sep)[-1].rstrip('.mrsx') + '.json'
+        # Derive expected JSON name robustly from slide filename
+        base_name = os.path.splitext(os.path.basename(slide))[0]
+        json_name = f"{base_name}.json"
         json_path = [f for f in json_list if json_name in f]
 
         if not json_path:
-            print(f'JSON for {slide} not found')
+            print(f'JSON for {slide} not found, skipping')
+            continue
         
         with open(json_path[0], 'r') as f:
             rois = json.load(f)
