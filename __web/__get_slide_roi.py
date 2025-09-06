@@ -9,7 +9,14 @@ import numpy as np
 import tfs_connector as tfs
 import matplotlib.pyplot as plt
 
-from clogic import ai, inference
+# Optional: local PyTorch inference support
+_PT_AVAILABLE = False
+try:
+    import torch  # noqa: F401
+    from clogic import inference_pytorch as inf_pt  # type: ignore
+    _PT_AVAILABLE = True
+except Exception:
+    _PT_AVAILABLE = False
 
 if hasattr(os, 'add_dll_directory'):
     with os.add_dll_directory(config.OPENSLIDE_PATH):
@@ -83,12 +90,47 @@ def get_slide_rois(slide_path):
     # selected_probes = [selected_probes[0]]
     # selected_coordinate_shifts = [selected_coordinate_shifts[0]]
 
-    start = time.time()
     print(f'Selected probes quantity: {len(selected_probes)}')
-    resize_ops = tfs.ResizeOptions(chunk_size=(256, 256), model_input_size=(128, 128))
-    pathology_maps = tfs.apply_segmentation_model_parallel(selected_probes, endpoint_url='http://51.250.28.160:7500', model_name='demetra', batch_size=4,
-                                                  resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=1, thread_count=8)
-    print(f'Remote execution took {time.time() - start} seconds')
+
+    pathology_maps = None
+
+    # Try local PyTorch model if available
+    if _PT_AVAILABLE and str(config.FRAMEWORK).lower() == 'pytorch':
+        try:
+            model_path = _find_local_model()
+            if model_path:
+                print(f'Using local PyTorch model: {model_path}')
+                model = inf_pt.load_pytorch_model(model_path, num_classes=config.CLASSES)
+                pathology_maps = []
+                for probe in selected_probes:
+                    pm = inf_pt.apply_model_raw_pytorch(probe, model, classes=config.CLASSES, shapes=config.IMAGE_SHAPE)
+                    pathology_maps.append(pm)
+            else:
+                print('No local PyTorch model found; will try remote endpoint')
+        except Exception as e:
+            print(f'Local PyTorch inference failed: {e}. Falling back to remote endpoint')
+            pathology_maps = None
+
+    # Fallback to remote endpoint
+    if pathology_maps is None:
+        try:
+            start = time.time()
+            resize_ops = tfs.ResizeOptions(chunk_size=(256, 256), model_input_size=tuple(config.IMAGE_SHAPE))
+            endpoint = getattr(config, 'ENDPOINT_URL', 'http://51.250.28.160:7500')
+            pathology_maps = tfs.apply_segmentation_model_parallel(
+                selected_probes,
+                endpoint_url=endpoint,
+                model_name='demetra',
+                batch_size=4,
+                resize_options=resize_ops,
+                normalization=lambda x: x/255,
+                parallelism_mode=1,
+                thread_count=8
+            )
+            print(f'Remote execution took {time.time() - start} seconds')
+        except Exception as e:
+            print(f'Remote inference failed: {e}. Proceeding without ROIs.')
+            pathology_maps = []
 
     print(selected_coordinate_shifts)
 
@@ -130,3 +172,51 @@ def __get_cnts_from_regions(rmaps, shifts):
             result[f'cnt_{idx}'] = [shifts[idx], [cv2.boundingRect(np.array(shifted))], [r.tolist() for r in shifted]]
 
     return result
+
+
+def _find_local_model():
+    """Locate a local PyTorch model file if present.
+    Order of precedence:
+      1) PYTORCH_MODEL_PATH env var
+      2) models/demetra_best.pth
+      3) models/model_best.pth
+      4) First *.pth in models/
+    """
+    env_path = os.getenv('PYTORCH_MODEL_PATH')
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    # Common locations
+    preferred = [
+        os.path.join('models', 'demetra_best.pth'),
+        os.path.join('models', 'model_best.pth'),
+        os.path.join('_main', 'model.pth'),
+    ]
+    for p in preferred:
+        if os.path.exists(p):
+            return p
+
+    # Any .pth inside _main/
+    main_dir = os.path.join('_main')
+    if os.path.isdir(main_dir):
+        # Prefer exact name 'model.pth' if present
+        candidate = os.path.join(main_dir, 'model.pth')
+        if os.path.exists(candidate):
+            return candidate
+        for f in os.listdir(main_dir):
+            if f.lower().endswith('.pth'):
+                return os.path.join(main_dir, f)
+
+    # Any .pth inside models/
+    models_dir = os.path.join('models')
+    if os.path.isdir(models_dir):
+        for f in os.listdir(models_dir):
+            if f.lower().endswith('.pth'):
+                return os.path.join(models_dir, f)
+
+    # Any top-level .pth (e.g., _new_best.pth)
+    for f in os.listdir('.'):
+        if f.lower().endswith('.pth'):
+            return os.path.join('.', f)
+
+    return None

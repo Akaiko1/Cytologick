@@ -9,12 +9,14 @@ from pprint import pprint
 with os.add_dll_directory(config.OPENSLIDE_PATH):
     import openslide
 
-PROPERTIES = [('Количество слоев в файле (максимум, минимум)', 'openslide.level-count'),
-                ('Ширина изображения в пикселях (максимум, минимум)', 'openslide.level[0].width'),
-                ('Высота изображения в пикселях (максимум, минимум)', 'openslide.level[0].height'),
-                ('Увеличение объектива', 'openslide.objective-power'),
-                ('Информация о производителе', 'openslide.vendor'),
-                ('Разрешение (максимум, минимум)', 'openslide.mpp-x')]
+PROPERTIES = [
+    ('Number of levels', 'openslide.level-count'),
+    ('Image width (level 0)', 'openslide.level[0].width'),
+    ('Image height (level 0)', 'openslide.level[0].height'),
+    ('Objective power', 'openslide.objective-power'),
+    ('Vendor information', 'openslide.vendor'),
+    ('Resolution (mpp-x)', 'openslide.mpp-x')
+]
 
 
 def __fill_properties(report, slide_data):
@@ -63,10 +65,10 @@ def get_set_data(ext='.mrxs'):
         os.mkdir('meta')
 
     for idx, slide_name in enumerate(slide_names):
-        info = f'Наименование слайда: {slide_name}\nРазмер файла: {__pretty_bytes(sizes[idx])}\n'
+        info = f'Slide name: {slide_name}\nFile size: {__pretty_bytes(sizes[idx])}\n'
 
         for key, _ in PROPERTIES:
-            info += f'{key.rstrip(" (максимум, минимум)")}: {summary[key][idx]}\n'
+            info += f'{key}: {summary[key][idx]}\n'
 
         with open(os.path.join('meta', f'{slide_name}.md'), 'w') as md_file:
             md_file.write(info)
@@ -101,10 +103,12 @@ def __print_summary(summary):
 
 def __get_summary(slides_list, sizes):
     summary = {
-        'всего микропрепаратов размечено': len(slides_list),
-        'размер файла (максимум, минимум, средний)': (__pretty_bytes(max(sizes)),
-                                                       __pretty_bytes(min(sizes)),
-                                                         __pretty_bytes((max(sizes) + min(sizes))/2) )
+        'total slides processed': len(slides_list),
+        'file size (max, min, avg)': (
+            __pretty_bytes(max(sizes)),
+            __pretty_bytes(min(sizes)),
+            __pretty_bytes((max(sizes) + min(sizes)) / 2)
+        )
     }
 
     for slide in slides_list:

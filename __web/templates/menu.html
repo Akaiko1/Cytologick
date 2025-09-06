@@ -1,58 +1,70 @@
 <!DOCTYPE html>
-<html>
-
-<head>
+<html lang="en">
+  <head>
     <meta charset="UTF-8">
-    <title>Доступные файлы на устройстве</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Available Slides</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <style>
+      body { padding-top: 2rem; }
+      .file-card a { text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+      <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1">Cytologick</span>
+      </div>
+    </nav>
 
-    <link rel="stylesheet" href="static/css/globals.css" />
-    <link rel="stylesheet" href="static/css/styleguide.css" />
-    <link rel="stylesheet" href="static/css/style.css" />
-</head>
-
-<body>
-    <div class="main">
-        <div class="page-main">
-            <img class="logo" src="static/img/logo.png" />
-            <div class="overlap">
-                <div class="patients">
-                    {% for file in files %}
-                        {% if files.index(file) in state.keys() %}
-                            <div class="n" style="background-color:rgba(129, 147, 248, 1);" ><div class="details">
-                                <a class="text-wrapper-4" target="_blank"
-                                 href="http://{{ exp_ip }}:{{ 5002 + files.index(file)}}">{{ file_names[files.index(file)] }}</a>
-                            </div></div>
-                        {% else %} 
-                            <div class="n"><div class="details">
-                                <a class="text-wrapper-4"  href="/{{ files.index(file) }}">{{ file_names[files.index(file)] }}</a>
-                            </div></div>
-                        {% endif %}
-                    {% endfor %}
-                    <br/>
-                </div>
-                <form action="/upload" method=post enctype=multipart/form-data hidden>
-                    <input type="file" id="file-form" name="file" hidden/>
-                    <input type="submit" id="submit-form" hidden/>
-                </form>
-                <div class="button-add">
-                    <div class="div">
-                        <img class="img" src="static/img/icon-add.svg" />
-                        <div class="text-wrapper-13">
-                            <label for="file-form">Выбрать</label>
-                        </div>
-                    </div>
-                </div>
-                <div class="button-submit">
-                    <div class="div">
-                        <div class="text-wrapper-13">
-                            <label for="submit-form">Загрузить</label>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    <main class="container">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h4 m-0">Available Slides</h1>
+        <div>
+          <form action="/upload" method="post" enctype="multipart/form-data" class="d-flex align-items-center gap-2">
+            <input type="file" id="file-form" name="file" class="d-none" />
+            <button type="button" class="btn btn-outline-secondary" id="choose-file">Choose File</button>
+            <span id="file-chosen" class="text-muted small">No file selected</span>
+            <button class="btn btn-primary" type="submit" id="submit-form">Upload</button>
+          </form>
         </div>
-    </div>
-    <script type="text/javascript">AddFillerLink("content", "navigation", "extra")</script>
-</body>
+      </div>
 
-</html>
+      <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+        {% for file in files %}
+          {% set idx = files.index(file) %}
+          <div class="col">
+            <div class="card file-card h-100 {% if idx in state.keys() %}border-primary bg-light{% endif %}">
+              <div class="card-body d-flex flex-column">
+                <h5 class="card-title">{{ file_names[idx] }}</h5>
+                <p class="card-text text-muted small">{{ file }}</p>
+                <div class="mt-auto">
+                  {% if idx in state.keys() %}
+                    <a class="btn btn-outline-primary w-100" target="_blank" href="http://{{ exp_ip }}:{{ 5002 + idx }}">Open Preview</a>
+                  {% else %}
+                    <a class="btn btn-primary w-100" href="/{{ idx }}">Start Preview</a>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script>
+      const fileInput = document.getElementById('file-form');
+      const chooseBtn = document.getElementById('choose-file');
+      const fileChosen = document.getElementById('file-chosen');
+      chooseBtn.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files && fileInput.files.length > 0) {
+          fileChosen.textContent = fileInput.files[0].name;
+        } else {
+          fileChosen.textContent = 'No file selected';
+        }
+      });
+    </script>
+  </body>
+  </html>

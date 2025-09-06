@@ -16,7 +16,7 @@ def __get_names_count(data):
 
 
 def markdown_data(jsons, md_file='stats.md'):
-    markdown = '|Наименование слайда|Всего объектов (включая сторонние)|Тип объекта|Количество|\n'
+    markdown = '|Slide name|Total objects (including external)|Object type|Count|\n'
     markdown += '|----------|:--------:|----------|:--------:|\n'
 
     cells_count = 0
@@ -37,8 +37,8 @@ def markdown_data(jsons, md_file='stats.md'):
 
             markdown += f'|     |     |{obj}|{total}|\n' 
     
-    markdown += f'|  Всего клеток размечено:   |  {cells_count}   |     |    |\n' 
-    markdown += f'|  Статистика   |  по   |  всем   |  слайдам  |\n' 
+    markdown += f'|  Total cells annotated:   |  {cells_count}   |     |    |\n'
+    markdown += f'|  Statistics   |  for   |  all   |  slides  |\n'
     for obj, total in objects_total.items(): 
         markdown += f'|     |     |{obj}|{total}|\n'
     

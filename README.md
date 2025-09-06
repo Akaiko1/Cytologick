@@ -125,6 +125,7 @@ web:
   health_timeout: 1.5                      # Seconds for cloud reachability check
 
 ```
+
 ### Minimal `config.yaml`
 
 Copy-paste and edit paths to get started quickly (PyTorch recommended):
@@ -182,7 +183,10 @@ Opens a desktop research application for experimental slide analysis.
 python run_web.py
 ```
 
-⚠️ **Note**: Web interface is experimental and under development.
+Notes:
+
+- If `_main/model*.pth` exists and `FRAMEWORK: pytorch`, the web DeepZoom tiles include a red overlay of model predictions (threshold set by `web.web_conf_threshold`).
+- Web interface is experimental and under active refactoring.
 
 ## Getting Started
 
@@ -421,4 +425,3 @@ Quick links:
 MIT License — see `LICENSE` for full text.
 
 Important: Cytologick is for research and educational use only. It is not a medical device and is not intended for clinical diagnosis or treatment. Users are responsible for validating performance and complying with all applicable regulations before any clinical use.
-

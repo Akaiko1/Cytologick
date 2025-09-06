@@ -42,7 +42,7 @@ def get_app(slides_folder: str):
     def upload_file():
         if request.method == 'POST':
             if 'file' not in request.files:
-                flash('Нет файла в приложении')
+                flash('No file part in the request')
                 return redirect(request.url)
             file = request.files.get('file')
             if any(ext in file.filename for ext in ARCHIVES):

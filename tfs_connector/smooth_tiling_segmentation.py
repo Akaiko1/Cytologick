@@ -1,5 +1,5 @@
 """
-Отдельные элементы настоящего кода реализованы на основе кода расположенного по ссылке ниже:
+# Portions of this code are based on examples from:
 https://github.com/bnsreenu/python_for_microscopists/blob/master/229_smooth_predictions_by_blending_patches/smooth_tiled_predictions.py
 
 """

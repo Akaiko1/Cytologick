@@ -1,5 +1,4 @@
-# Отдельные элементы настоящего кода реализованы на основе кода расположенного по ссылке ниже:
-#
+# Portions of this code are based on:
 # deepzoom_server - Example web application for serving whole-slide images
 # https://github.com/openslide/openslide-python/blob/main/examples/deepzoom/deepzoom_server.py
 
@@ -232,12 +231,16 @@ def __render_images(drawing_list, index, app, slide, temp_index_path):
 def __render_pdf(app, index, save_folder):
     pdf = MyFPDF()
     pdf.add_page()
-    pdf.add_font('Roboto', '', 'Roboto-Regular.ttf', uni=True)
-    pdf.set_font('Roboto', '', 14)
+    # Try to use bundled Roboto if present; fallback to core font
+    try:
+        pdf.add_font('Roboto', '', 'Roboto-Regular.ttf', uni=True)
+        pdf.set_font('Roboto', '', 14)
+    except Exception:
+        pdf.set_font('Helvetica', '', 14)
     
     offset = 0
-    pdf.text(x=25, y=15, txt='Автоматически сгенерированный отчет')
-    pdf.text(x=25, y=30, txt=f'Всего находок: {len(app.render_list)}')
+    pdf.text(x=25, y=15, txt='Automatically generated report')
+    pdf.text(x=25, y=30, txt=f'Findings total: {len(app.render_list)}')
 
     for name, image in app.render_list:
         # Check if adding another image will exceed the page height
@@ -245,7 +248,7 @@ def __render_pdf(app, index, save_folder):
             pdf.add_page()
             offset = 0
         
-        pdf.text(x=25, y=60 + int(offset * 35), txt=f'Название находки: {name}')
+        pdf.text(x=25, y=60 + int(offset * 35), txt=f'Finding name: {name}')
         pdf.image(os.path.join('__web', image), x=50, y=60 + int(offset * 35) + 5, w=25, h=25)
         offset += 1
         
