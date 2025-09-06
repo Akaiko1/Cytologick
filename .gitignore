@@ -31,3 +31,5 @@ previous/
 config.yaml
 
 .claude/
+
+*.pth

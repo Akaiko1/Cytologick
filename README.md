@@ -4,11 +4,13 @@
 
 Cytologick is a Python-based research tool for analyzing Pap smear slides using artificial intelligence. This software is designed for research and educational purposes to explore automated detection of cellular abnormalities like LSIL, HSIL, and ASCUS in cytological samples.
 
+PyTorch is the recommended framework for training and local inference in this repository. The PyTorch pipeline includes mixed precision (AMP), a cosine LR scheduler, tqdm progress bars, and per‑epoch checkpoints.
+
 ## What it does
 
 - Loads MRXS slide files
 - Trains U-Net segmentation models on annotated cell data
-- Supports both TensorFlow and PyTorch frameworks
+- Supports both TensorFlow and PyTorch frameworks (PyTorch recommended)
 - Provides Qt desktop interface for viewing slides
 - Runs inference on slide regions
 - Works with ASAP annotation files
@@ -51,25 +53,24 @@ Download and install [ASAP](https://computationalpathologygroup.github.io/ASAP/)
 
 ### Step 4: Install Dependencies
 
-## Option A: Install Both Frameworks (Full Support)
+## Option A: PyTorch Only (Recommended)
 
 ```bash
-# Install all dependencies (includes both TensorFlow and PyTorch)
-pip install -r requirements.txt
-
-# Install OpenSlide via conda
+pip install -r requirements-pytorch.txt
 conda install openslide-python
 ```
 
-## Option B: Framework-Specific Installation
+## Option B: Both Frameworks (Full Support)
 
 ```bash
-# For TensorFlow only:
-pip install -r requirements-tensorflow.txt
+pip install -r requirements.txt
 conda install openslide-python
+```
 
-# For PyTorch only:
-pip install -r requirements-pytorch.txt
+## Option C: TensorFlow Only (Optional)
+
+```bash
+pip install -r requirements-tensorflow.txt
 conda install openslide-python
 ```
 
@@ -77,9 +78,9 @@ conda install openslide-python
 
 - Both frameworks can be installed together
 - NumPy version constraint (`<2.0.0`) required for TensorFlow compatibility
-- Framework selection done via config file
+- Framework selection done via `config.yaml` (PyTorch recommended)
 
-### Step 5: Download Web Dependencies
+### Step 5: Download Web Dependencies (Optional: for run_web.py)
 
 Download and place these files in `__web/static/`:
 
@@ -101,20 +102,48 @@ SLIDE_DIR = "./current"  # Folder containing your MRXS files
 **Optional Settings:**
 
 ```python
-FRAMEWORK = "tensorflow"  # Choose "tensorflow" or "pytorch"
+FRAMEWORK = "pytorch"  # Choose "pytorch" (recommended) or "tensorflow"
 IP_EXPOSED = "127.0.0.1"  # Web interface IP
 UNET_PRED_MODE = "remote"  # Use cloud models
 ```
 
-**Or use YAML config (config.yaml):**
+**Or use YAML config (config.yaml) — recommended:**
 
 ```yaml
 neural_network:
-  framework: tensorflow  # Options: 'tensorflow', 'pytorch'
+  framework: pytorch  # Options: 'pytorch' (recommended), 'tensorflow'
 general:
   openslide_path: C:/path/to/openslide/bin
 gui:
   slide_dir: ./current
+
+### Minimal `config.yaml`
+
+Copy-paste and edit paths to get started quickly (PyTorch recommended):
+
+```yaml
+general:
+  openslide_path: /path/to/openslide/bin
+  hdd_slides: /path/to/your/slides          # Folder with .mrxs files
+  temp_folder: temp
+
+neural_network:
+  framework: pytorch
+  dataset_folder: dataset
+  masks_folder: masks
+  images_folder: rois
+  classes: 3
+  labels:               # Map your annotation labels to class index 2 (foreground)
+    LSIL: 2
+    HSIL: 2
+    ASCUS: 2
+
+gui:
+  slide_dir: ./current
+
+dataset:
+  exclude_duplicates: false
+  broaden_individual_rect: 1000
 ```
 
 ## What You Need
@@ -171,7 +200,7 @@ python run.py
 3. **View Results**: Areas of interest will be highlighted with annotations
 4. **Export Results**: Save analysis results for research purposes
 
-### Advanced: Training Your Own Models
+### Advanced: Training Your Own Models (PyTorch)
 
 #### Step 1: Prepare Your Annotated Data
 
@@ -209,7 +238,7 @@ neural_network:
   framework: pytorch  # or "tensorflow"
 ```
 
-#### Step 4: Run Training Pipeline
+#### Step 4: Run Training Pipeline (PyTorch)
 
 ```bash
 # Extract annotations from ASAP XML files
@@ -218,35 +247,55 @@ python get_xmls.py
 # Create training dataset from extracted annotations
 python get_dataset.py
 
-# Train new model (automatically uses configured framework)
+# Train new model (uses configured framework; PyTorch recommended)
 python model_new.py
 
 # Continue training existing model
 python model_train.py
 ```
 
-**Framework-specific training:**
+**Under the hood:**
 
-- **TensorFlow**: Uses `clogic.ai` module with segmentation_models
-- **PyTorch**: Uses `clogic.ai_pytorch` module with segmentation_models_pytorch
+- PyTorch: `clogic.ai_pytorch` + `segmentation_models_pytorch` (AMP, scheduler, tqdm)
+- TensorFlow: `clogic.ai` + `segmentation_models` (legacy)
+
+#### Outputs and Checkpoints (PyTorch)
+
+- Per-epoch checkpoints: `{model_path}_epochNNN.pth`
+- Rolling last checkpoint: `{model_path}_last.pth`
+- Best by IoU: `{model_path}_best.pth`
+- Final at end: `{model_path}_final.pth`
+
+By default, `model_new.py` saves to files prefixed by `_new` in the project root (e.g., `_new_best.pth`). Pass a folder in `model_path` to organize runs (e.g., `models/run1/cytounet`).
+
+#### Dataset Structure (generated by get_dataset.py)
+
+- Images: `dataset/rois/` (or `${DATASET_FOLDER}/${IMAGES_FOLDER}` from config)
+- Masks: `dataset/masks/` (or `${DATASET_FOLDER}/${MASKS_FOLDER}` from config)
+- Tile sizes: 128×128 by default for training (see `config.IMAGE_SHAPE`)
 
 #### Step 5: Use Your Trained Model
 
 After training completes, copy the trained model to use locally:
 
+**For PyTorch models (recommended):**
+
+```bash
+# Create folder if needed
+mkdir -p _main
+
+# Copy your best or final weights into _main
+cp _new_best.pth  _main/model_best.pth   # or
+cp _new_final.pth _main/model_final.pth  # or
+cp _new_last.pth  _main/model.pth
+```
+
+The desktop app (`run.py`) looks for PyTorch weights in `_main/` under these names: `model.pth`, `model_best.pth`, `model_final.pth`.
+
 **For TensorFlow models:**
 
 ```bash
-# Copy trained model to local folder
 cp -r trained_model_output/ _main/
-```
-
-**For PyTorch models:**
-
-```bash
-# PyTorch models are saved as .pth files
-# Copy to _main/ folder and update inference code if needed
-cp _new_pytorch_best.pth _main/model.pth
 ```
 
 Your custom model will now be used automatically when you run `python run.py`.
@@ -264,12 +313,13 @@ For best performance and offline analysis:
    ```
 
 2. **Place your trained model:**
-   - Copy your TensorFlow model files to the `_main/` folder
+   - PyTorch: Copy `.pth` weights to `_main/` as `model.pth`, `model_best.pth`, or `model_final.pth`
+   - TensorFlow: Copy SavedModel directory to `_main/`
    - The application will automatically detect and load local models
 
 3. **Model requirements:**
-   - **TensorFlow**: SavedModel format in `_main/` folder
-   - **PyTorch**: State dict (.pth files) in `_main/` folder  
+   - **PyTorch**: State dict (.pth files) in `_main/` folder (recommended)
+   - **TensorFlow**: SavedModel format in `_main/` folder  
    - Input shape: (128, 128, 3)
    - Output: Segmentation mask for cell classification
 

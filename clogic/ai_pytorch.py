@@ -7,6 +7,7 @@ maintaining identical functionality for U-Net model training and inference.
 
 import os
 import random
+from contextlib import nullcontext
 from typing import Tuple, Optional, Union
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -26,6 +27,24 @@ import config
 
 # Global configurations
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Progress bar (tqdm) - optional
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover
+    def tqdm(x, *args, **kwargs):
+        return x
+
+
+def set_seed(seed: int = 42):
+    """Set seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 class CytologyDataset(Dataset):
@@ -278,7 +297,8 @@ def get_datasets(images_path: str, masks_path: str, train_split: float = 0.8):
     return train_subset, val_subset, total_samples
 
 
-def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, batch_size: int = 64):
+def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, batch_size: int = 64,
+                            lr: float = 0.001, use_amp: bool = True):
     """
     Train a new U-Net model with EfficientNetB3 encoder using PyTorch.
     
@@ -290,6 +310,9 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
         epochs: Number of training epochs
         batch_size: Training batch size (default: 64)
     """
+    # Reproducibility
+    set_seed(42)
+
     # Construct dataset paths from configuration
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
@@ -298,19 +321,23 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
     train_dataset, val_dataset, total_samples = get_datasets(images_path, masks_path)
     
     # Create data loaders
+    num_workers = min(4, os.cpu_count() or 4)
+    pin_mem = torch.cuda.is_available()
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
         shuffle=True, 
-        num_workers=4, 
-        pin_memory=True
+        num_workers=num_workers, 
+        pin_memory=pin_mem,
+        persistent_workers=bool(num_workers)
     )
     val_loader = DataLoader(
         val_dataset, 
         batch_size=batch_size, 
         shuffle=False, 
-        num_workers=4, 
-        pin_memory=True
+        num_workers=num_workers, 
+        pin_memory=pin_mem,
+        persistent_workers=bool(num_workers)
     )
     
     print(f"Train samples: {len(train_dataset)}")
@@ -326,9 +353,16 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
     )
     model = model.to(DEVICE)
     
-    # Define loss function and optimizer
+    # Define loss, optimizer, and scheduler
     criterion = CombinedLoss()
-    optimizer = torch.optim.NAdam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.NAdam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
+    if torch.cuda.is_available():
+        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+        amp_ctx = lambda: torch.amp.autocast('cuda', enabled=use_amp)
+    else:
+        scaler = None
+        amp_ctx = nullcontext
     
     # Training loop
     best_iou = 0.0
@@ -340,20 +374,30 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
         model.train()
         running_loss = 0.0
         
-        for batch_idx, (images, masks) in enumerate(train_loader):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False, dynamic_ncols=True)
+        for batch_idx, (images, masks) in enumerate(pbar):
             images = images.to(DEVICE).float()
             masks = masks.to(DEVICE).long()
             
             optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, masks)
-            loss.backward()
-            optimizer.step()
+            with amp_ctx():
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
             
             running_loss += loss.item()
+            # Live update progress bar with metrics
+            if hasattr(pbar, 'set_postfix'):
+                avg_loss = running_loss / (batch_idx + 1)
+                lr_now = optimizer.param_groups[0]['lr']
+                pbar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr_now:.3e}")
             
-            if batch_idx % 10 == 0:
-                print(f'Epoch {epoch+1}/{epochs}, Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}')
         
         avg_train_loss = running_loss / len(train_loader)
         train_losses.append(avg_train_loss)
@@ -364,7 +408,8 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
         val_f1 = 0.0
         
         with torch.no_grad():
-            for images, masks in val_loader:
+            vbar = tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False, dynamic_ncols=True)
+            for images, masks in vbar:
                 images = images.to(DEVICE).float()
                 masks = masks.to(DEVICE).long()
                 
@@ -376,13 +421,27 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
                 
                 val_iou += iou
                 val_f1 += f1
+                if hasattr(vbar, 'set_postfix'):
+                    seen = max(1, vbar.n)
+                    vbar.set_postfix(iou=f"{val_iou/seen:.4f}", f1=f"{val_f1/seen:.4f}")
         
         avg_val_iou = val_iou / len(val_loader)
         avg_val_f1 = val_f1 / len(val_loader)
         val_ious.append(avg_val_iou)
         
         print(f'Epoch {epoch+1}/{epochs}: Train Loss: {avg_train_loss:.4f}, Val IoU: {avg_val_iou:.4f}, Val F1: {avg_val_f1:.4f}')
-        
+
+        # Step LR scheduler
+        try:
+            scheduler.step(epoch + 1)
+        except Exception:
+            pass
+
+        # Save weights every epoch to avoid progress loss
+        epoch_weights = f"{model_path}_epoch{epoch+1:03d}.pth"
+        torch.save(model.state_dict(), epoch_weights)
+        torch.save(model.state_dict(), f"{model_path}_last.pth")
+
         # Save best model
         if avg_val_iou > best_iou:
             best_iou = avg_val_iou
@@ -394,7 +453,7 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
     print(f'Training completed. Best IoU: {best_iou:.4f}')
 
 
-def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 64, lr: float = 0.0001):
+def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 64, lr: float = 0.0001, use_amp: bool = True):
     """
     Continue training an existing PyTorch model.
     
@@ -404,6 +463,9 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
         batch_size: Training batch size (default: 64)
         lr: Learning rate for the optimizer (default: 0.0001)
     """
+    # Reproducibility
+    set_seed(42)
+
     # Construct dataset paths from configuration
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
@@ -412,19 +474,23 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
     train_dataset, val_dataset, total_samples = get_datasets(images_path, masks_path)
     
     # Create data loaders
+    num_workers = min(4, os.cpu_count() or 4)
+    pin_mem = torch.cuda.is_available()
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
         shuffle=True, 
-        num_workers=4, 
-        pin_memory=True
+        num_workers=num_workers, 
+        pin_memory=pin_mem,
+        persistent_workers=bool(num_workers)
     )
     val_loader = DataLoader(
         val_dataset, 
         batch_size=batch_size, 
         shuffle=False, 
-        num_workers=4, 
-        pin_memory=True
+        num_workers=num_workers, 
+        pin_memory=pin_mem,
+        persistent_workers=bool(num_workers)
     )
     
     # Load existing model
@@ -437,9 +503,16 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model = model.to(DEVICE)
     
-    # Define loss function and optimizer with specified learning rate
+    # Define loss, optimizer, scheduler, and AMP scaler
     criterion = CombinedLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
+    if torch.cuda.is_available():
+        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+        amp_ctx = lambda: torch.amp.autocast('cuda', enabled=use_amp)
+    else:
+        scaler = None
+        amp_ctx = nullcontext
     
     # Continue training
     best_iou = 0.0
@@ -449,17 +522,28 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
         model.train()
         running_loss = 0.0
         
-        for batch_idx, (images, masks) in enumerate(train_loader):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False, dynamic_ncols=True)
+        for batch_idx, (images, masks) in enumerate(pbar):
             images = images.to(DEVICE).float()
             masks = masks.to(DEVICE).long()
             
             optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, masks)
-            loss.backward()
-            optimizer.step()
+            with amp_ctx():
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
             
             running_loss += loss.item()
+            if hasattr(pbar, 'set_postfix'):
+                avg_loss = running_loss / (batch_idx + 1)
+                lr_now = optimizer.param_groups[0]['lr']
+                pbar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr_now:.3e}")
         
         avg_train_loss = running_loss / len(train_loader)
         
@@ -468,22 +552,38 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
         val_iou = 0.0
         
         with torch.no_grad():
-            for images, masks in val_loader:
+            vbar = tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False, dynamic_ncols=True)
+            for images, masks in vbar:
                 images = images.to(DEVICE).float()
                 masks = masks.to(DEVICE).long()
                 
                 outputs = model(images)
                 iou = iou_score(outputs, masks, config.CLASSES)
                 val_iou += iou
+                if hasattr(vbar, 'set_postfix'):
+                    seen = max(1, vbar.n)
+                    vbar.set_postfix(iou=f"{val_iou/seen:.4f}")
         
         avg_val_iou = val_iou / len(val_loader)
         
         print(f'Epoch {epoch+1}/{epochs}: Train Loss: {avg_train_loss:.4f}, Val IoU: {avg_val_iou:.4f}')
-        
+
+        # Step LR scheduler
+        try:
+            scheduler.step(epoch + 1)
+        except Exception:
+            pass
+
+        # Save weights every epoch to avoid progress loss
+        base = os.path.splitext(model_path)[0]
+        epoch_weights = f"{base}_epoch{epoch+1:03d}.pth"
+        torch.save(model.state_dict(), epoch_weights)
+        torch.save(model.state_dict(), f"{base}_last.pth")
+
         # Save best model
         if avg_val_iou > best_iou:
             best_iou = avg_val_iou
-            torch.save(model.state_dict(), model_path)
+            torch.save(model.state_dict(), f"{base}_best.pth")
             print(f'Model updated with IoU: {best_iou:.4f}')
     
     print(f'Training completed. Best IoU: {best_iou:.4f}')

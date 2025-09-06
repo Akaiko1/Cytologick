@@ -1,6 +1,7 @@
 import configparser
 import os
 import yaml
+import multiprocessing
 
 #region General
 # CURRENT_SLIDE = 'current\slide-2022-11-11T11-10-38-R1-S18.mrxs'
@@ -51,7 +52,9 @@ def load_config():
     
     for config_file in config_files:
         if os.path.exists(config_file):
-            print(f'{config_file} detected')
+            # Only print from the main process to avoid DataLoader worker spam
+            if multiprocessing.current_process().name == 'MainProcess':
+                print(f'{config_file} detected')
             
             if config_file.endswith(('.yaml', '.yml')):
                 _load_yaml_config(config_file)
