@@ -191,10 +191,10 @@ Notes:
 
 #### Web UI Screenshots
 
-| ![Web UI – Slides](assets/web_main.png) |
+| ![Web UI – Slides](assets/web_main.jpg) |
 |:--:|
 
-| ![Web UI – Report Preview](assets/web_report.png) |
+| ![Web UI – Report Preview](assets/web_report.jpg) |
 |:--:|
 
 #### Required JavaScript Assets
@@ -444,3 +444,4 @@ Quick links:
 MIT License — see `LICENSE` for full text.
 
 Important: Cytologick is for research and educational use only. It is not a medical device and is not intended for clinical diagnosis or treatment. Users are responsible for validating performance and complying with all applicable regulations before any clinical use.
+
