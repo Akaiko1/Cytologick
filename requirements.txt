@@ -5,6 +5,7 @@ openslide-python==1.2.0
 pandas==1.5.2
 PyQt5==5.15.10
 qt-material==2.14
+qdarkstyle>=3.1
 scipy==1.13.0
 tqdm==4.66.2
 multiprocess==0.70.16

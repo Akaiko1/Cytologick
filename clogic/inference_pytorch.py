@@ -74,9 +74,11 @@ def apply_model_pytorch(source, model, shapes=config.IMAGE_SHAPE):
     model.eval()
     model = model.to(DEVICE)
     
-    pads = int(source.shape[0] % shapes[0]), int(source.shape[1] % shapes[1])
+    # Compute minimal padding to fit whole tiles; pad=0 when divisible
+    pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
+    pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
     source_pads = cv2.copyMakeBorder(
-        source, 0, shapes[0] - pads[0], 0, shapes[1] - pads[1], cv2.BORDER_REPLICATE
+        source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE
     )
 
     pathology_map = np.zeros(source_pads.shape[:2])
@@ -119,9 +121,10 @@ def apply_model_raw_pytorch(source, model, classes, shapes=config.IMAGE_SHAPE):
     model.eval()
     model = model.to(DEVICE)
     
-    pads = int(source.shape[0] % shapes[0]), int(source.shape[1] % shapes[1])
+    pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
+    pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
     source_pads = cv2.copyMakeBorder(
-        source, 0, shapes[0] - pads[0], 0, shapes[1] - pads[1], cv2.BORDER_REPLICATE
+        source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE
     )
 
     pathology_map = np.zeros((source_pads.shape[0], source_pads.shape[1], classes))

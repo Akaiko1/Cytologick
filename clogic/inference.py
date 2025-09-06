@@ -19,8 +19,9 @@ def image_to_tensor(image, add_dim=True):
 
 
 def apply_model(source, model, shapes=config.IMAGE_SHAPE):
-    pads = int(source.shape[0]%shapes[0]), int(source.shape[1]%shapes[1])
-    source_pads = cv2.copyMakeBorder(source, 0, shapes[0] - pads[0], 0, shapes[1] - pads[1], cv2.BORDER_REPLICATE)
+    pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
+    pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
+    source_pads = cv2.copyMakeBorder(source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE)
 
     pathology_map = np.zeros(source_pads.shape[:2])
 
@@ -35,8 +36,9 @@ def apply_model(source, model, shapes=config.IMAGE_SHAPE):
 
 
 def apply_model_raw(source, model, classes, shapes=config.IMAGE_SHAPE):
-    pads = int(source.shape[0]%shapes[0]), int(source.shape[1]%shapes[1])
-    source_pads = cv2.copyMakeBorder(source, 0, shapes[0] - pads[0], 0, shapes[1] - pads[1], cv2.BORDER_REPLICATE)
+    pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
+    pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
+    source_pads = cv2.copyMakeBorder(source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE)
 
     pathology_map = np.zeros((source_pads.shape[0], source_pads.shape[1], classes))
 

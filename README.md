@@ -116,6 +116,13 @@ general:
   openslide_path: C:/path/to/openslide/bin
 gui:
   slide_dir: ./current
+  theme: auto             # 'auto', 'qt', 'windows', 'mac', 'qdarkstyle', or 'qss'
+  material_theme: dark_teal.xml  # qt_material theme name if theme == 'qt'
+  custom_qss: ''          # Path to a .qss file if theme == 'qss'
+
+web:
+  endpoint_url: http://51.250.28.160:7500  # Cloud inference endpoint (optional)
+  health_timeout: 1.5                      # Seconds for cloud reachability check
 
 ### Minimal `config.yaml`
 ```
@@ -346,6 +353,28 @@ Remote models send data over network to TensorFlow Serving endpoints.
 
 ## Understanding Annotations
 
+## UI Themes (QSS)
+
+The app supports platform-specific QSS themes and falls back to qt-material if not present:
+
+- Windows: `styles/windows.qss` (dark, fluent-inspired)
+- macOS: `styles/mac.qss` (light, macOS-inspired)
+
+To force a theme, set in `config.yaml` under `gui.theme`: `auto` (default), `qt`, `windows`, `mac`, `qdarkstyle`, or `qss`.
+
+- If `gui.theme: qt`, choose a qt-material theme via `gui.material_theme` (e.g., `dark_amber.xml`, `dark_blue.xml`, `light_cyan.xml`).
+- If `gui.theme: qdarkstyle`, install it: `pip install qdarkstyle`.
+- If `gui.theme: qss`, point `gui.custom_qss` to your .qss file.
+
+## Cloud Status in Preview
+
+The Preview window shows a cloud status indicator:
+
+- Cloud: Available — remote endpoint reachable
+- Cloud: Unavailable — the “Cloud: Fast” option is hidden and the mode falls back to local
+
+You can set the endpoint and health check timeout in `config.yaml` under `web:`.
+
 ### ASAP Annotation Format
 
 Cytologick uses ASAP annotation format for training data. See `annotation_example.xml` for a sample annotation file.
@@ -379,4 +408,3 @@ Pap smear research, cytology AI, medical image analysis research, LSIL detection
 ## Contributing
 
 If you're interested in contributing to Cytologick, please read our contributing guidelines. We welcome issues and pull requests!
-

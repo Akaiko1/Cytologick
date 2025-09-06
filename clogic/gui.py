@@ -1,8 +1,10 @@
 import glob
 from PyQt5.QtWidgets import QApplication, QWidget, QComboBox, QHBoxLayout,\
-     QVBoxLayout, QLabel, QScrollArea, QStackedLayout, QPushButton, QRadioButton
+     QVBoxLayout, QLabel, QScrollArea, QStackedLayout, QPushButton, QRadioButton, QSlider
 from PyQt5.QtGui import QPixmap, QPalette, QPainter, QBrush, QPen
 from PyQt5.QtCore import Qt
+import socket
+from urllib.parse import urlparse
 
 import cv2
 import os
@@ -38,11 +40,39 @@ class Preview(QWidget):
         self.parent = parent
         self.image = pixmap
         self.map = None
+        self.conf_threshold = 0.6  # default 60%
         
         self.setWindowTitle("Preview")
         self.setPreviewLayout()
         self.setMaximumSize(2000, 1200)
     
+    def _remote_available(self, timeout: float | None = None) -> bool:
+        """Quick TCP reachability check for the configured remote endpoint.
+
+        Uses the default endpoint from the TF inference module if available.
+        """
+        # Prefer endpoint from config
+        endpoint = getattr(config, 'ENDPOINT_URL', None)
+        if not endpoint:
+            try:
+                # Import here to avoid TF import when using PyTorch-only mode
+                import clogic.inference as tf_inf
+                endpoint = tf_inf.apply_remote.__defaults__[2] if len(tf_inf.apply_remote.__defaults__) >= 3 else 'http://127.0.0.1:8501'
+            except Exception:
+                endpoint = 'http://127.0.0.1:8501'
+
+        try:
+            parsed = urlparse(endpoint)
+            host = parsed.hostname
+            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+            if not host:
+                return False
+            to = timeout if timeout is not None else getattr(config, 'HEALTH_TIMEOUT', 1.5)
+            with socket.create_connection((host, port), timeout=to):
+                return True
+        except Exception:
+            return False
+
     def setPreviewLayout(self):
         main_layout = QHBoxLayout()
 
@@ -51,13 +81,20 @@ class Preview(QWidget):
         display_widget.setMaximumWidth(200)
         display_widget.setLayout(display_layout)
 
+        remote_ok = self._remote_available()
         for idx, mode in enumerate(self.modes):
+            if mode == 'remote' and not remote_ok:
+                # Skip cloud option if endpoint not reachable
+                continue
             
             # guard disabling offline modes
             if self.parent.model is None and 'remote' not in mode:
                 continue
 
             radiobutton = QRadioButton(self.mode_names[idx])
+            # Fallback to a local mode if remote is not available
+            if config.UNET_PRED_MODE == 'remote' and not remote_ok and self.parent.model is not None:
+                config.UNET_PRED_MODE = 'direct'
             if mode == config.UNET_PRED_MODE:
                 radiobutton.setChecked(True)
             radiobutton.mode = mode
@@ -70,9 +107,27 @@ class Preview(QWidget):
         self.info = QLabel()
         self.info.setText('Analysis \nResults')
 
+        # Cloud status label
+        self.cloud_status = QLabel()
+        self.cloud_status.setText('Cloud: Available' if remote_ok else 'Cloud: Unavailable')
+        self.cloud_status.setStyleSheet('color: #2ecc71;' if remote_ok else 'color: #e74c3c;')
+
+        # Confidence slider controls
+        self.conf_label = QLabel()
+        self._set_conf_label()
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(100)
+        self.slider.setSingleStep(1)
+        self.slider.setValue(int(self.conf_threshold * 100))
+        self.slider.valueChanged.connect(self._conf_changed)
+
         self.button = QPushButton('Analyze')
         self.button.clicked.connect(self.runModel)
 
+        display_layout.addWidget(self.cloud_status)
+        display_layout.addWidget(self.conf_label)
+        display_layout.addWidget(self.slider)
         display_layout.addWidget(self.info)
         display_layout.addWidget(self.button)
         main_layout.addWidget(self.display)
@@ -80,6 +135,13 @@ class Preview(QWidget):
 
         self.setLayout(main_layout)
         self.resize(self.image.width(), self.image.height())
+
+    def _set_conf_label(self):
+        self.conf_label.setText(f'Min confidence: {int(self.conf_threshold*100)}%')
+
+    def _conf_changed(self, val):
+        self.conf_threshold = float(val) / 100.0
+        self._set_conf_label()
     
     def runModel(self):
         source = cv2.imread('gui_preview.bmp', 1)
@@ -89,9 +151,11 @@ class Preview(QWidget):
         if config.FRAMEWORK.lower() == 'pytorch':
             match config.UNET_PRED_MODE:
                 case 'direct':
-                    pathology_map = inference.apply_model_pytorch(source_resized, self.parent.model, shapes=(128, 128))
+                    # Use probability map to compute per-lesion confidence
+                    pathology_map = inference.apply_model_raw_pytorch(source_resized, self.parent.model, classes=config.CLASSES, shapes=(128, 128))
                 case 'smooth':
-                    pathology_map = inference.apply_model_smooth_pytorch(source_resized, self.parent.model, shape=128)
+                    # Smooth currently falls back to regular; still return probabilities
+                    pathology_map = inference.apply_model_raw_pytorch(source_resized, self.parent.model, classes=config.CLASSES, shapes=(128, 128))
                 case 'remote':
                     # Remote inference still uses TensorFlow serving
                     import clogic.inference as tf_inference
@@ -112,8 +176,9 @@ class Preview(QWidget):
         self.display.repaint()
 
     def process_pathology_map(self, pathology_map, mode):
-        if mode in ['remote']:
-            markup, stats = drawing.process_dense_pathology_map(pathology_map)
+        # If we received a probability map (H, W, C), use dense processing with threshold
+        if isinstance(pathology_map, np.ndarray) and pathology_map.ndim == 3:
+            markup, stats = drawing.process_dense_pathology_map(pathology_map, threshold=self.conf_threshold)
         else:
             markup, stats = drawing.process_sparse_pathology_map(pathology_map)
 
@@ -121,9 +186,16 @@ class Preview(QWidget):
         return markup
 
     def set_info_text(self, stats):
-        text = ''
-        for key, val in stats.items():
-            text += f'{key}: {val}\n'
+        # Dense stats: dict of lesion_idx -> prob, show summary
+        if stats and all(isinstance(k, int) for k in stats.keys()):
+            vals = list(stats.values())
+            n = len(vals)
+            avg = int(round((sum(vals) / max(1, n)) * 100))
+            text = f'Detections: {n}\nAvg conf: {avg}%'
+        else:
+            text = ''
+            for key, val in stats.items():
+                text += f'{key}: {val}\n'
         self.info.setText(text)
 
     def __modeSelected(self):

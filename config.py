@@ -36,6 +36,15 @@ LABELS = {
 #region GUI
 SLIDE_DIR = './current' # Only for GUI
 UNET_PRED_MODE = 'remote' # 'smooth', 'direct'
+# Theme options:
+# - 'auto' (platform QSS)
+# - 'qt' (qt_material theme)
+# - 'windows' / 'mac' (platform QSS)
+# - 'qdarkstyle' (external package, if installed)
+# - 'qss' (load a custom QSS from path)
+GUI_THEME = 'auto'
+GUI_MATERIAL_THEME = 'dark_teal.xml'
+GUI_CUSTOM_QSS = ''
 #endregion
 
 #region Dataset
@@ -45,6 +54,9 @@ BROADEN_INDIVIDUAL_RECT = 1000
 
 #region Web
 IP_EXPOSED = '127.0.0.1'
+# Optional: TensorFlow Serving endpoint for cloud inference/health checks
+ENDPOINT_URL = 'http://51.250.28.160:7500'
+HEALTH_TIMEOUT = 1.5
 #endregion
 
 def load_config():
@@ -85,7 +97,7 @@ def _load_ini_config(config_file):
 def _update_globals_from_dict(config):
     global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
     global FRAMEWORK, DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
-    global SLIDE_DIR, UNET_PRED_MODE, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED
+    global SLIDE_DIR, UNET_PRED_MODE, GUI_THEME, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT
     
     general = config.get('general', {})
     if 'current_slide' in general:
@@ -124,6 +136,12 @@ def _update_globals_from_dict(config):
         SLIDE_DIR = gui['slide_dir']
     if 'unet_pred_mode' in gui:
         UNET_PRED_MODE = gui['unet_pred_mode']
+    if 'theme' in gui:
+        GUI_THEME = gui['theme']
+    if 'material_theme' in gui:
+        GUI_MATERIAL_THEME = gui['material_theme']
+    if 'custom_qss' in gui:
+        GUI_CUSTOM_QSS = gui['custom_qss']
     
     dataset = config.get('dataset', {})
     if 'exclude_duplicates' in dataset:
@@ -134,6 +152,10 @@ def _update_globals_from_dict(config):
     web = config.get('web', {})
     if 'ip_exposed' in web:
         IP_EXPOSED = web['ip_exposed']
+    if 'endpoint_url' in web:
+        ENDPOINT_URL = web['endpoint_url']
+    if 'health_timeout' in web:
+        HEALTH_TIMEOUT = float(web['health_timeout'])
 
 # Load configuration
 load_config()
