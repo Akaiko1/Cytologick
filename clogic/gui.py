@@ -8,12 +8,18 @@ import cv2
 import os
 
 import config
-import clogic.inference as inference
 import clogic.contours as contours
 import clogic.graphics as drawing
 
 import numpy as np
-import tensorflow as tf
+
+# Import framework-specific modules based on config
+if config.FRAMEWORK.lower() == 'pytorch':
+    import clogic.inference_pytorch as inference
+    import torch
+else:
+    import clogic.inference as inference
+    import tensorflow as tf
 
 if hasattr(os, 'add_dll_directory'):
     with os.add_dll_directory(config.OPENSLIDE_PATH):
@@ -80,13 +86,24 @@ class Preview(QWidget):
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
         source_resized = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
 
-        match config.UNET_PRED_MODE:
-            case 'direct':
-                pathology_map = inference.apply_model(source_resized, self.parent.model, shapes=(128, 128))
-            case 'smooth':
-                pathology_map = inference.apply_model_smooth(source_resized, self.parent.model, shape=128)
-            case 'remote':
-                pathology_map = inference.apply_remote(source)
+        if config.FRAMEWORK.lower() == 'pytorch':
+            match config.UNET_PRED_MODE:
+                case 'direct':
+                    pathology_map = inference.apply_model_pytorch(source_resized, self.parent.model, shapes=(128, 128))
+                case 'smooth':
+                    pathology_map = inference.apply_model_smooth_pytorch(source_resized, self.parent.model, shape=128)
+                case 'remote':
+                    # Remote inference still uses TensorFlow serving
+                    import clogic.inference as tf_inference
+                    pathology_map = tf_inference.apply_remote(source)
+        else:
+            match config.UNET_PRED_MODE:
+                case 'direct':
+                    pathology_map = inference.apply_model(source_resized, self.parent.model, shapes=(128, 128))
+                case 'smooth':
+                    pathology_map = inference.apply_model_smooth(source_resized, self.parent.model, shape=128)
+                case 'remote':
+                    pathology_map = inference.apply_remote(source)
 
         map_to_display = self.process_pathology_map(pathology_map, config.UNET_PRED_MODE)
         cv2.imwrite('gui_map.png', map_to_display)
@@ -192,9 +209,50 @@ class Viewer(QWidget):
         self.slide_menu = Menu(self)
         self.slide_menu.show()
 
+        self._load_local_model()
+
+    def _load_local_model(self):
+        """Load local model based on configured framework."""
+        if config.FRAMEWORK.lower() == 'pytorch':
+            self._load_pytorch_model()
+        else:
+            self._load_tensorflow_model()
+    
+    def _load_pytorch_model(self):
+        """Load PyTorch model from _main folder."""
+        model_files = [
+            '_main/model.pth',
+            '_main/model_best.pth', 
+            '_main/model_final.pth'
+        ]
+        
+        for model_path in model_files:
+            if os.path.exists(model_path):
+                print(f'Local PyTorch model located at {model_path}, loading')
+                try:
+                    self.model = inference.load_pytorch_model(model_path, config.CLASSES)
+                    print('PyTorch model loaded successfully')
+                    return
+                except Exception as e:
+                    print(f'Failed to load PyTorch model: {e}')
+                    continue
+        
+        print('No PyTorch model found in _main/ folder')
+        self.model = None
+    
+    def _load_tensorflow_model(self):
+        """Load TensorFlow model from _main folder."""
         if os.path.exists('_main'):
-            print('Local model located, loading')
-            self.model = tf.keras.models.load_model('_main', compile=False)
+            print('Local TensorFlow model located, loading')
+            try:
+                self.model = tf.keras.models.load_model('_main', compile=False)
+                print('TensorFlow model loaded successfully')
+            except Exception as e:
+                print(f'Failed to load TensorFlow model: {e}')
+                self.model = None
+        else:
+            print('No TensorFlow model found in _main/ folder')
+            self.model = None
 
     def setViewerLayout(self):
         display = QHBoxLayout()

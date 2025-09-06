@@ -1,0 +1,25 @@
+# Cytologick - TensorFlow Framework Requirements
+# Install with: pip install -r requirements-tensorflow.txt
+
+# Core dependencies
+matplotlib==3.6.2
+opencv-python==4.6.0.66
+openslide-python==1.2.0
+pandas==1.5.2
+PyQt5==5.15.10
+qt-material==2.14
+scipy==1.13.0
+tqdm==4.66.2
+multiprocess==0.70.16
+orjson==3.10.0
+Flask==3.0.3
+scikit-image>=0.23.0
+numpy>=1.26.0,<2.0.0
+pillow>=9.0.0
+h5py>=3.0.0
+PyYAML>=6.0
+
+# TensorFlow framework
+tensorflow>=2.15.0
+keras>=2.15.0
+segmentation-models==1.0.1

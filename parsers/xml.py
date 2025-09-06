@@ -22,7 +22,14 @@ def __get_markup_files(list_to_filter):
 
 
 def __get_info_tuples(slides_list, xmls_list):
-    return [(f.split(os.sep)[-1].rstrip('.mrsx'), f, [x for x in xmls_list if f.split(os.sep)[-1].rstrip('.mrsx') in x][0]) for f in slides_list]
+    info = []
+    for f in slides_list:
+        base = os.path.splitext(os.path.basename(f))[0]
+        matches = [x for x in xmls_list if base in x]
+        if not matches:
+            continue
+        info.append((base, f, matches[0]))
+    return info
 
 
 def all_asap_to_xml(slides_folder: str, temp_folder='temp'):
