@@ -8,6 +8,7 @@ import tempfile
 import shutil
 import numpy as np
 from PIL import Image
+import warnings
 import torch
 
 # Test data constants
@@ -83,6 +84,14 @@ def mock_config():
 def pytorch_device():
     """Get available PyTorch device for testing."""
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+# Suppress noisy third-party DeprecationWarnings (protobuf upb types)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"Type google\._upb\._message\..*",
+)
 
 
 @pytest.fixture(scope="session")

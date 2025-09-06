@@ -407,4 +407,15 @@ Pap smear research, cytology AI, medical image analysis research, LSIL detection
 
 ## Contributing
 
-If you're interested in contributing to Cytologick, please read our contributing guidelines. We welcome issues and pull requests!
+We welcome issues and pull requests! Please see `CONTRIBUTING.md` for guidelines on setup, coding style, testing, and how to propose changes.
+
+Quick links:
+
+- Contribution guide: `CONTRIBUTING.md`
+- License: `LICENSE`
+
+## License
+
+MIT License — see `LICENSE` for full text.
+
+Important: Cytologick is for research and educational use only. It is not a medical device and is not intended for clinical diagnosis or treatment. Users are responsible for validating performance and complying with all applicable regulations before any clinical use.

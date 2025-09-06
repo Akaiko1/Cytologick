@@ -37,11 +37,14 @@ git checkout -b feature/your-feature-name
 
 ### 2. Set Up Development Environment
 
-Follow the installation instructions in the README, then:
+Follow the installation instructions in the README (PyTorch path recommended), then install dev tools and set up git hooks:
 
 ```bash
-# Install additional development dependencies
-pip install -r requirements-dev.txt  # if available
+# Install development dependencies
+pip install -r requirements-dev.txt
+
+# Install pre-commit hooks (run once)
+pre-commit install
 ```
 
 ### 3. Make Your Changes
@@ -50,11 +53,38 @@ pip install -r requirements-dev.txt  # if available
 - Add tests for new functionality
 - Update documentation as needed
 
-### 4. Submit a Pull Request
+### 4. Run Linters and Tests
+
+Before opening a PR, please make sure the code is formatted, linted, and tests pass:
+
+```bash
+# Format and lint
+black .
+ruff check .
+
+# Optional static type check
+mypy clogic parsers
+
+# Run tests (PyTorch path recommended)
+pytest -q
+
+# Or run specific tests
+pytest tests/test_pytorch_inference.py -q
+```
+
+### 5. Submit a Pull Request
 
 - Write clear commit messages
 - Include detailed description of changes
 - Reference any related issues
+
+#### PR checklist
+
+- [ ] Code is formatted with `black`
+- [ ] Lint passes with `ruff`
+- [ ] Tests pass with `pytest`
+- [ ] Docs/README updated where applicable
+- [ ] No large binaries (slides/models) added; consider Git LFS if needed
 
 ## 📋 Contribution Guidelines
 
@@ -78,6 +108,11 @@ pip install -r requirements-dev.txt  # if available
 - Test with various slide formats and sizes
 - Validate medical accuracy with domain experts
 - Include performance benchmarks for model changes
+
+Notes:
+
+- Some tests are framework-specific and will be skipped if the framework is not installed
+- Prefer the PyTorch path for local development; TensorFlow path is maintained for legacy support
 
 ### Documentation
 
