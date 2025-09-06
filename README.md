@@ -118,6 +118,7 @@ gui:
   slide_dir: ./current
 
 ### Minimal `config.yaml`
+```
 
 Copy-paste and edit paths to get started quickly (PyTorch recommended):
 
@@ -378,3 +379,4 @@ Pap smear research, cytology AI, medical image analysis research, LSIL detection
 ## Contributing
 
 If you're interested in contributing to Cytologick, please read our contributing guidelines. We welcome issues and pull requests!
+
