@@ -47,7 +47,7 @@ conda activate cytologick
 # Follow OS-specific instructions at https://openslide.org/download/
 ```
 
-### Step 3: Install ASAP (Optional - for training only)
+### Step 3: Install ASAP (for annotation only)
 
 Download and install [ASAP](https://computationalpathologygroup.github.io/ASAP/) if you plan to create training datasets from annotated slides.
 
@@ -124,8 +124,8 @@ web:
   endpoint_url: http://51.250.28.160:7500  # Cloud inference endpoint (optional)
   health_timeout: 1.5                      # Seconds for cloud reachability check
 
-### Minimal `config.yaml`
 ```
+### Minimal `config.yaml`
 
 Copy-paste and edit paths to get started quickly (PyTorch recommended):
 
@@ -213,8 +213,9 @@ python run.py
 #### Step 1: Prepare Your Annotated Data
 
 1. **Annotate slides** in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
-   - Draw rectangles around abnormal cells
-   - Label each rectangle (LSIL, HSIL, ASCUS, etc.)
+   - Draw rectangles around groups of abnormal cells, label those as 'rect_N' where N is rectangle ID
+   - Draw polygons around individual abnormal cells inside a rectangle to form regions
+   - Label each region as (LSIL, HSIL, ASCUS, etc.)
    - Save annotation files as XML
 
 2. **Organize your files:**
@@ -230,7 +231,7 @@ python run.py
 
 #### Step 2: Configure Training Paths
 
-Edit `config.py` to point to your data:
+Edit `config.py` or `config.yaml` to point to your data:
 
 ```python
 HDD_SLIDES = "/path/to/your_data_folder"
@@ -353,6 +354,33 @@ Remote models send data over network to TensorFlow Serving endpoints.
 
 ## Understanding Annotations
 
+### ASAP Annotation Format
+
+Cytologick uses ASAP annotation format for training data. See `annotation_example.xml` for a sample annotation file.
+
+**Key elements:**
+
+- **Rectangles**: Define regions of interest around abnormal cells
+- **Coordinates**: Precise pixel locations for each annotation
+- **Labels**: Cell type classifications (LSIL, HSIL, ASCUS, etc.)
+
+**Creating annotations:**
+
+1. Open slide in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
+2. Draw rectangles around groups of abnormal cells, label those as 'rect_N' where N is rectangle ID
+3. Draw polygons around individual abnormal cells inside a rectangle to form regions
+4. Label each region with appropriate cell type
+5. Save as XML annotation file
+
+## Cell Types (Research Focus)
+
+Cytologick research focuses on these cervical cell patterns:
+
+- **LSIL** - Low-grade Squamous Intraepithelial Lesion
+- **HSIL** - High-grade Squamous Intraepithelial Lesion  
+- **ASCUS** - Atypical Squamous Cells of Undetermined Significance
+- **ASCH** - Atypical Squamous Cells, Cannot Exclude HSIL
+
 ## UI Themes (QSS)
 
 The app supports platform-specific QSS themes and falls back to qt-material if not present:
@@ -375,32 +403,6 @@ The Preview window shows a cloud status indicator:
 
 You can set the endpoint and health check timeout in `config.yaml` under `web:`.
 
-### ASAP Annotation Format
-
-Cytologick uses ASAP annotation format for training data. See `annotation_example.xml` for a sample annotation file.
-
-**Key elements:**
-
-- **Rectangles**: Define regions of interest around abnormal cells
-- **Coordinates**: Precise pixel locations for each annotation
-- **Labels**: Cell type classifications (LSIL, HSIL, ASCUS, etc.)
-
-**Creating annotations:**
-
-1. Open slide in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
-2. Draw rectangles around abnormal cells
-3. Label each rectangle with appropriate cell type
-4. Save as XML annotation file
-
-## Cell Types (Research Focus)
-
-Cytologick research focuses on these cervical cell patterns:
-
-- **LSIL** - Low-grade Squamous Intraepithelial Lesion
-- **HSIL** - High-grade Squamous Intraepithelial Lesion  
-- **ASCUS** - Atypical Squamous Cells of Undetermined Significance
-- **ASCH** - Atypical Squamous Cells, Cannot Exclude HSIL
-
 ## Keywords
 
 Pap smear research, cytology AI, medical image analysis research, LSIL detection research, HSIL detection research, ASCUS detection research, digital pathology research, deep learning, U-Net segmentation, TensorFlow, PyTorch, computer vision research
@@ -419,3 +421,4 @@ Quick links:
 MIT License — see `LICENSE` for full text.
 
 Important: Cytologick is for research and educational use only. It is not a medical device and is not intended for clinical diagnosis or treatment. Users are responsible for validating performance and complying with all applicable regulations before any clinical use.
+
