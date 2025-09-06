@@ -105,7 +105,7 @@ def apply_model_pytorch(source, model, shapes=config.IMAGE_SHAPE):
     return pathology_map[:source.shape[0], :source.shape[1]].astype(np.uint8)
 
 
-def apply_model_raw_pytorch(source, model, classes, shapes=config.IMAGE_SHAPE):
+def apply_model_raw_pytorch(source, model, classes, shapes=config.IMAGE_SHAPE, batch_size: int | None = None):
     """
     Apply PyTorch model and return raw probability maps.
     
@@ -127,25 +127,34 @@ def apply_model_raw_pytorch(source, model, classes, shapes=config.IMAGE_SHAPE):
         source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE
     )
 
-    pathology_map = np.zeros((source_pads.shape[0], source_pads.shape[1], classes))
+    pathology_map = np.zeros((source_pads.shape[0], source_pads.shape[1], classes), dtype=np.float32)
+
+    # Collect patches and their target locations
+    coords: list[tuple[int,int]] = []
+    tiles: list[np.ndarray] = []
+    for x in range(0, source_pads.shape[0], shapes[0]):
+        for y in range(0, source_pads.shape[1], shapes[1]):
+            patch = source_pads[x: x + shapes[0], y: y + shapes[1]]
+            tiles.append(patch)
+            coords.append((x, y))
+
+    # Determine batch size
+    if batch_size is None:
+        batch_size = 32 if torch.cuda.is_available() else 16
 
     with torch.no_grad():
-        for x in range(0, source_pads.shape[0], shapes[0]):
-            for y in range(0, source_pads.shape[1], shapes[1]):
-                patch = source_pads[x: x + shapes[0], y: y + shapes[1]]
-                
-                # Convert patch to tensor and move to device
-                patch_tensor = image_to_tensor_pytorch(patch).to(DEVICE)
-                
-                # Get prediction probabilities
-                pred_mask = model(patch_tensor)
-                pred_probs = F.softmax(pred_mask, dim=1)
-                prediction = pred_probs[0].cpu().numpy().transpose(1, 2, 0)
-                
-                # Resize prediction back to patch size
-                prediction_resized = cv2.resize(prediction, shapes, interpolation=cv2.INTER_LINEAR)
-                
-                pathology_map[x: x + shapes[0], y: y + shapes[1]] = prediction_resized
+        for i in range(0, len(tiles), batch_size):
+            batch_np = tiles[i:i+batch_size]
+            # Build tensor batch [B, C, H, W]
+            batch_t = torch.cat([image_to_tensor_pytorch(t) for t in batch_np], dim=0).to(DEVICE)
+            logits = model(batch_t)
+            probs = F.softmax(logits, dim=1).cpu().numpy()  # [B, C, H, W]
+            probs = np.transpose(probs, (0, 2, 3, 1))       # [B, H, W, C]
+
+            for j, pred in enumerate(probs):
+                x, y = coords[i + j]
+                # pred already at target size (shapes); place into map
+                pathology_map[x: x + shapes[0], y: y + shapes[1]] = pred.astype(np.float32)
 
     return pathology_map[:source.shape[0], :source.shape[1]].astype(np.float32)
 
@@ -165,7 +174,7 @@ def load_pytorch_model(model_path: str, num_classes: int = 3):
         encoder_name='efficientnet-b3',
         encoder_weights='imagenet',
         classes=num_classes,
-        activation='softmax2d'
+        activation=None  # return logits; softmax applied in inference
     )
     
     model.load_state_dict(torch.load(model_path, map_location=DEVICE, weights_only=True))

@@ -103,7 +103,14 @@ def get_slide_rois(slide_path):
                 model = inf_pt.load_pytorch_model(model_path, num_classes=config.CLASSES)
                 pathology_maps = []
                 for probe in selected_probes:
-                    pm = inf_pt.apply_model_raw_pytorch(probe, model, classes=config.CLASSES, shapes=config.IMAGE_SHAPE)
+                    # Optional fast mode: downscale probe to speed up preview
+                    if bool(getattr(config, 'WEB_FAST_TILES', True)):
+                        h, w = probe.shape[:2]
+                        probe_small = cv2.resize(probe, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+                        pm_small = inf_pt.apply_model_raw_pytorch(probe_small, model, classes=config.CLASSES, shapes=config.IMAGE_SHAPE)
+                        pm = cv2.resize(pm_small, (w, h), interpolation=cv2.INTER_LINEAR)
+                    else:
+                        pm = inf_pt.apply_model_raw_pytorch(probe, model, classes=config.CLASSES, shapes=config.IMAGE_SHAPE)
                     pathology_maps.append(pm)
             else:
                 print('No local PyTorch model found; will try remote endpoint')
@@ -144,23 +151,40 @@ def get_slide_rois(slide_path):
 
 
 def __get_probability(probability_map, contour) -> float:
+    """Average probability inside contour in [0..1]."""
     mask = np.zeros(probability_map.shape)
     cv2.drawContours(mask, [contour], -1, 1, -1)
-    return (float(np.sum(np.where(mask > 0, probability_map, 0))/np.sum(mask)) - 0.5) * 2
+    denom = max(1.0, float(np.sum(mask)))
+    return float(np.sum(np.where(mask > 0, probability_map, 0)) / denom)
 
 
 def __get_cnts_from_regions(rmaps, shifts):
     result = {}
 
     for idx, rmap in enumerate(rmaps):
+        conf_thr = float(getattr(config, 'WEB_CONF_THRESHOLD', 0.5))
+        cls_idx = int(getattr(config, 'WEB_ATYPICAL_CLASS_INDEX', 2))
+        atypical_probability_map = rmap[..., cls_idx]
+        try:
+            print(f"Probe {idx}: max atypical prob = {np.max(atypical_probability_map):.3f}")
+        except Exception:
+            pass
 
-        atypical_probability_map = rmap[..., 2]
-        atypical_map = np.where(rmap[..., 2] > 0.5, 255, 0)
-        cnts = cv2.findContours(atypical_map.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+        # Primary threshold from config
+        bin_map = (atypical_probability_map > conf_thr).astype(np.uint8) * 255
+        cnts = cv2.findContours(bin_map, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+
+        # Fallback: relax threshold if nothing found
+        if len(cnts) == 0:
+            relax_thr = max(0.3, conf_thr * 0.75)
+            bin_map = (atypical_probability_map > relax_thr).astype(np.uint8) * 255
+            cnts = cv2.findContours(bin_map, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
 
         filtered_cnts = []
+        # Keep average probability requirement near the pixel threshold
+        min_avg_prob = conf_thr
         for cnt in cnts:
-            if __get_probability(atypical_probability_map, cnt) >= 0.95:
+            if __get_probability(atypical_probability_map, cnt) >= min_avg_prob:
                 filtered_cnts.append(cnt)
 
         if not filtered_cnts:

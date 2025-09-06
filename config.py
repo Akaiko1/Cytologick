@@ -59,6 +59,8 @@ ENDPOINT_URL = 'http://51.250.28.160:7500'
 HEALTH_TIMEOUT = 1.5
 # Confidence threshold for web overlays (0..1)
 WEB_CONF_THRESHOLD = 0.6
+# Class index in probability map used for ROI extraction (default: 2)
+WEB_ATYPICAL_CLASS_INDEX = 2
 # Speed optimizations for web overlays
 WEB_FAST_TILES = True           # If true, run a single forward pass per tile (fast, lower fidelity)
 WEB_TILE_CACHE_SIZE = 256       # LRU cache size for rendered tiles
@@ -102,7 +104,7 @@ def _load_ini_config(config_file):
 def _update_globals_from_dict(config):
     global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
     global FRAMEWORK, DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
-    global SLIDE_DIR, UNET_PRED_MODE, GUI_THEME, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE
+    global SLIDE_DIR, UNET_PRED_MODE, GUI_THEME, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE, WEB_ATYPICAL_CLASS_INDEX
     
     general = config.get('general', {})
     if 'current_slide' in general:
@@ -163,6 +165,8 @@ def _update_globals_from_dict(config):
         HEALTH_TIMEOUT = float(web['health_timeout'])
     if 'web_conf_threshold' in web:
         WEB_CONF_THRESHOLD = float(web['web_conf_threshold'])
+    if 'atypical_class_index' in web:
+        WEB_ATYPICAL_CLASS_INDEX = int(web['atypical_class_index'])
     if 'fast_tiles' in web:
         WEB_FAST_TILES = bool(web['fast_tiles'])
     if 'tile_cache_size' in web:

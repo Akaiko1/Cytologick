@@ -16,7 +16,8 @@ PyTorch is the recommended framework for training and local inference in this re
 - Works with ASAP annotation files
 - Detects LSIL, HSIL, ASCUS, and ASCH cell patterns  
 
-![Cytologick Example](./assets/example.jpg)
+| ![Cytologick Example](./assets/example.jpg) |
+|:--:|
 
 ## Installation
 
@@ -187,6 +188,24 @@ Notes:
 
 - If `_main/model*.pth` exists and `FRAMEWORK: pytorch`, the web DeepZoom tiles include a red overlay of model predictions (threshold set by `web.web_conf_threshold`).
 - Web interface is experimental and under active refactoring.
+
+#### Web UI Screenshots
+
+| ![Web UI – Slides](assets/web_main.png) |
+|:--:|
+
+| ![Web UI – Report Preview](assets/web_report.png) |
+|:--:|
+
+#### Required JavaScript Assets
+
+The web preview relies on OpenSeadragon and jQuery. When you start `run_web.py`, the script verifies these files exist and prints an error if not found:
+
+- `__web/static/jquery.js`
+- `__web/static/openseadragon.js`
+- `__web/static/openseadragon-scalebar.js`
+
+Place the files in `__web/static/` (see “Step 5: Download Web Dependencies”). Without them, the web viewer will not work.
 
 ## Getting Started
 
