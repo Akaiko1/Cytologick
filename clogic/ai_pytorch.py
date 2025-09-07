@@ -10,6 +10,7 @@ import random
 from contextlib import nullcontext
 from typing import Tuple, Optional, Union
 import albumentations as A
+import inspect
 from albumentations.pytorch import ToTensorV2
 
 import cv2
@@ -100,6 +101,32 @@ class CytologyDataset(Dataset):
         return image, mask
 
 
+def _build_gauss_noise():
+    """Return a Gauss/Gaussian noise transform compatible with installed Albumentations.
+
+    Handles API differences between versions by inspecting constructor signatures.
+    """
+    try:
+        params = inspect.signature(A.GaussNoise.__init__).parameters
+        if 'var_limit' in params:
+            return A.GaussNoise(var_limit=(10.0, 30.0), p=0.5)
+        if 'std_range' in params:
+            return A.GaussNoise(std_range=(0.1, 0.3), p=0.5)
+    except Exception:
+        pass
+
+    # Fallback to GaussianNoise if available
+    try:
+        params = inspect.signature(A.GaussianNoise.__init__).parameters
+        if 'var_limit' in params:
+            return A.GaussianNoise(var_limit=(10.0, 30.0), p=0.5)
+    except Exception:
+        pass
+
+    # As a last resort, no-op to keep pipeline functional
+    return A.NoOp(p=0.0)
+
+
 def get_train_transforms():
     """
     Get training transforms that match TensorFlow augmentations.
@@ -107,6 +134,8 @@ def get_train_transforms():
     Returns:
         Albumentations transform pipeline for training
     """
+    noise_tf = _build_gauss_noise()
+
     return A.Compose([
         A.Resize(128, 128),
         A.OneOf([
@@ -119,7 +148,7 @@ def get_train_transforms():
             ),
         ], p=0.8),
         A.OneOf([
-            A.GaussNoise(std_range=(0.1, 0.3), p=0.5),
+            noise_tf,
             A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.25, p=0.5),
         ], p=0.5),
         A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
@@ -345,11 +374,12 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
     print(f"Total samples: {total_samples}")
     
     # Create U-Net model with EfficientNetB3 backbone
+    # Output logits; losses/metrics handle softmax explicitly
     model = smp.Unet(
         encoder_name='efficientnet-b3',
         encoder_weights='imagenet',
         classes=output_classes,
-        activation='softmax2d'
+        activation=None
     )
     model = model.to(DEVICE)
     
@@ -494,11 +524,12 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
     )
     
     # Load existing model
+    # Output logits; losses/metrics handle softmax explicitly
     model = smp.Unet(
         encoder_name='efficientnet-b3',
         encoder_weights='imagenet',
         classes=config.CLASSES,
-        activation='softmax2d'
+        activation=None
     )
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model = model.to(DEVICE)

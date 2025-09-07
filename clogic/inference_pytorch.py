@@ -170,14 +170,16 @@ def load_pytorch_model(model_path: str, num_classes: int = 3):
     Returns:
         Loaded PyTorch model
     """
+    # Build model without pretrained weights; we will load user weights below
     model = smp.Unet(
         encoder_name='efficientnet-b3',
-        encoder_weights='imagenet',
+        encoder_weights=None,
         classes=num_classes,
         activation=None  # return logits; softmax applied in inference
     )
-    
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE, weights_only=True))
+
+    state = torch.load(model_path, map_location=DEVICE)
+    model.load_state_dict(state)
     model.eval()
     
     return model

@@ -236,7 +236,7 @@ python run.py
 #### Step 1: Prepare Your Annotated Data
 
 1. **Annotate slides** in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
-   - Draw rectangles around groups of abnormal cells, label those as 'rect_N' where N is rectangle ID
+   - Draw rectangles around groups of abnormal cells, label those as 'rect N' where N is rectangle ID
    - Draw polygons around individual abnormal cells inside a rectangle to form regions
    - Label each region as (LSIL, HSIL, ASCUS, etc.)
    - Save annotation files as XML
@@ -390,7 +390,7 @@ Cytologick uses ASAP annotation format for training data. See `annotation_exampl
 **Creating annotations:**
 
 1. Open slide in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
-2. Draw rectangles around groups of abnormal cells, label those as 'rect_N' where N is rectangle ID
+2. Draw rectangles around groups of abnormal cells, label those as 'rect N' where N is rectangle ID
 3. Draw polygons around individual abnormal cells inside a rectangle to form regions
 4. Label each region with appropriate cell type
 5. Save as XML annotation file
@@ -444,4 +444,3 @@ Quick links:
 MIT License — see `LICENSE` for full text.
 
 Important: Cytologick is for research and educational use only. It is not a medical device and is not intended for clinical diagnosis or treatment. Users are responsible for validating performance and complying with all applicable regulations before any clinical use.
-
