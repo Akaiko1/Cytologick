@@ -3,6 +3,7 @@ from __future__ import annotations
 import configparser
 import multiprocessing
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
@@ -238,9 +239,21 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
 
 
 def _find_default_config_file() -> Optional[str]:
+    candidates: list[str] = []
+
+    # 1) Current working directory (developer-friendly)
     for name in ('config.yaml', 'config.yml', 'config.ini'):
-        if os.path.exists(name):
-            return name
+        candidates.append(os.path.join(os.getcwd(), name))
+
+    # 2) Directory of the executable (PyInstaller / end-user friendly)
+    exe_dir = os.path.dirname(os.path.abspath(getattr(sys, 'executable', '') or ''))
+    if exe_dir:
+        for name in ('config.yaml', 'config.yml', 'config.ini'):
+            candidates.append(os.path.join(exe_dir, name))
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
     return None
 
 

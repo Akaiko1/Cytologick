@@ -21,6 +21,7 @@ unnecessary for smooth tiling are removed.
 
 import numpy as np
 import scipy.signal
+import sys
 from tqdm import tqdm
 
 import gc
@@ -259,7 +260,8 @@ def predict_img_with_smooth_windowing(input_img, window_size, subdivisions, nb_c
     # to 4 rather than 2.
 
     res = []
-    for pad in tqdm(pads, disable=not PLOT_PROGRESS and not use_tta):
+    show_progress = bool(PLOT_PROGRESS) or bool(getattr(sys.stderr, 'isatty', lambda: False)())
+    for pad in tqdm(pads, disable=not show_progress):
         # For every rotation:
         sd = _windowed_subdivs(pad, window_size, subdivisions, nb_classes, pred_func)
         one_padded_result = _recreate_from_subdivs(

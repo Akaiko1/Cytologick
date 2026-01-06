@@ -1,12 +1,18 @@
 # Cytologick
 
-**AI-powered research tool for cervical cytology analysis**
+AI-powered research tool for cervical cytology analysis
 
 Cytologick is a Python application for analyzing Pap smear slides using deep learning. It provides both a desktop GUI and an experimental web interface for viewing whole-slide images and running AI-assisted detection of cellular abnormalities.
 
 > **Research Use Only**: This software is for research and educational purposes. It is not a medical device and should not be used for clinical diagnosis.
 
 ![Cytologick Example](./assets/example.jpg)
+
+## Web UI Demo (experimental)
+
+![Web UI - Viewer](./assets/web_main.jpg)
+
+![Web UI - Report](./assets/web_report.jpg)
 
 ---
 
@@ -25,7 +31,8 @@ Cytologick is a Python application for analyzing Pap smear slides using deep lea
 ### 1. Installation
 
 **Prerequisites:**
-- Python 3.10
+
+- Python 3.10+ (tested with Python 3.12)
 - Conda (recommended for managing dependencies)
 
 #### Step A: Install OpenSlide binaries
@@ -40,7 +47,7 @@ Cytologick is a Python application for analyzing Pap smear slides using deep lea
 
 ```bash
 # Create environment
-conda create -n cyto python=3.10
+conda create -n cyto python=3.12
 conda activate cyto
 
 # Install dependencies
@@ -49,6 +56,7 @@ pip install -r requirements-pytorch.txt
 # Install Python bindings for OpenSlide
 conda install openslide-python
 ```
+
 *Note: Using conda for `openslide-python` often helps resolve binary path issues automatically.*
 
 ### 2. Configure
@@ -82,11 +90,38 @@ python run.py
 python run_web.py
 ```
 
+### Runtime Layout (recommended)
+
+For end-user runs (and for packaged builds), keep runtime files next to the app:
+
+- `config.yaml` next to the executable (or run from a folder that contains it)
+- `_main/` next to the executable (local `.pth` models live here)
+- OpenSlide binaries installed and discoverable (see OpenSlide section above)
+
+`config.yaml` is auto-detected from the current working directory or from the executable directory.
+
+### Web UI Smoke Test
+
+1. Start the server:
+
+```bash
+python run_web.py
+```
+
+1. Open the main menu:
+
+- `http://127.0.0.1:5001`
+
+1. Click a slide in the menu.
+
+Each opened slide spawns its own viewer on port `5002 + index` (e.g. `5002`, `5003`, ...).
+The viewer URL uses `web.ip_exposed` from `config.yaml`.
+
 ---
 
 ## Project Structure
 
-```
+```text
 Cytologick/
 ├── run.py                   # Desktop GUI entry point
 ├── run_web.py               # Web interface entry point
@@ -127,6 +162,10 @@ Cytologick/
 3. Draw polygons around individual cells (label as LSIL, HSIL, etc.)
 4. Save as XML alongside the slide file
 
+You can use the included ASAP example annotation file as a reference:
+
+- `annotation_example.xml` (ASAP XML format with `Rectangle` and `Spline` annotations)
+
 ### Step 2: Generate Dataset
 
 ```bash
@@ -147,10 +186,12 @@ python model_new.py
 python model_train.py
 ```
 
+By default, `model_train.py` continues from the latest checkpoint (`_new_last.pth` if present).
+
 **Training outputs** (saved to project root):
 
 | File | Description |
-|------|-------------|
+| ---- | ----------- |
 | `_new_best.pth` | Best model by validation IoU |
 | `_new_final.pth` | Final model at training end |
 | `_new_last.pth` | Latest checkpoint |
@@ -197,6 +238,8 @@ neural_network:
   images_folder: rois
   classes: 3
   image_shape: [128, 128]
+  pt_lr: 1.0e-3
+  pt_num_workers: -1
   labels:
     LSIL: 2
     HSIL: 2
@@ -210,7 +253,7 @@ neural_network:
 gui:
   slide_dir: ./current
   unet_pred_mode: direct      # 'direct', 'smooth', or 'remote'
-  theme: qdarkstyle           # 'auto', 'qt', 'windows', 'mac', 'qdarkstyle'
+  use_tta: false
 ```
 
 ### Web
@@ -228,7 +271,7 @@ web:
 ## Inference Modes
 
 | Mode | Description |
-|------|-------------|
+| ---- | ----------- |
 | `direct` | Fast local inference using PyTorch model |
 | `smooth` | Smoother predictions with overlapping windows |
 | `remote` | Send tiles to TensorFlow Serving endpoint |
@@ -242,21 +285,18 @@ The GUI shows cloud availability status and automatically falls back to local mo
 The web interface (`run_web.py`) requires specific JavaScript libraries to function.
 
 **Required Assets:**
-Download these files and place them in the `__web/static/` directory:
+Download these files and place them in the `__web/static/` directory.
 
-1.  **jQuery**:
-    -   Download: [jquery-3.7.1.min.js](https://code.jquery.com/jquery-3.7.1.min.js)
-    -   Save as: `__web/static/jquery.js`
+- **jQuery**: download [jquery-3.7.1.min.js](https://code.jquery.com/jquery-3.7.1.min.js), save as `__web/static/jquery.js`.
+- **OpenSeadragon**: download [openseadragon-bin-5.0.1.zip](https://github.com/openseadragon/openseadragon/releases/download/v5.0.1/openseadragon-bin-5.0.1.zip), extract `openseadragon.min.js` and save as `__web/static/openseadragon.js` (also extract the `images` folder to `__web/static/images`).
+- **OpenSeadragon Scalebar**: download [openseadragon-scalebar.js](https://github.com/usnistgov/OpenSeadragonScalebar/raw/master/openseadragon-scalebar.js), save as `__web/static/openseadragon-scalebar.js`.
 
-2.  **OpenSeadragon**:
-    -   Download: [openseadragon-bin-5.0.1.zip](https://github.com/openseadragon/openseadragon/releases/download/v5.0.1/openseadragon-bin-5.0.1.zip)
-    -   Extract `openseadragon.min.js` from the zip.
-    -   Save as: `__web/static/openseadragon.js`
-    -   *Also extract the `images` folder from the zip and place it at `__web/static/images`.*
+---
 
-3.  **OpenSeadragon Scalebar**:
-    -   Download: [openseadragon-scalebar.js](https://github.com/usnistgov/OpenSeadragonScalebar/raw/master/openseadragon-scalebar.js)
-    -   Save as: `__web/static/openseadragon-scalebar.js`
+## Notes / Expected Warnings
+
+- `tfs_connector` deprecation warnings are expected (TensorFlow Serving path is kept for compatibility; PyTorch is the primary framework).
+- If OpenSlide is not installed correctly, both GUI and Web UI will fail to open slides.
 
 ⚠️ **If these files are missing, the web viewer will not load.**
 
@@ -267,7 +307,7 @@ Download these files and place them in the `__web/static/` directory:
 Cytologick focuses on cervical cytology patterns:
 
 | Abbreviation | Full Name |
-|--------------|-----------|
+| ------------ | --------- |
 | **LSIL** | Low-grade Squamous Intraepithelial Lesion |
 | **HSIL** | High-grade Squamous Intraepithelial Lesion |
 | **ASCUS** | Atypical Squamous Cells of Undetermined Significance |

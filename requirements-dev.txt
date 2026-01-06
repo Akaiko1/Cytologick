@@ -13,5 +13,8 @@ types-PyYAML>=6.0.12.12
 pytest>=7.0.0
 pytest-cov>=4.1.0
 
+# Packaging
+pyinstaller>=6.0.0
+
 # Git hooks
 pre-commit==3.7.0

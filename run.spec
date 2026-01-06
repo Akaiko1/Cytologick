@@ -1,12 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
+
+project_root = os.path.abspath(os.path.dirname(__file__))
+
+
+# We intentionally do NOT bundle config/models here.
+# Recommended distribution is a one-folder app where `config.yaml`, `_main/` and
+# OpenSlide binaries are placed next to the executable.
+datas = []
+
 
 a = Analysis(
     ['run.py'],
-    pathex=[],
+    pathex=[project_root],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=datas,
+    # Some imports are dynamic (openslide inside a function; remote connector optional)
+    hiddenimports=['openslide', 'tfs_connector'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -139,7 +139,7 @@ class TestPyTorchInference:
         assert np.allclose(prob_sums, 1.0, atol=1e-5)
 
     def test_smooth_windowing_inference(self, cfg, pytorch_device):
-        """Test smooth windowing inference (placeholder implementation)."""
+        """Test smooth windowing inference returns probability map."""
         from clogic.inference_pytorch import apply_model_smooth_pytorch
         import segmentation_models_pytorch as smp
         
@@ -158,9 +158,13 @@ class TestPyTorchInference:
         # Apply smooth windowing
         with torch.no_grad():
             pathology_map = apply_model_smooth_pytorch(cfg, test_image, model, shape=128)
-        
-        assert pathology_map.shape == test_image.shape[:2]
-        assert pathology_map.dtype in [np.int64, np.int32, np.uint8]
+
+        assert pathology_map.shape == (*test_image.shape[:2], 3)
+        assert pathology_map.dtype == np.float32
+
+        # Check probabilities sum to 1 (approximately)
+        prob_sums = pathology_map.sum(axis=2)
+        assert np.allclose(prob_sums, 1.0, atol=1e-5)
 
     def test_pytorch_tensorflow_output_compatibility(self, cfg, pytorch_device):
         """Test that PyTorch and TensorFlow inference produce similar outputs."""

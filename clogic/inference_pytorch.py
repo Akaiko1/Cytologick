@@ -297,7 +297,7 @@ def apply_model_smooth_pytorch(
         shape: Window size (single int, assumes square windows)
 
     Returns:
-        Class index map as numpy array (H, W).
+        Probability map as numpy array (H, W, C) with values in [0, 1].
     """
     shape = int(cfg.IMAGE_SHAPE[0]) if shape is None else int(shape)
     import clogic.smooth as smooth
@@ -319,4 +319,4 @@ def apply_model_smooth_pytorch(
         use_tta=bool(cfg.USE_TTA)
     )
 
-    return np.argmax(predictions_smooth, axis=2).astype(np.uint8)
+    return predictions_smooth.astype(np.float32)
