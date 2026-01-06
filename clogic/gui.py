@@ -192,14 +192,9 @@ class Preview(QWidget):
         # Load and preprocess the source image
         source = cv2.imread('gui_preview.bmp', 1)
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
-        source_resized = cv2.resize(
-            source, 
-            (source.shape[1] // 2, source.shape[0] // 2)
-        )
-        
         # Run inference using shared utility
         pathology_map = inference_utils.run_inference(
-            source_resized,
+            source,
             self.parent.model,
             mode=config.UNET_PRED_MODE,
             classes=config.CLASSES,

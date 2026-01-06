@@ -101,36 +101,30 @@ def _check_contour_intersects_tile(
 
 
 def _transform_contour_to_tile(
-    level: int, 
-    tile_x: int, tile_y: int,
-    contour: List, 
-    slide: openslide.OpenSlide
+    tile_x: int,
+    tile_y: int,
+    contour: List,
+    scale_x: float,
+    scale_y: float,
 ) -> np.ndarray:
     """
-    Transform a contour from slide coordinates to tile coordinates.
-    
+    Transform a contour from slide coordinates (level 0) to tile coordinates.
+
     Args:
-        level: Current zoom level
-        tile_x, tile_y: Tile position in slide coordinates
-        contour: Contour points in slide coordinates
-        slide: OpenSlide object for getting downsampling factor
-        
+        tile_x, tile_y: Tile position in slide coordinates (level 0)
+        contour: Contour points in slide coordinates (level 0)
+        scale_x, scale_y: Scale factors from slide coords to tile pixels
+
     Returns:
         Contour points in tile coordinates as numpy array
     """
     tile_contour = []
-    
+
     for point in contour:
-        point_x = point[0][0] - tile_x
-        point_y = point[0][1] - tile_y
-        
-        if level > 0:
-            downsample = slide.level_downsamples[level]
-            point_x = int(point_x / downsample)
-            point_y = int(point_y / downsample)
-        
-        tile_contour.append([[point_x, point_y]])
-    
+        point_x = (point[0][0] - tile_x) * scale_x
+        point_y = (point[0][1] - tile_y) * scale_y
+        tile_contour.append([[int(point_x), int(point_y)]])
+
     return np.array(tile_contour)
 
 
@@ -258,23 +252,31 @@ def create_app(
         try:
             # Get the base tile
             tile_img = np.array(app.slides[slug].get_tile(level, (col, row)))
-            (tile_x, tile_y), _, (tile_w, tile_h) = app.slides[slug].get_tile_coordinates(level, (col, row))
+            (tile_x, tile_y), slide_level, (tile_w, tile_h) = app.slides[slug].get_tile_coordinates(level, (col, row))
+            z_w, z_h = app.slides[slug].get_tile_dimensions(level, (col, row))
             
+            # Calculate tile dimensions in slide level 0 coordinates
+            if slide_level > 0:
+                coeff = slide.level_downsamples[slide_level]
+                sized_tile_w = int(tile_w * coeff)
+                sized_tile_h = int(tile_h * coeff)
+            else:
+                sized_tile_w, sized_tile_h = tile_w, tile_h
+
+            scale_x = (z_w / sized_tile_w) if sized_tile_w else 1.0
+            scale_y = (z_h / sized_tile_h) if sized_tile_h else 1.0
+
             # Draw any overlapping contours
             for _, drawing_stats in app.drawing_list.items():
                 (_, _), rect, contour = drawing_stats
-                
-                # Calculate tile dimensions at current level
-                if level > 0:
-                    coeff = slide.level_downsamples[level]
-                    sized_tile_w = int(tile_w * coeff)
-                    sized_tile_h = int(tile_h * coeff)
-                else:
-                    sized_tile_w, sized_tile_h = tile_w, tile_h
-                
+
                 # Check if contour intersects this tile
-                if _check_contour_intersects_tile(sized_tile_w, sized_tile_h, tile_x, tile_y, rect[0]):
-                    tile_contour = _transform_contour_to_tile(level, tile_x, tile_y, contour, slide)
+                if _check_contour_intersects_tile(
+                    sized_tile_w, sized_tile_h, tile_x, tile_y, rect[0]
+                ):
+                    tile_contour = _transform_contour_to_tile(
+                        tile_x, tile_y, contour, scale_x, scale_y
+                    )
                     cv2.drawContours(tile_img, [tile_contour], -1, (255, 0, 0), -1)
             
             tile_pil = PIL.Image.fromarray(np.uint8(tile_img))

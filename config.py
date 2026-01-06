@@ -56,6 +56,16 @@ WEB_ATYPICAL_CLASS_INDEX = 2
 # Speed optimizations for web overlays
 WEB_FAST_TILES = True           # If true, run a single forward pass per tile (fast, lower fidelity)
 WEB_TILE_CACHE_SIZE = 256       # LRU cache size for rendered tiles
+# If true, scan all tissue regions instead of sampling
+WEB_SCAN_ALL_TISSUE = False
+# Console progress cadence (print every N regions/probes)
+WEB_PROGRESS_EVERY = 25
+# Skip probes with low estimated tissue fraction
+WEB_MIN_TISSUE_FRACTION = 0.05
+# Grayscale threshold for tissue detection (lower is darker tissue)
+WEB_TISSUE_GRAY_THRESHOLD = 220
+# Optional local PyTorch batch size override (None/<=0 uses auto)
+WEB_PT_BATCH_SIZE = 0
 #endregion
 
 def load_config():
@@ -96,7 +106,7 @@ def _load_ini_config(config_file):
 def _update_globals_from_dict(config):
     global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
     global FRAMEWORK, DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
-    global SLIDE_DIR, UNET_PRED_MODE, USE_TTA, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE, WEB_ATYPICAL_CLASS_INDEX
+    global SLIDE_DIR, UNET_PRED_MODE, USE_TTA, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE, WEB_ATYPICAL_CLASS_INDEX, WEB_SCAN_ALL_TISSUE, WEB_PROGRESS_EVERY, WEB_MIN_TISSUE_FRACTION, WEB_TISSUE_GRAY_THRESHOLD, WEB_PT_BATCH_SIZE
     
     general = config.get('general', {})
     if 'current_slide' in general:
@@ -159,6 +169,16 @@ def _update_globals_from_dict(config):
         WEB_FAST_TILES = bool(web['fast_tiles'])
     if 'tile_cache_size' in web:
         WEB_TILE_CACHE_SIZE = int(web['tile_cache_size'])
+    if 'scan_all_tissue' in web:
+        WEB_SCAN_ALL_TISSUE = bool(web['scan_all_tissue'])
+    if 'progress_every' in web:
+        WEB_PROGRESS_EVERY = int(web['progress_every'])
+    if 'min_tissue_fraction' in web:
+        WEB_MIN_TISSUE_FRACTION = float(web['min_tissue_fraction'])
+    if 'tissue_gray_threshold' in web:
+        WEB_TISSUE_GRAY_THRESHOLD = int(web['tissue_gray_threshold'])
+    if 'pt_batch_size' in web:
+        WEB_PT_BATCH_SIZE = int(web['pt_batch_size'])
 
 # Load configuration
 load_config()

@@ -100,11 +100,20 @@ def get_slide_rois(slide_path: str) -> Dict[str, Any]:
     
     print(f"Found {len(tissue_regions_scaled)} tissue regions")
     
+    scan_all_tissue = bool(getattr(config, 'WEB_SCAN_ALL_TISSUE', False))
+    progress_every = int(getattr(config, 'WEB_PROGRESS_EVERY', 25))
+    if scan_all_tissue:
+        print("Scanning all tissue regions for probes")
+    else:
+        print("Sampling tissue regions for probes")
+
     # Sample and extract probe images from tissue regions
     probe_images, probe_coords = _extract_probes(
-        slide, 
-        tissue_regions_scaled, 
-        downsample_factor
+        slide,
+        tissue_regions_scaled,
+        downsample_factor,
+        scan_all=scan_all_tissue,
+        progress_every=progress_every,
     )
     
     print(f"Extracted {len(probe_images)} probe images")
@@ -176,7 +185,9 @@ def _extract_probes(
     tissue_regions: List[List[int]],
     downsample_factor: float,
     num_samples: int = 1,
-    chunk_size: int = 1024
+    chunk_size: int = 1024,
+    scan_all: bool = False,
+    progress_every: int = 25,
 ) -> Tuple[List[np.ndarray], List[Tuple[int, int]]]:
     """
     Extract probe images from tissue regions for inference.
@@ -194,13 +205,24 @@ def _extract_probes(
     probe_images = []
     probe_coords = []
     
-    # Sample random tissue regions
-    sample_regions = random.sample(
-        tissue_regions, 
-        min(num_samples, len(tissue_regions))
-    )
+    # Sample random tissue regions or scan all
+    if scan_all:
+        sample_regions = list(tissue_regions)
+    else:
+        sample_regions = random.sample(
+            tissue_regions,
+            min(num_samples, len(tissue_regions)),
+        )
+
+    total_regions = len(sample_regions)
+    total_probes = 0
+    skipped_probes = 0
+    min_tissue_fraction = float(getattr(config, 'WEB_MIN_TISSUE_FRACTION', 0.0))
+    tissue_gray_threshold = int(getattr(config, 'WEB_TISSUE_GRAY_THRESHOLD', 220))
     
-    for region in sample_regions:
+    for idx, region in enumerate(sample_regions, start=1):
+        if progress_every > 0 and (idx == 1 or idx % progress_every == 0 or idx == total_regions):
+            print(f"Scanning tissue region {idx}/{total_regions} at ({region[0]}, {region[1]})")
         # Calculate probe dimensions
         probe_w = int(25 * downsample_factor)
         probe_h = int(25 * downsample_factor)
@@ -213,10 +235,24 @@ def _extract_probes(
             for y in range(region[1], region[1] + probe_h, chunk_size):
                 probe = slide.read_region((x, y), 0, (chunk_size, chunk_size))
                 probe_rgb = cv2.cvtColor(np.array(probe), cv2.COLOR_RGBA2RGB)
-                
+
+                if min_tissue_fraction > 0:
+                    tissue_fraction = _estimate_tissue_fraction(
+                        probe_rgb, tissue_gray_threshold
+                    )
+                    if tissue_fraction < min_tissue_fraction:
+                        skipped_probes += 1
+                        continue
+
                 probe_images.append(probe_rgb)
                 probe_coords.append((x, y))
-    
+                total_probes += 1
+                if progress_every > 0 and total_probes % progress_every == 0:
+                    print(f"Extracted {total_probes} probes so far")
+
+    if min_tissue_fraction > 0:
+        print(f"Skipped {skipped_probes} low-tissue probes")
+
     return probe_images, probe_coords
 
 
@@ -269,24 +305,21 @@ def _run_pytorch_inference(probe_images: List[np.ndarray]) -> Optional[List[np.n
         pathology_maps = []
         use_fast_mode = getattr(config, 'WEB_FAST_TILES', True)
         
-        for probe in probe_images:
-            if use_fast_mode:
-                # Downscale for faster inference
-                h, w = probe.shape[:2]
-                probe_small = cv2.resize(probe, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
-                pm_small = inference_pt.apply_model_raw_pytorch(
-                    probe_small, model, 
-                    classes=config.CLASSES, 
-                    shapes=config.IMAGE_SHAPE
-                )
-                pm = cv2.resize(pm_small, (w, h), interpolation=cv2.INTER_LINEAR)
-            else:
-                pm = inference_pt.apply_model_raw_pytorch(
-                    probe, model,
-                    classes=config.CLASSES,
-                    shapes=config.IMAGE_SHAPE
-                )
+        progress_every = int(getattr(config, 'WEB_PROGRESS_EVERY', 25))
+        total_probes = len(probe_images)
+        batch_size = int(getattr(config, 'WEB_PT_BATCH_SIZE', 0))
+        if batch_size <= 0:
+            batch_size = None
+        for idx, probe in enumerate(probe_images, start=1):
+            pm = inference_pt.apply_model_raw_pytorch(
+                probe, model,
+                classes=config.CLASSES,
+                shapes=config.IMAGE_SHAPE,
+                batch_size=batch_size,
+            )
             pathology_maps.append(pm)
+            if progress_every > 0 and (idx == 1 or idx % progress_every == 0 or idx == total_probes):
+                print(f"Local inference progress: {idx}/{total_probes}")
         
         return pathology_maps
         
@@ -317,6 +350,11 @@ def _run_remote_inference(probe_images: List[np.ndarray]) -> List[np.ndarray]:
         
         endpoint = getattr(config, 'ENDPOINT_URL', 'http://51.250.28.160:7500')
         
+        total_probes = len(probe_images)
+        if total_probes == 0:
+            return []
+        print(f"Running remote inference on {total_probes} probes...")
+
         pathology_maps = tfs.apply_segmentation_model_parallel(
             probe_images,
             endpoint_url=endpoint,
@@ -334,6 +372,21 @@ def _run_remote_inference(probe_images: List[np.ndarray]) -> List[np.ndarray]:
     except Exception as e:
         print(f"Remote inference failed: {e}")
         return []
+
+
+def _estimate_tissue_fraction(
+    image_rgb: np.ndarray,
+    gray_threshold: int,
+    sample_size: int = 128
+) -> float:
+    """
+    Estimate tissue fraction in an RGB image by counting dark pixels.
+    """
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+    if max(gray.shape[:2]) > sample_size:
+        gray = cv2.resize(gray, (sample_size, sample_size), interpolation=cv2.INTER_AREA)
+    tissue = gray < gray_threshold
+    return float(np.count_nonzero(tissue)) / float(tissue.size)
 
 
 # =============================================================================
@@ -355,6 +408,7 @@ def _extract_contours(
         Dictionary mapping ROI names to overlay data
     """
     results = {}
+    roi_index = 0
     
     conf_threshold = float(getattr(config, 'WEB_CONF_THRESHOLD', 0.5))
     class_index = int(getattr(config, 'WEB_ATYPICAL_CLASS_INDEX', 2))
@@ -385,10 +439,12 @@ def _extract_contours(
         
         # Shift contours to slide coordinates and add to results
         shift = probe_coords[idx]
-        for cnt in filtered_contours:
+        for cnt_idx, cnt in enumerate(filtered_contours):
             shifted = [point + shift for point in cnt]
             rect = cv2.boundingRect(np.array(shifted))
-            results[f'cnt_{idx}'] = [
+            roi_index += 1
+            key = f'cnt_{idx}_{cnt_idx}_{roi_index}'
+            results[key] = [
                 shift,
                 [rect],
                 [point.tolist() for point in shifted]
