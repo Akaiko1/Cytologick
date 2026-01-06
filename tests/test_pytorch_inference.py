@@ -18,7 +18,7 @@ from .conftest import skip_if_no_pytorch
 class TestPyTorchInference:
     """Test PyTorch inference pipeline components."""
 
-    def test_image_to_tensor_conversion(self):
+    def test_image_to_tensor_conversion(self, cfg):
         """Test image preprocessing for PyTorch inference."""
         from clogic.inference_pytorch import image_to_tensor_pytorch
         
@@ -26,12 +26,12 @@ class TestPyTorchInference:
         image = np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
         
         # Test with batch dimension
-        tensor_with_batch = image_to_tensor_pytorch(image, add_dim=True)
+        tensor_with_batch = image_to_tensor_pytorch(cfg, image, add_dim=True)
         assert tensor_with_batch.shape == (1, 3, 128, 128)
         assert tensor_with_batch.dtype == torch.float32
         
         # Test without batch dimension
-        tensor_without_batch = image_to_tensor_pytorch(image, add_dim=False)
+        tensor_without_batch = image_to_tensor_pytorch(cfg, image, add_dim=False)
         assert tensor_without_batch.shape == (3, 128, 128)
         assert tensor_without_batch.dtype == torch.float32
         
@@ -56,7 +56,7 @@ class TestPyTorchInference:
         assert mask.min() >= 0
         assert mask.max() < num_classes
 
-    def test_pytorch_model_loading(self, temp_dir):
+    def test_pytorch_model_loading(self, cfg, temp_dir):
         """Test PyTorch model loading functionality."""
         from clogic.inference_pytorch import load_pytorch_model
         import segmentation_models_pytorch as smp
@@ -73,7 +73,7 @@ class TestPyTorchInference:
         torch.save(model.state_dict(), model_path)
         
         # Test loading
-        loaded_model = load_pytorch_model(model_path, num_classes=3)
+        loaded_model = load_pytorch_model(cfg, model_path, num_classes=3)
         
         assert loaded_model is not None
         assert isinstance(loaded_model, torch.nn.Module)
@@ -84,7 +84,7 @@ class TestPyTorchInference:
             output = loaded_model(test_input)
             assert output.shape == (1, 3, 128, 128)
 
-    def test_sliding_window_inference(self, pytorch_device):
+    def test_sliding_window_inference(self, cfg, pytorch_device):
         """Test sliding window inference on larger images."""
         from clogic.inference_pytorch import apply_model_pytorch
         import segmentation_models_pytorch as smp
@@ -103,14 +103,14 @@ class TestPyTorchInference:
         
         # Apply model with sliding window
         with torch.no_grad():
-            pathology_map = apply_model_pytorch(test_image, model, shapes=(128, 128))
+            pathology_map = apply_model_pytorch(cfg, test_image, model, shapes=(128, 128))
         
         assert pathology_map.shape == test_image.shape[:2]
         assert pathology_map.dtype in [np.int64, np.int32, np.uint8]
         assert pathology_map.min() >= 0
         assert pathology_map.max() < 3
 
-    def test_raw_probability_inference(self, pytorch_device):
+    def test_raw_probability_inference(self, cfg, pytorch_device):
         """Test inference returning raw probability maps."""
         from clogic.inference_pytorch import apply_model_raw_pytorch
         import segmentation_models_pytorch as smp
@@ -129,7 +129,7 @@ class TestPyTorchInference:
         
         # Apply model for raw probabilities
         with torch.no_grad():
-            prob_map = apply_model_raw_pytorch(test_image, model, classes=3, shapes=(128, 128))
+            prob_map = apply_model_raw_pytorch(cfg, test_image, model, classes=3, shapes=(128, 128))
         
         assert prob_map.shape == (*test_image.shape[:2], 3)
         assert prob_map.dtype == np.float32
@@ -138,7 +138,7 @@ class TestPyTorchInference:
         prob_sums = prob_map.sum(axis=2)
         assert np.allclose(prob_sums, 1.0, atol=1e-5)
 
-    def test_smooth_windowing_inference(self, pytorch_device):
+    def test_smooth_windowing_inference(self, cfg, pytorch_device):
         """Test smooth windowing inference (placeholder implementation)."""
         from clogic.inference_pytorch import apply_model_smooth_pytorch
         import segmentation_models_pytorch as smp
@@ -157,12 +157,12 @@ class TestPyTorchInference:
         
         # Apply smooth windowing
         with torch.no_grad():
-            pathology_map = apply_model_smooth_pytorch(test_image, model, shape=128)
+            pathology_map = apply_model_smooth_pytorch(cfg, test_image, model, shape=128)
         
         assert pathology_map.shape == test_image.shape[:2]
         assert pathology_map.dtype in [np.int64, np.int32, np.uint8]
 
-    def test_pytorch_tensorflow_output_compatibility(self, pytorch_device):
+    def test_pytorch_tensorflow_output_compatibility(self, cfg, pytorch_device):
         """Test that PyTorch and TensorFlow inference produce similar outputs."""
         import segmentation_models_pytorch as smp
         
@@ -181,7 +181,7 @@ class TestPyTorchInference:
         # Test PyTorch inference
         from clogic.inference_pytorch import apply_model_pytorch
         with torch.no_grad():
-            pytorch_result = apply_model_pytorch(test_image, pytorch_model, shapes=(128, 128))
+            pytorch_result = apply_model_pytorch(cfg, test_image, pytorch_model, shapes=(128, 128))
         
         # Check output format compatibility
         assert isinstance(pytorch_result, np.ndarray)
@@ -190,7 +190,7 @@ class TestPyTorchInference:
         assert pytorch_result.min() >= 0
         assert pytorch_result.max() < 3
 
-    def test_inference_with_different_image_sizes(self, pytorch_device):
+    def test_inference_with_different_image_sizes(self, cfg, pytorch_device):
         """Test inference works with various image sizes."""
         from clogic.inference_pytorch import apply_model_pytorch
         import segmentation_models_pytorch as smp
@@ -211,13 +211,13 @@ class TestPyTorchInference:
             test_image = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
             
             with torch.no_grad():
-                result = apply_model_pytorch(test_image, model, shapes=(128, 128))
+                result = apply_model_pytorch(cfg, test_image, model, shapes=(128, 128))
             
             assert result.shape == (height, width)
             assert result.min() >= 0
             assert result.max() < 3
 
-    def test_inference_error_handling(self, pytorch_device):
+    def test_inference_error_handling(self, cfg, pytorch_device):
         """Test inference error handling for edge cases."""
         from clogic.inference_pytorch import apply_model_pytorch, load_pytorch_model
         import segmentation_models_pytorch as smp
@@ -226,13 +226,13 @@ class TestPyTorchInference:
         test_image = np.random.randint(0, 255, (128, 128, 3), dtype=np.uint8)
         
         with pytest.raises((AttributeError, TypeError)):
-            apply_model_pytorch(test_image, None, shapes=(128, 128))
+            apply_model_pytorch(cfg, test_image, None, shapes=(128, 128))
         
         # Test loading non-existent model
         with pytest.raises((FileNotFoundError, RuntimeError)):
-            load_pytorch_model('/non/existent/path.pth', num_classes=3)
+            load_pytorch_model(cfg, '/non/existent/path.pth', num_classes=3)
 
-    def test_device_handling_in_inference(self, pytorch_device):
+    def test_device_handling_in_inference(self, cfg, pytorch_device):
         """Test proper device handling during inference."""
         from clogic.inference_pytorch import apply_model_pytorch
         import segmentation_models_pytorch as smp
@@ -251,13 +251,13 @@ class TestPyTorchInference:
         test_image = np.random.randint(0, 255, (128, 128, 3), dtype=np.uint8)
         
         with torch.no_grad():
-            result = apply_model_pytorch(test_image, model, shapes=(128, 128))
+            result = apply_model_pytorch(cfg, test_image, model, shapes=(128, 128))
         
         # Result should be on CPU as numpy array
         assert isinstance(result, np.ndarray)
         assert result.shape == test_image.shape[:2]
 
-    def test_memory_efficiency(self, pytorch_device):
+    def test_memory_efficiency(self, cfg, pytorch_device):
         """Test memory efficiency during inference."""
         from clogic.inference_pytorch import apply_model_pytorch
         import segmentation_models_pytorch as smp
@@ -276,7 +276,7 @@ class TestPyTorchInference:
         
         # This should not cause memory issues
         with torch.no_grad():
-            result = apply_model_pytorch(large_image, model, shapes=(128, 128))
+            result = apply_model_pytorch(cfg, large_image, model, shapes=(128, 128))
         
         assert result.shape == large_image.shape[:2]
         

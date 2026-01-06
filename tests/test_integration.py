@@ -17,7 +17,7 @@ from .conftest import skip_if_no_pytorch
 class TestPyTorchIntegration:
     """Integration tests for complete PyTorch pipeline."""
 
-    def test_end_to_end_pytorch_pipeline(self, sample_dataset_files, temp_dir):
+    def test_end_to_end_pytorch_pipeline(self, cfg, sample_dataset_files, temp_dir):
         """Test complete pipeline from dataset to inference."""
         from clogic.ai_pytorch import get_datasets, CombinedLoss, iou_score
         from clogic.inference_pytorch import load_pytorch_model
@@ -26,6 +26,7 @@ class TestPyTorchIntegration:
         
         # 1. Test dataset creation
         train_dataset, val_dataset, total_samples = get_datasets(
+            cfg,
             sample_dataset_files['images_dir'],
             sample_dataset_files['masks_dir'],
             train_split=0.8
@@ -77,7 +78,7 @@ class TestPyTorchIntegration:
         model_path = os.path.join(temp_dir, 'integration_test_model.pth')
         torch.save(model.state_dict(), model_path)
         
-        loaded_model = load_pytorch_model(model_path, num_classes=3)
+        loaded_model = load_pytorch_model(cfg, model_path, num_classes=3)
         assert loaded_model is not None
         
         # 7. Test loaded model inference
@@ -85,8 +86,8 @@ class TestPyTorchIntegration:
             loaded_outputs = loaded_model(batch_images)
             assert loaded_outputs.shape == test_outputs.shape
 
-    def test_pytorch_tensorflow_output_equivalence(self, sample_image):
-        """Test that PyTorch and TensorFlow implementations produce similar outputs."""
+    def test_pytorch_tensorflow_output_equivalence(self, cfg, sample_image):
+        """Sanity-check PyTorch inference tensor path is deterministic."""
         import torch
         import segmentation_models_pytorch as smp
         
@@ -104,7 +105,7 @@ class TestPyTorchIntegration:
         from clogic.inference_pytorch import image_to_tensor_pytorch
         
         # Convert image to tensor
-        image_tensor = image_to_tensor_pytorch(sample_image, add_dim=True)
+        image_tensor = image_to_tensor_pytorch(cfg, sample_image, add_dim=True)
         
         # Get PyTorch output
         with torch.no_grad():
@@ -140,17 +141,12 @@ class TestPyTorchIntegration:
         with open(config_path, 'w') as f:
             yaml.dump(config_data, f)
         
-        # Test config loading
-        with patch('os.path.exists') as mock_exists:
-            mock_exists.return_value = True
-            
-            import config
-            config._load_yaml_config(config_path)
-            
-            assert config.FRAMEWORK == 'pytorch'
-            assert config.CLASSES == 3
+        from config import load_config
+        cfg_loaded = load_config(config_path)
+        assert cfg_loaded.FRAMEWORK.lower() == 'pytorch'
+        assert cfg_loaded.CLASSES == 3
 
-    def test_model_compatibility_across_frameworks(self, temp_dir):
+    def test_model_compatibility_across_frameworks(self, cfg, temp_dir):
         """Test that models trained with different frameworks are properly handled."""
         import torch
         import segmentation_models_pytorch as smp
@@ -169,7 +165,7 @@ class TestPyTorchIntegration:
         
         # Test that PyTorch model can be loaded
         from clogic.inference_pytorch import load_pytorch_model
-        loaded_pytorch = load_pytorch_model(pytorch_path, num_classes=3)
+        loaded_pytorch = load_pytorch_model(cfg, pytorch_path, num_classes=3)
         assert loaded_pytorch is not None
         
         # Test inference with loaded model
@@ -178,41 +174,36 @@ class TestPyTorchIntegration:
             output = loaded_pytorch(test_input)
             assert output.shape == (1, 3, 128, 128)
 
-    def test_training_script_integration(self, temp_dir, sample_dataset_files):
+    def test_training_script_integration(self, cfg, temp_dir, sample_dataset_files):
         """Test training scripts work with PyTorch backend."""
         from unittest.mock import patch
         
-        # Mock config to use test dataset
-        with patch('config.FRAMEWORK', 'pytorch'), \
-             patch('config.DATASET_FOLDER', temp_dir), \
-             patch('config.IMAGES_FOLDER', 'images'), \
-             patch('config.MASKS_FOLDER', 'masks'), \
-             patch('config.CLASSES', 3):
-            
-            # Test that PyTorch training function can be imported and called
-            from clogic.ai_pytorch import train_new_model_pytorch
-            import torch
-            
-            # Mock heavy training parts
-            with patch('torch.utils.data.DataLoader') as mock_loader, \
-                 patch('torch.save') as mock_save:
-                
-                # Mock data loader to return minimal data
-                mock_batch = (torch.randn(1, 3, 128, 128), torch.randint(0, 3, (1, 128, 128)))
-                mock_loader.return_value.__iter__.return_value = [mock_batch]
-                mock_loader.return_value.__len__.return_value = 1
-                
-                try:
-                    # This should not crash
-                    train_new_model_pytorch(
-                        os.path.join(temp_dir, 'test_model'),
-                        output_classes=3,
-                        epochs=1,
-                        batch_size=1
-                    )
-                except Exception as e:
-                    # Training might fail due to mocking, but structure should be sound
-                    assert "CUDA" not in str(e)  # Should not be CUDA-related errors
+        cfg.FRAMEWORK = 'pytorch'
+        cfg.DATASET_FOLDER = temp_dir
+        cfg.IMAGES_FOLDER = 'images'
+        cfg.MASKS_FOLDER = 'masks'
+        cfg.CLASSES = 3
+
+        from clogic.ai_pytorch import train_new_model_pytorch
+        import torch
+
+        with patch('torch.utils.data.DataLoader') as mock_loader, \
+             patch('torch.save') as mock_save:
+
+            mock_batch = (torch.randn(1, 3, 128, 128), torch.randint(0, 3, (1, 128, 128)))
+            mock_loader.return_value.__iter__.return_value = [mock_batch]
+            mock_loader.return_value.__len__.return_value = 1
+
+            try:
+                train_new_model_pytorch(
+                    cfg,
+                    os.path.join(temp_dir, 'test_model'),
+                    output_classes=3,
+                    epochs=1,
+                    batch_size=1
+                )
+            except Exception as e:
+                assert "CUDA" not in str(e)
 
     @pytest.mark.skip(reason="GUI tests require display environment - skip for now")
     def test_gui_integration_with_pytorch(self, temp_dir):
@@ -253,7 +244,7 @@ class TestPyTorchIntegration:
                     viewer = Viewer()
                     assert viewer.model is not None
 
-    def test_inference_pipeline_integration(self, temp_dir, sample_image):
+    def test_inference_pipeline_integration(self, cfg, temp_dir, sample_image):
         """Test complete inference pipeline with PyTorch."""
         import torch
         import segmentation_models_pytorch as smp
@@ -271,18 +262,18 @@ class TestPyTorchIntegration:
         torch.save(model.state_dict(), model_path)
         
         # Load model through inference pipeline
-        loaded_model = load_pytorch_model(model_path, num_classes=3)
+        loaded_model = load_pytorch_model(cfg, model_path, num_classes=3)
         
         # Test inference on sample image
         with torch.no_grad():
-            result = apply_model_pytorch(sample_image, loaded_model, shapes=(128, 128))
+            result = apply_model_pytorch(cfg, sample_image, loaded_model, shapes=(128, 128))
         
         assert result.shape == sample_image.shape[:2]
         assert result.dtype in [np.int64, np.int32, np.uint8]
         assert result.min() >= 0
         assert result.max() < 3
 
-    def test_memory_efficiency_integration(self):
+    def test_memory_efficiency_integration(self, cfg):
         """Test memory efficiency across the pipeline."""
         import torch
         import segmentation_models_pytorch as smp
@@ -302,7 +293,7 @@ class TestPyTorchIntegration:
             
             with torch.no_grad():
                 from clogic.inference_pytorch import apply_model_pytorch
-                result = apply_model_pytorch(large_image, model, shapes=(128, 128))
+                result = apply_model_pytorch(cfg, large_image, model, shapes=(128, 128))
             
             assert result.shape == (512, 512)
         
@@ -310,7 +301,7 @@ class TestPyTorchIntegration:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def test_error_propagation_integration(self, temp_dir):
+    def test_error_propagation_integration(self, cfg, temp_dir):
         """Test error handling across the integrated pipeline."""
         # Test with invalid model path
         from clogic.inference_pytorch import load_pytorch_model
@@ -318,7 +309,7 @@ class TestPyTorchIntegration:
         import pickle
         
         with pytest.raises((FileNotFoundError, RuntimeError)):
-            load_pytorch_model('/nonexistent/path.pth', num_classes=3)
+            load_pytorch_model(cfg, '/nonexistent/path.pth', num_classes=3)
         
         # Test with corrupted model file
         corrupted_path = os.path.join(temp_dir, 'corrupted.pth')
@@ -326,4 +317,4 @@ class TestPyTorchIntegration:
             f.write("not a model file")
         
         with pytest.raises((RuntimeError, pickle.UnpicklingError, torch.serialization.pickle.UnpicklingError)):
-            load_pytorch_model(corrupted_path, num_classes=3)
+            load_pytorch_model(cfg, corrupted_path, num_classes=3)

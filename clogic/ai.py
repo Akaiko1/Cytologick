@@ -23,7 +23,7 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 
-import config
+from config import Config, load_config
 
 # Configure segmentation models framework
 os.environ['SM_FRAMEWORK'] = 'tf.keras'
@@ -279,9 +279,11 @@ def train_new_model(model_path: str, output_classes: int, epochs: int, batch_siz
         - Monitors IoU score and F-score metrics during training
         - Datasets are loaded from config.DATASET_FOLDER structure
     """
+    cfg = load_config()
+
     # Construct dataset paths from configuration
-    images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
-    masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
+    images_path = os.path.join(cfg.DATASET_FOLDER, cfg.IMAGES_FOLDER)
+    masks_path = os.path.join(cfg.DATASET_FOLDER, cfg.MASKS_FOLDER)
 
     # Load and prepare datasets
     datapoints_total, train_images, test_images = get_dataset(images_path, masks_path)
@@ -354,9 +356,11 @@ def train_current_model(model_path: str, epochs: int, batch_size: int = 64, lr: 
         - Includes model checkpointing to save best weights during training
         - Datasets are loaded from config.DATASET_FOLDER structure
     """
+    cfg = load_config()
+
     # Construct dataset paths from configuration
-    images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
-    masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
+    images_path = os.path.join(cfg.DATASET_FOLDER, cfg.IMAGES_FOLDER)
+    masks_path = os.path.join(cfg.DATASET_FOLDER, cfg.MASKS_FOLDER)
 
     # Load and prepare datasets
     datapoints_total, train_images, test_images = get_dataset(images_path, masks_path)

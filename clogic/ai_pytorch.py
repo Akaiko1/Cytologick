@@ -7,7 +7,9 @@ maintaining identical functionality for U-Net model training and inference.
 
 import os
 import random
+import sys
 from contextlib import nullcontext
+from functools import partial
 from typing import Tuple, Optional, Union
 import albumentations as A
 import inspect
@@ -20,11 +22,13 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import Dataset, DataLoader
 import segmentation_models_pytorch as smp
 from PIL import Image
 
-import config
+from config import Config
+from clogic.preprocessing_pytorch import preprocess_rgb_image
 
 # Global configurations
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -35,6 +39,26 @@ try:
 except Exception:  # pragma: no cover
     def tqdm(x, *args, **kwargs):
         return x
+
+
+def _identity_mask(x, **kwargs):
+    return x
+
+
+def _preprocess_image(
+    img,
+    *,
+    use_encoder_preprocessing: bool,
+    encoder_name: str,
+    encoder_weights,
+    **kwargs,
+):
+    return preprocess_rgb_image(
+        img,
+        use_encoder_preprocessing=use_encoder_preprocessing,
+        encoder_name=encoder_name,
+        encoder_weights=encoder_weights,
+    )
 
 
 def set_seed(seed: int = 42):
@@ -127,7 +151,7 @@ def _build_gauss_noise():
     return A.NoOp(p=0.0)
 
 
-def get_train_transforms():
+def get_train_transforms(cfg: Config):
     """
     Get training transforms that match TensorFlow augmentations.
     
@@ -135,9 +159,10 @@ def get_train_transforms():
         Albumentations transform pipeline for training
     """
     noise_tf = _build_gauss_noise()
+    h, w = int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1])
 
     return A.Compose([
-        A.Resize(128, 128),
+        A.Resize(h, w),
         A.OneOf([
             A.Rotate(limit=360, p=0.5),
             A.Affine(
@@ -151,21 +176,39 @@ def get_train_transforms():
             noise_tf,
             A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.25, p=0.5),
         ], p=0.5),
-        A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
+        A.Lambda(
+            image=partial(
+                _preprocess_image,
+                use_encoder_preprocessing=bool(cfg.PT_USE_ENCODER_PREPROCESSING),
+                encoder_name=str(cfg.PT_ENCODER_NAME),
+                encoder_weights=cfg.PT_ENCODER_WEIGHTS,
+            ),
+            mask=_identity_mask,
+        ),
         ToTensorV2(),
     ])
 
 
-def get_val_transforms():
+def get_val_transforms(cfg: Config):
     """
     Get validation transforms (no augmentation).
     
     Returns:
         Albumentations transform pipeline for validation
     """
+    h, w = int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1])
+
     return A.Compose([
-        A.Resize(128, 128),
-        A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
+        A.Resize(h, w),
+        A.Lambda(
+            image=partial(
+                _preprocess_image,
+                use_encoder_preprocessing=bool(cfg.PT_USE_ENCODER_PREPROCESSING),
+                encoder_name=str(cfg.PT_ENCODER_NAME),
+                encoder_weights=cfg.PT_ENCODER_WEIGHTS,
+            ),
+            mask=_identity_mask,
+        ),
         ToTensorV2(),
     ])
 
@@ -278,7 +321,7 @@ def f1_score(y_pred, y_true, num_classes=3):
     return np.mean(f1_scores)
 
 
-def get_datasets(images_path: str, masks_path: str, train_split: float = 0.8):
+def get_datasets(cfg: Config, images_path: str, masks_path: str, train_split: float = 0.8):
     """
     Create PyTorch datasets from image and mask directories.
     
@@ -302,8 +345,8 @@ def get_datasets(images_path: str, masks_path: str, train_split: float = 0.8):
     val_indices = list(range(train_size, total_samples))
     
     # Create datasets with transforms
-    train_dataset = CytologyDataset(images_path, masks_path, transform=get_train_transforms())
-    val_dataset = CytologyDataset(images_path, masks_path, transform=get_val_transforms())
+    train_dataset = CytologyDataset(images_path, masks_path, transform=get_train_transforms(cfg))
+    val_dataset = CytologyDataset(images_path, masks_path, transform=get_val_transforms(cfg))
     
     # Create subset datasets
     train_subset = torch.utils.data.Subset(train_dataset, train_indices)
@@ -312,12 +355,26 @@ def get_datasets(images_path: str, masks_path: str, train_split: float = 0.8):
     return train_subset, val_subset, total_samples
 
 
-def _train_model_loop(model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx, 
-                      epochs, model_path, output_classes_metrics):
+def _train_model_loop(
+    cfg: Config,
+    model,
+    train_loader,
+    val_loader,
+    criterion,
+    optimizer,
+    scheduler,
+    scaler,
+    amp_ctx,
+    epochs,
+    model_path,
+    output_classes_metrics,
+    save_base_path: str | None = None,
+):
     """
     Common training loop for PyTorch models.
     """
     best_iou = 0.0
+    base_path = os.path.splitext(save_base_path or model_path)[0]
     
     for epoch in range(epochs):
         # Training phase
@@ -329,7 +386,7 @@ def _train_model_loop(model, train_loader, val_loader, criterion, optimizer, sch
             images = images.to(DEVICE).float()
             masks = masks.to(DEVICE).long()
             
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             
             # Apply Mixup
             inputs, targets_a, targets_b, lam = mixup_data(images, masks, alpha=0.4, device=DEVICE)
@@ -339,12 +396,18 @@ def _train_model_loop(model, train_loader, val_loader, criterion, optimizer, sch
                 # Compute loss for both targets and mix
                 loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
                 
+            clip_norm = float(getattr(cfg, 'PT_GRAD_CLIP_NORM', 0.0) or 0.0)
             if scaler is not None:
                 scaler.scale(loss).backward()
+                if clip_norm > 0:
+                    scaler.unscale_(optimizer)
+                    clip_grad_norm_(model.parameters(), max_norm=clip_norm)
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss.backward()
+                if clip_norm > 0:
+                    clip_grad_norm_(model.parameters(), max_norm=clip_norm)
                 optimizer.step()
             
             running_loss += loss.item()
@@ -352,7 +415,7 @@ def _train_model_loop(model, train_loader, val_loader, criterion, optimizer, sch
                 # Handle both scalar and tensor loss for display
                 loss_val = loss.item() if isinstance(loss, torch.Tensor) else loss
                 avg_loss = running_loss / (batch_idx + 1)
-                lr_now = optimizer.param_groups[0]['lr']
+                lr_now = max((pg.get('lr', 0.0) for pg in optimizer.param_groups), default=0.0)
                 pbar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr_now:.3e}")
             
         avg_train_loss = running_loss / len(train_loader)
@@ -392,7 +455,6 @@ def _train_model_loop(model, train_loader, val_loader, criterion, optimizer, sch
             pass
 
         # Save weights every epoch
-        base_path = os.path.splitext(model_path)[0]
         epoch_weights = f"{base_path}_epoch{epoch+1:03d}.pth"
         torch.save(model.state_dict(), epoch_weights)
         torch.save(model.state_dict(), f"{base_path}_last.pth")
@@ -408,12 +470,60 @@ def _train_model_loop(model, train_loader, val_loader, criterion, optimizer, sch
     print(f'Training completed. Best IoU: {best_iou:.4f}')
 
 
-def _setup_training_components(model, lr, use_amp):
+def _setup_training_components(cfg: Config, model, lr, use_amp):
     """
     Setup optimizer, scheduler, criterion, and mixed precision components.
     """
     criterion = CombinedLoss()
-    optimizer = torch.optim.NAdam(model.parameters(), lr=lr)
+
+    pt_optimizer = str(getattr(cfg, 'PT_OPTIMIZER', 'adamw')).lower()
+    weight_decay = float(getattr(cfg, 'PT_WEIGHT_DECAY', 1e-4))
+    encoder_lr_mult = float(getattr(cfg, 'PT_ENCODER_LR_MULT', 0.1))
+
+    def _is_no_decay_param(param_name: str, param: torch.nn.Parameter) -> bool:
+        if param_name.endswith('.bias'):
+            return True
+        if param.ndim <= 1:
+            return True
+        lname = param_name.lower()
+        if 'bn' in lname or 'norm' in lname:
+            return True
+        return False
+
+    def _build_param_groups(base_lr: float):
+        enc_decay, enc_no_decay, other_decay, other_no_decay = [], [], [], []
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+
+            is_encoder = name.startswith('encoder.')
+            no_decay = _is_no_decay_param(name, param)
+
+            if is_encoder and no_decay:
+                enc_no_decay.append(param)
+            elif is_encoder:
+                enc_decay.append(param)
+            elif no_decay:
+                other_no_decay.append(param)
+            else:
+                other_decay.append(param)
+
+        enc_lr = base_lr * encoder_lr_mult
+        groups = []
+        if enc_decay:
+            groups.append({'params': enc_decay, 'lr': enc_lr, 'weight_decay': weight_decay})
+        if enc_no_decay:
+            groups.append({'params': enc_no_decay, 'lr': enc_lr, 'weight_decay': 0.0})
+        if other_decay:
+            groups.append({'params': other_decay, 'lr': base_lr, 'weight_decay': weight_decay})
+        if other_no_decay:
+            groups.append({'params': other_no_decay, 'lr': base_lr, 'weight_decay': 0.0})
+        return groups
+
+    if pt_optimizer == 'nadam':
+        optimizer = torch.optim.NAdam(model.parameters(), lr=lr)
+    else:
+        optimizer = torch.optim.AdamW(_build_param_groups(lr), lr=lr)
     # Note: T_mult=2 matches original train_new_model implementation
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
     
@@ -427,16 +537,25 @@ def _setup_training_components(model, lr, use_amp):
     return criterion, optimizer, scheduler, scaler, amp_ctx
 
 
-def _prepare_data_loaders(batch_size):
+def _prepare_data_loaders(cfg: Config, batch_size):
     """
     Create data loaders from config paths.
     """
-    images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
-    masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
+    images_path = os.path.join(cfg.DATASET_FOLDER, cfg.IMAGES_FOLDER)
+    masks_path = os.path.join(cfg.DATASET_FOLDER, cfg.MASKS_FOLDER)
     
-    train_dataset, val_dataset, total_samples = get_datasets(images_path, masks_path)
+    train_dataset, val_dataset, total_samples = get_datasets(cfg, images_path, masks_path)
     
-    num_workers = min(4, os.cpu_count() or 4)
+    if int(getattr(cfg, 'PT_NUM_WORKERS', -1)) >= 0:
+        num_workers = int(cfg.PT_NUM_WORKERS)
+    else:
+        # On macOS the multiprocessing start method is spawn, which often adds
+        # overhead for cv2/albumentations-heavy pipelines. Default to 0 unless
+        # explicitly configured.
+        if sys.platform == 'darwin':
+            num_workers = 0
+        else:
+            num_workers = min(4, os.cpu_count() or 4)
     pin_mem = torch.cuda.is_available()
     
     train_loader = DataLoader(
@@ -459,55 +578,88 @@ def _prepare_data_loaders(batch_size):
     return train_loader, val_loader, total_samples
 
 
-def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, batch_size: int = 64,
-                            lr: float = 0.001, use_amp: bool = True):
+def train_new_model_pytorch(
+    cfg: Config,
+    model_path: str,
+    output_classes: int,
+    epochs: int,
+    batch_size: int = 64,
+    lr: float | None = None,
+    use_amp: bool = True,
+):
     """
     Train a new U-Net model using PyTorch.
     """
     set_seed(42)
     
-    train_loader, val_loader, total_samples = _prepare_data_loaders(batch_size)
+    train_loader, val_loader, total_samples = _prepare_data_loaders(cfg, batch_size)
     print(f"Total samples: {total_samples}")
     
     model = smp.Unet(
-        encoder_name='efficientnet-b3',
-        encoder_weights='imagenet',
+        encoder_name=str(cfg.PT_ENCODER_NAME),
+        encoder_weights=cfg.PT_ENCODER_WEIGHTS,
         classes=output_classes,
         activation=None
     )
     model = model.to(DEVICE)
     
-    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(model, lr, use_amp)
+    if lr is None:
+        lr = float(getattr(cfg, 'PT_LR', 1e-3))
+    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(cfg, model, lr, use_amp)
     
     _train_model_loop(
-        model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
-        epochs, model_path, output_classes
+        cfg, model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
+        epochs, model_path, output_classes, save_base_path=model_path
     )
 
 
-def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 64, lr: float = 0.0001, use_amp: bool = True):
+def train_current_model_pytorch(
+    cfg: Config,
+    model_path: str,
+    epochs: int,
+    batch_size: int = 64,
+    lr: float | None = None,
+    use_amp: bool = True,
+    save_base_path: str | None = None,
+):
     """
     Continue training an existing PyTorch model.
     """
     set_seed(42)
     
-    train_loader, val_loader, _ = _prepare_data_loaders(batch_size)
+    train_loader, val_loader, _ = _prepare_data_loaders(cfg, batch_size)
     
     # Load existing architecture
     model = smp.Unet(
-        encoder_name='efficientnet-b3',
-        encoder_weights='imagenet',
-        classes=config.CLASSES,
+        encoder_name=str(cfg.PT_ENCODER_NAME),
+        encoder_weights=cfg.PT_ENCODER_WEIGHTS,
+        classes=cfg.CLASSES,
         activation=None
     )
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    try:
+        state = torch.load(model_path, map_location=DEVICE, weights_only=True)
+    except TypeError:  # older torch
+        state = torch.load(model_path, map_location=DEVICE)
+    model.load_state_dict(state)
     model = model.to(DEVICE)
     
-    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(model, lr, use_amp)
+    if lr is None:
+        lr = float(getattr(cfg, 'PT_LR', 1e-3))
+    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(cfg, model, lr, use_amp)
     
+    if save_base_path is None:
+        save_base_path = model_path
+        for suffix in ("_last.pth", "_best.pth", "_final.pth"):
+            if save_base_path.endswith(suffix):
+                save_base_path = save_base_path[: -len(suffix)]
+                break
+        else:
+            if save_base_path.endswith('.pth') and '_epoch' in save_base_path:
+                save_base_path = save_base_path.rsplit('_epoch', 1)[0]
+
     _train_model_loop(
-        model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
-        epochs, model_path, config.CLASSES
+        cfg, model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
+        epochs, model_path, cfg.CLASSES, save_base_path=save_base_path
     )
 
 

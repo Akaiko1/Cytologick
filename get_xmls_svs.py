@@ -3,11 +3,18 @@ import os
 import json
 import pprint
 
-import config
 import xml.etree.ElementTree as ET
 
+from config import Config, load_config
 
-def main(temp_folder=config.TEMP_FOLDER, slides_folder=config.HDD_SLIDES_SVS):
+
+def main(cfg: Config | None = None, temp_folder: str | None = None, slides_folder: str | None = None):
+    cfg = load_config() if cfg is None else cfg
+    if temp_folder is None:
+        temp_folder = cfg.TEMP_FOLDER
+    if slides_folder is None:
+        slides_folder = cfg.HDD_SLIDES_SVS
+
     if not os.path.exists(temp_folder):
         os.mkdir(temp_folder)
 

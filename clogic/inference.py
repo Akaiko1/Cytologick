@@ -20,12 +20,20 @@ import cv2
 import clogic.ai as ai
 import tfs_connector as tfs
 import clogic.smooth as smooth
-import config
+from config import Config, load_config
 
 
-def image_to_tensor(image, add_dim=True):
+def _resolve_cfg(cfg: Config | None) -> Config:
+    return cfg if cfg is not None else load_config()
+
+
+def image_to_tensor(image, add_dim: bool = True, cfg: Config | None = None, shapes=None):
+    cfg = _resolve_cfg(cfg)
+    if shapes is None:
+        shapes = tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))
+
     image = tf.convert_to_tensor(image/255.0)
-    image = tf.image.resize(image, config.IMAGE_SHAPE)
+    image = tf.image.resize(image, shapes)
 
     if add_dim:
         image = tf.expand_dims(image, axis=0)
@@ -33,7 +41,11 @@ def image_to_tensor(image, add_dim=True):
     return image
 
 
-def apply_model(source, model, shapes=config.IMAGE_SHAPE):
+def apply_model(source, model, shapes=None, cfg: Config | None = None):
+    cfg = _resolve_cfg(cfg)
+    if shapes is None:
+        shapes = tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))
+
     pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
     pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
     source_pads = cv2.copyMakeBorder(source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE)
@@ -43,14 +55,18 @@ def apply_model(source, model, shapes=config.IMAGE_SHAPE):
     for x in range(0, source_pads.shape[0], shapes[0]):
         for y in range(0, source_pads.shape[1], shapes[1]):
             patch = source_pads[x: x + shapes[0], y: y + shapes[1]]
-            pred_mask = model(image_to_tensor(patch))
+            pred_mask = model(image_to_tensor(patch, cfg=cfg, shapes=shapes))
             prediction = np.asarray(ai.create_mask(pred_mask)[..., 0])
             pathology_map[x: x + shapes[0], y: y + shapes[1]] = cv2.resize(prediction.astype(np.uint8), shapes)
 
     return pathology_map[:source.shape[0], :source.shape[1]]
 
 
-def apply_model_raw(source, model, classes, shapes=config.IMAGE_SHAPE):
+def apply_model_raw(source, model, classes, shapes=None, cfg: Config | None = None):
+    cfg = _resolve_cfg(cfg)
+    if shapes is None:
+        shapes = tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))
+
     pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
     pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
     source_pads = cv2.copyMakeBorder(source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE)
@@ -60,7 +76,7 @@ def apply_model_raw(source, model, classes, shapes=config.IMAGE_SHAPE):
     for x in range(0, source_pads.shape[0], shapes[0]):
         for y in range(0, source_pads.shape[1], shapes[1]):
             patch = source_pads[x: x + shapes[0], y: y + shapes[1]]
-            pred_mask = model(image_to_tensor(patch))
+            pred_mask = model(image_to_tensor(patch, cfg=cfg, shapes=shapes))
             prediction = np.asarray(pred_mask)[0]
             pathology_map[x: x + shapes[0], y: y + shapes[1]] = cv2.resize(prediction, shapes)
 
@@ -77,15 +93,20 @@ def apply_remote(source, chunk_size=(256, 256), model_input_size=(128, 128), end
     return pathology_map[0][:source.shape[0], :source.shape[1]]
 
 
-def apply_model_smooth(source, model, shape=config.IMAGE_SHAPE[0]):
+def apply_model_smooth(source, model, shape=None, cfg: Config | None = None, classes: int | None = None):
+        cfg = _resolve_cfg(cfg)
+        if shape is None:
+            shape = int(tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))[0])
+        if classes is None:
+            classes = int(getattr(cfg, 'CLASSES', 3))
            
         predictions_smooth = smooth.predict_img_with_smooth_windowing(
             source,
             window_size=shape,
             subdivisions=2,  # Minimal amount of overlap for windowing. Must be an even number.
-            nb_classes=config.CLASSES,
+            nb_classes=classes,
             pred_func=(
-                lambda img_batch_subdiv: model(image_to_tensor(img_batch_subdiv, add_dim=False))
+                lambda img_batch_subdiv: model(image_to_tensor(img_batch_subdiv, add_dim=False, cfg=cfg, shapes=(shape, shape)))
             )
         )
            

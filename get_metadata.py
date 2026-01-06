@@ -1,17 +1,29 @@
 import argparse
-import config
 import glob
 import os
 
 from pathlib import Path
 from pprint import pprint
 
-# OpenSlide loading is platform-specific: os.add_dll_directory exists only on Windows.
-if hasattr(os, 'add_dll_directory'):
-    with os.add_dll_directory(config.OPENSLIDE_PATH):
-        import openslide
-else:
-    import openslide
+from config import Config, load_config
+
+_OPENSLIDE = None
+
+
+def _import_openslide(cfg: Config):
+    global _OPENSLIDE
+    if _OPENSLIDE is not None:
+        return _OPENSLIDE
+
+    # OpenSlide loading is platform-specific: os.add_dll_directory exists only on Windows.
+    if hasattr(os, 'add_dll_directory'):
+        with os.add_dll_directory(cfg.OPENSLIDE_PATH):
+            import openslide as _oslide
+    else:
+        import openslide as _oslide
+
+    _OPENSLIDE = _oslide
+    return _OPENSLIDE
 
 PROPERTIES = [
     ('Number of levels', 'openslide.level-count'),
@@ -58,12 +70,13 @@ def __pretty_bytes(size_in_bytes):
         return '{0:.2f} TB'.format(size_in_bytes / Tera)
 
 
-def get_set_data(ext='.mrxs'):
-    slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
+def get_set_data(cfg: Config, ext: str = '.mrxs'):
+    openslide = _import_openslide(cfg)
+    slides_list = glob.glob(os.path.join(cfg.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
     slide_names = [os.path.splitext(os.path.basename(s))[0] for s in slides_list]
 
     sizes = __get_sizes(slides_list)
-    summary = __get_summary(slides_list, sizes)
+    summary = __get_summary(openslide, slides_list, sizes)
 
     if not os.path.exists('meta'):
         os.mkdir('meta')
@@ -81,7 +94,9 @@ def get_set_data(ext='.mrxs'):
 
 
 def get_slides_data(ext='.mrxs'):
-    slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
+    cfg = load_config()
+    openslide = _import_openslide(cfg)
+    slides_list = glob.glob(os.path.join(cfg.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
     slide_names = [os.path.splitext(os.path.basename(s))[0] for s in slides_list]
 
     if not os.path.exists('meta'):
@@ -105,7 +120,7 @@ def __print_summary(summary):
     pprint(summary)
 
 
-def __get_summary(slides_list, sizes):
+def __get_summary(openslide, slides_list, sizes):
     summary = {
         'total slides processed': len(slides_list),
         'file size (max, min, avg)': (
@@ -136,5 +151,6 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    cfg = load_config()
     get_slides_data(args.extension)
-    get_set_data(args.extension)
+    get_set_data(cfg, args.extension)

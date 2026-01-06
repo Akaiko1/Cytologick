@@ -1,10 +1,9 @@
 import os
 import sys
 
-import __web.deepzoom_server as deepzoom
 import __web.start_web as web
 
-import config
+from config import load_config
 
 
 def _check_seadragon_assets():
@@ -34,4 +33,5 @@ def _check_seadragon_assets():
 
 if __name__ == '__main__':
     _check_seadragon_assets()
-    web.run(config.HDD_SLIDES)
+    cfg = load_config()
+    web.run(cfg, cfg.HDD_SLIDES)

@@ -8,6 +8,8 @@ import sys
 import os
 sys.path.insert(0, '.')
 
+from config import Config
+
 def test_pytorch_dependencies():
     """Test PyTorch dependencies are available."""
     print("Testing PyTorch dependencies...")
@@ -46,14 +48,16 @@ def test_pytorch_training_components():
     try:
         # Import directly to avoid conflicts
         from clogic.ai_pytorch import (
-            JaccardLoss, FocalLoss, CombinedLoss, 
+            CombinedLoss,
             iou_score, f1_score, get_train_transforms
         )
         
         import torch
         
+        cfg = Config()
+
         # Test transforms
-        transform = get_train_transforms()
+        transform = get_train_transforms(cfg)
         print("✅ Data transforms work")
         
         # Test loss functions
@@ -61,16 +65,10 @@ def test_pytorch_training_components():
         predictions = torch.randn(batch_size, num_classes, height, width)
         targets = torch.randint(0, num_classes, (batch_size, height, width))
         
-        # Test losses
-        jaccard_loss = JaccardLoss()
-        focal_loss = FocalLoss()
         combined_loss = CombinedLoss()
-        
-        j_loss = jaccard_loss(predictions, targets)
-        f_loss = focal_loss(predictions, targets)
         c_loss = combined_loss(predictions, targets)
-        
-        print(f"✅ Loss functions work: Jaccard={j_loss.item():.4f}, Focal={f_loss.item():.4f}, Combined={c_loss.item():.4f}")
+
+        print(f"✅ Loss function works: Combined={c_loss.item():.4f}")
         
         # Test metrics
         iou = iou_score(predictions, targets, num_classes)
@@ -94,9 +92,11 @@ def test_pytorch_inference_components():
         import torch
         import numpy as np
         
+        cfg = Config()
+
         # Test image preprocessing
         test_image = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
-        tensor = image_to_tensor_pytorch(test_image)
+        tensor = image_to_tensor_pytorch(cfg, test_image)
         print(f"✅ Image preprocessing: {test_image.shape} -> {tensor.shape}")
         
         # Test mask creation
@@ -119,6 +119,8 @@ def test_end_to_end_pipeline():
         import segmentation_models_pytorch as smp
         import numpy as np
         from clogic.inference_pytorch import apply_model_pytorch
+
+        cfg = Config()
         
         # Create model
         model = smp.Unet(
@@ -133,7 +135,7 @@ def test_end_to_end_pipeline():
         test_image = np.random.randint(0, 255, (128, 128, 3), dtype=np.uint8)
         
         with torch.no_grad():
-            result = apply_model_pytorch(test_image, model, shapes=(128, 128))
+            result = apply_model_pytorch(cfg, test_image, model, shapes=(128, 128))
         
         print(f"✅ End-to-end pipeline: {test_image.shape} -> {result.shape}")
         print(f"   Result range: [{result.min()}, {result.max()}]")

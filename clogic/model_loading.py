@@ -1,7 +1,8 @@
 import os
-import config
 import logging
 import warnings
+
+from config import Config
 
 try:
     import tensorflow as tf
@@ -13,19 +14,19 @@ try:
 except ImportError:
     inference_pytorch = None
 
-def load_local_model():
+def load_local_model(cfg: Config):
     """
     Load a local model based on the configured framework.
     
     Returns:
         The loaded model object, or None if loading failed.
     """
-    if config.FRAMEWORK.lower() == 'pytorch':
-        return _load_pytorch_model()
+    if cfg.FRAMEWORK.lower() == 'pytorch':
+        return _load_pytorch_model(cfg)
     else:
-        return _load_tensorflow_model()
+        return _load_tensorflow_model(cfg)
 
-def _load_pytorch_model():
+def _load_pytorch_model(cfg: Config):
     """Load PyTorch model from _main folder or fallback locations."""
     if inference_pytorch is None:
         print("PyTorch not installed or inference module missing")
@@ -56,7 +57,7 @@ def _load_pytorch_model():
         if os.path.exists(model_path):
             print(f'Local PyTorch model located at {model_path}, loading')
             try:
-                model = inference_pytorch.load_pytorch_model(model_path, config.CLASSES)
+                model = inference_pytorch.load_pytorch_model(cfg, model_path, cfg.CLASSES)
                 print('PyTorch model loaded successfully')
                 return model
             except Exception as e:
@@ -66,7 +67,7 @@ def _load_pytorch_model():
     print('No PyTorch model found in _main/ folder')
     return None
 
-def _load_tensorflow_model():
+def _load_tensorflow_model(cfg: Config):
     """Load TensorFlow model from _main folder."""
     if tf is None:
         print("TensorFlow not installed")

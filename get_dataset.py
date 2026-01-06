@@ -1,12 +1,13 @@
-import config
-
 from parsers import mrsx
+
+from config import load_config
 
 DEBUG=False
 
 def main():
-    mrsx.extract_all_slides(config.HDD_SLIDES, config.TEMP_FOLDER, config.OPENSLIDE_PATH, config.LABELS, zoom_levels=[256, 384, 512], debug=DEBUG)
-    mrsx.extract_all_cells(config.HDD_SLIDES, config.TEMP_FOLDER, config.OPENSLIDE_PATH, config.LABELS, debug=DEBUG)
+    cfg = load_config()
+    mrsx.extract_all_slides(cfg.HDD_SLIDES, cfg.TEMP_FOLDER, cfg.OPENSLIDE_PATH, cfg.LABELS, zoom_levels=[256, 384, 512], debug=DEBUG, cfg=cfg)
+    mrsx.extract_all_cells(cfg.HDD_SLIDES, cfg.TEMP_FOLDER, cfg.OPENSLIDE_PATH, cfg.LABELS, debug=DEBUG, cfg=cfg)
 
 
 if __name__ == '__main__':

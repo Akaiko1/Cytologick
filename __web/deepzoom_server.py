@@ -24,19 +24,25 @@ import PIL
 from flask import Flask, abort, make_response, render_template, url_for
 from fpdf import FPDF, HTMLMixin
 
-import config
-import __web.__get_slide_roi as gsr
+from config import Config
 
-# OpenSlide import with DLL handling for Windows
-OPENSLIDE_PATH = os.path.abspath(os.path.join('..', 'DemetraAI', 'openslide', 'bin'))
-if hasattr(os, 'add_dll_directory'):
-    with os.add_dll_directory(OPENSLIDE_PATH):
-        import openslide
-else:
-    import openslide
+_OPENSLIDE = None
 
-from openslide import ImageSlide, open_slide
-from openslide.deepzoom import DeepZoomGenerator
+
+def _import_openslide(cfg: Config):
+    global _OPENSLIDE
+    if _OPENSLIDE is not None:
+        return _OPENSLIDE
+
+    # OpenSlide import with DLL handling for Windows
+    if hasattr(os, 'add_dll_directory'):
+        with os.add_dll_directory(cfg.OPENSLIDE_PATH):
+            import openslide as _oslide
+    else:
+        import openslide as _oslide
+
+    _OPENSLIDE = _oslide
+    return _OPENSLIDE
 
 
 # =============================================================================
@@ -133,8 +139,9 @@ def _transform_contour_to_tile(
 # =============================================================================
 
 def create_app(
-    slide_path: str, 
-    config_dict: Optional[Dict] = None, 
+    cfg: Config,
+    slide_path: str,
+    config_dict: Optional[Dict] = None,
     config_file: Optional[str] = None
 ) -> Flask:
     """
@@ -184,7 +191,9 @@ def create_app(
         'limit_bounds': app.config['DEEPZOOM_LIMIT_BOUNDS'],
     }
     
-    slide = open_slide(slidefile)
+    oslide = _import_openslide(cfg)
+    from openslide.deepzoom import DeepZoomGenerator
+    slide = oslide.open_slide(slidefile)
     app.slides = {SLIDE_NAME: DeepZoomGenerator(slide, **dz_opts)}
     app.associated_images = []
     app.slide_properties = slide.properties
@@ -193,12 +202,12 @@ def create_app(
     for name, image in slide.associated_images.items():
         app.associated_images.append(name)
         slug = slugify(name)
-        app.slides[slug] = DeepZoomGenerator(ImageSlide(image), **dz_opts)
+        app.slides[slug] = DeepZoomGenerator(oslide.ImageSlide(image), **dz_opts)
     
     # Get microns per pixel for scale bar
     try:
-        mpp_x = float(slide.properties[openslide.PROPERTY_NAME_MPP_X])
-        mpp_y = float(slide.properties[openslide.PROPERTY_NAME_MPP_Y])
+        mpp_x = float(slide.properties[oslide.PROPERTY_NAME_MPP_X])
+        mpp_y = float(slide.properties[oslide.PROPERTY_NAME_MPP_Y])
         app.slide_mpp = (mpp_x + mpp_y) / 2
     except (KeyError, ValueError):
         app.slide_mpp = 0
@@ -301,9 +310,10 @@ def create_app(
 # =============================================================================
 
 def start_web(
-    slide_path: str, 
-    drawing_list: Dict, 
-    index: int, 
+    cfg: Config,
+    slide_path: str,
+    drawing_list: Dict,
+    index: int,
     port: int
 ) -> None:
     """
@@ -337,12 +347,13 @@ def start_web(
     config_dict['DEEPZOOM_SLIDE'] = slide_path
     
     # Create the app
-    app = create_app(slide_path, config_dict, opts.config)
+    app = create_app(cfg, slide_path, config_dict, opts.config)
     app.drawing_list = drawing_list
     app.render_list = []
     
     # Open slide for image rendering
-    slide = open_slide(slide_path)
+    oslide = _import_openslide(cfg)
+    slide = oslide.open_slide(slide_path)
     
     # Prepare output folder
     temp_folder = os.path.join('__web', 'static', 'temp', str(index))

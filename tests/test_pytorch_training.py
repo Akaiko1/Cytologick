@@ -16,14 +16,14 @@ from .conftest import skip_if_no_pytorch
 class TestPyTorchTraining:
     """Test PyTorch training pipeline components."""
 
-    def test_dataset_creation(self, sample_dataset_files):
+    def test_dataset_creation(self, cfg, sample_dataset_files):
         """Test PyTorch dataset creation from image/mask pairs."""
         from clogic.ai_pytorch import CytologyDataset, get_train_transforms
         
         dataset = CytologyDataset(
             sample_dataset_files['images_dir'],
             sample_dataset_files['masks_dir'],
-            transform=get_train_transforms()
+            transform=get_train_transforms(cfg)
         )
         
         assert len(dataset) == sample_dataset_files['num_files']
@@ -35,12 +35,12 @@ class TestPyTorchTraining:
         assert image.shape == (3, 128, 128)  # CHW format
         assert mask.shape == (128, 128)
 
-    def test_data_transforms(self):
+    def test_data_transforms(self, cfg):
         """Test data augmentation transforms."""
         from clogic.ai_pytorch import get_train_transforms, get_val_transforms
         
-        train_transform = get_train_transforms()
-        val_transform = get_val_transforms()
+        train_transform = get_train_transforms(cfg)
+        val_transform = get_val_transforms(cfg)
         
         # Create sample data
         image = np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
@@ -134,7 +134,7 @@ class TestPyTorchTraining:
 
     @patch('clogic.ai_pytorch.get_datasets')
     @patch('torch.save')
-    def test_train_new_model_pytorch(self, mock_save, mock_get_datasets, mock_config, temp_dir):
+    def test_train_new_model_pytorch(self, mock_save, mock_get_datasets, cfg, temp_dir):
         """Test training a new PyTorch model."""
         from clogic.ai_pytorch import train_new_model_pytorch
         
@@ -152,34 +152,32 @@ class TestPyTorchTraining:
         mock_train_dataset.__len__.return_value = 50
         mock_val_dataset.__len__.return_value = 25
         
-        # Patch config temporarily
-        with patch('clogic.ai_pytorch.config') as mock_config_module:
-            mock_config_module.DATASET_FOLDER = temp_dir
-            mock_config_module.IMAGES_FOLDER = 'images'
-            mock_config_module.MASKS_FOLDER = 'masks'
-            mock_config_module.CLASSES = 3
-            
-            # Test training with minimal epochs
-            model_path = os.path.join(temp_dir, 'test_model')
-            
-            # This would normally train, but we'll mock the heavy parts
-            with patch('torch.utils.data.DataLoader') as mock_loader:
-                mock_loader.return_value.__iter__.return_value = [sample_batch]
-                mock_loader.return_value.__len__.return_value = 1
-                
-                try:
-                    train_new_model_pytorch(model_path, 3, epochs=1, batch_size=2)
-                    # Check that save was called
-                    assert mock_save.called
-                except Exception as e:
-                    # Training might fail in test environment, but architecture should be testable
-                    pass
+        cfg.DATASET_FOLDER = temp_dir
+        cfg.IMAGES_FOLDER = 'images'
+        cfg.MASKS_FOLDER = 'masks'
+        cfg.CLASSES = 3
 
-    def test_dataset_splitting(self, sample_dataset_files):
+        # Test training with minimal epochs
+        model_path = os.path.join(temp_dir, 'test_model')
+
+        # This would normally train, but we'll mock the heavy parts
+        with patch('torch.utils.data.DataLoader') as mock_loader:
+            mock_loader.return_value.__iter__.return_value = [sample_batch]
+            mock_loader.return_value.__len__.return_value = 1
+
+            try:
+                train_new_model_pytorch(cfg, model_path, 3, epochs=1, batch_size=2)
+                assert mock_save.called
+            except Exception:
+                # Training might fail in test environment, but plumbing should be testable
+                pass
+
+    def test_dataset_splitting(self, cfg, sample_dataset_files):
         """Test train/validation dataset splitting."""
         from clogic.ai_pytorch import get_datasets
         
         train_dataset, val_dataset, total_samples = get_datasets(
+            cfg,
             sample_dataset_files['images_dir'],
             sample_dataset_files['masks_dir'],
             train_split=0.8

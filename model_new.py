@@ -1,13 +1,10 @@
-import config
-
-if config.FRAMEWORK.lower() == 'pytorch':
-    from clogic import ai_pytorch as ai
-else:
-    from clogic import ai
+from config import load_config
 
 
 if __name__ == '__main__':
-    if config.FRAMEWORK.lower() == 'pytorch':
-        ai.train_new_model_pytorch('_new', 3, 5, batch_size=4)
-    else:
-        ai.train_new_model('_new', 3, 5, batch_size=16)
+    cfg = load_config()
+    if str(cfg.FRAMEWORK).lower() != 'pytorch':
+        raise RuntimeError('TensorFlow training is deprecated; set FRAMEWORK=pytorch')
+
+    from clogic import ai_pytorch as ai
+    ai.train_new_model_pytorch(cfg, '_new', 3, 5, batch_size=4)

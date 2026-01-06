@@ -9,7 +9,8 @@ import shutil
 import numpy as np
 from PIL import Image
 import warnings
-import torch
+
+from config import Config
 
 # Test data constants
 TEST_IMAGE_SIZE = (128, 128, 3)
@@ -64,25 +65,15 @@ def sample_dataset_files(temp_dir, sample_image, sample_mask):
 
 
 @pytest.fixture
-def mock_config():
-    """Mock configuration for testing."""
-    class MockConfig:
-        FRAMEWORK = 'pytorch'
-        DATASET_FOLDER = 'test_dataset'
-        IMAGES_FOLDER = 'images'
-        MASKS_FOLDER = 'masks'
-        IMAGE_SHAPE = (128, 128)
-        IMAGE_CHUNK = (256, 256)
-        CLASSES = 3
-        OPENSLIDE_PATH = '/mock/path'
-        UNET_PRED_MODE = 'direct'
-        
-    return MockConfig()
+def cfg() -> Config:
+    """Base Config instance for tests (mutate per-test if needed)."""
+    return Config()
 
 
 @pytest.fixture
 def pytorch_device():
     """Get available PyTorch device for testing."""
+    import torch
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -103,12 +94,3 @@ def skip_if_no_pytorch():
         import albumentations
     except ImportError:
         pytest.skip("PyTorch dependencies not available")
-
-
-@pytest.fixture
-def original_config():
-    """Backup and restore original config after test."""
-    import config
-    original_framework = getattr(config, 'FRAMEWORK', 'tensorflow')
-    yield config
-    config.FRAMEWORK = original_framework

@@ -18,15 +18,26 @@ from typing import Dict, List, Optional, Tuple, Any
 import cv2
 import numpy as np
 
-import config
+from config import Config
 import clogic.graphics as graphics
 
-# OpenSlide import with DLL handling
-if hasattr(os, 'add_dll_directory'):
-    with os.add_dll_directory(config.OPENSLIDE_PATH):
-        import openslide
-else:
-    import openslide
+_OPENSLIDE = None
+
+
+def _import_openslide(cfg: Config):
+    global _OPENSLIDE
+    if _OPENSLIDE is not None:
+        return _OPENSLIDE
+
+    # OpenSlide import with DLL handling (Windows only)
+    if hasattr(os, 'add_dll_directory'):
+        with os.add_dll_directory(cfg.OPENSLIDE_PATH):
+            import openslide as _oslide
+    else:
+        import openslide as _oslide
+
+    _OPENSLIDE = _oslide
+    return _OPENSLIDE
 
 # Optional PyTorch inference support
 _PYTORCH_AVAILABLE = False
@@ -42,7 +53,7 @@ except ImportError:
 # Slide Access
 # =============================================================================
 
-def get_slide(slide_path: str) -> openslide.OpenSlide:
+def get_slide(cfg: Config, slide_path: str):
     """
     Open a slide file.
     
@@ -52,14 +63,15 @@ def get_slide(slide_path: str) -> openslide.OpenSlide:
     Returns:
         OpenSlide object for the slide
     """
-    return openslide.OpenSlide(slide_path)
+    oslide = _import_openslide(cfg)
+    return oslide.OpenSlide(slide_path)
 
 
 # =============================================================================
 # Main Entry Point
 # =============================================================================
 
-def get_slide_rois(slide_path: str) -> Dict[str, Any]:
+def get_slide_rois(cfg: Config, slide_path: str) -> Dict[str, Any]:
     """
     Extract regions of interest from a slide using AI inference.
     
@@ -76,7 +88,7 @@ def get_slide_rois(slide_path: str) -> Dict[str, Any]:
     Returns:
         Dictionary mapping ROI names to (shift, rect, contour) tuples
     """
-    slide = get_slide(slide_path)
+    slide = get_slide(cfg, slide_path)
     
     print(f"Slide levels: {slide.level_count}")
     print(f"Level dimensions: {slide.level_dimensions}")
@@ -100,8 +112,8 @@ def get_slide_rois(slide_path: str) -> Dict[str, Any]:
     
     print(f"Found {len(tissue_regions_scaled)} tissue regions")
     
-    scan_all_tissue = bool(getattr(config, 'WEB_SCAN_ALL_TISSUE', False))
-    progress_every = int(getattr(config, 'WEB_PROGRESS_EVERY', 25))
+    scan_all_tissue = bool(cfg.WEB_SCAN_ALL_TISSUE)
+    progress_every = int(cfg.WEB_PROGRESS_EVERY)
     if scan_all_tissue:
         print("Scanning all tissue regions for probes")
     else:
@@ -109,6 +121,7 @@ def get_slide_rois(slide_path: str) -> Dict[str, Any]:
 
     # Sample and extract probe images from tissue regions
     probe_images, probe_coords = _extract_probes(
+        cfg,
         slide,
         tissue_regions_scaled,
         downsample_factor,
@@ -119,10 +132,10 @@ def get_slide_rois(slide_path: str) -> Dict[str, Any]:
     print(f"Extracted {len(probe_images)} probe images")
     
     # Run AI inference on probes
-    pathology_maps = _run_inference(probe_images)
+    pathology_maps = _run_inference(cfg, probe_images)
     
     # Convert inference results to contour overlays
-    results = _extract_contours(pathology_maps, probe_coords)
+    results = _extract_contours(cfg, pathology_maps, probe_coords)
     
     print(f"Detected {len(results)} regions of interest")
     return results
@@ -181,7 +194,8 @@ def _find_tissue_regions(
 # =============================================================================
 
 def _extract_probes(
-    slide: openslide.OpenSlide,
+    cfg: Config,
+    slide: Any,
     tissue_regions: List[List[int]],
     downsample_factor: float,
     num_samples: int = 1,
@@ -217,8 +231,8 @@ def _extract_probes(
     total_regions = len(sample_regions)
     total_probes = 0
     skipped_probes = 0
-    min_tissue_fraction = float(getattr(config, 'WEB_MIN_TISSUE_FRACTION', 0.0))
-    tissue_gray_threshold = int(getattr(config, 'WEB_TISSUE_GRAY_THRESHOLD', 220))
+    min_tissue_fraction = float(cfg.WEB_MIN_TISSUE_FRACTION)
+    tissue_gray_threshold = int(cfg.WEB_TISSUE_GRAY_THRESHOLD)
     
     for idx, region in enumerate(sample_regions, start=1):
         if progress_every > 0 and (idx == 1 or idx % progress_every == 0 or idx == total_regions):
@@ -260,7 +274,7 @@ def _extract_probes(
 # Inference
 # =============================================================================
 
-def _run_inference(probe_images: List[np.ndarray]) -> List[np.ndarray]:
+def _run_inference(cfg: Config, probe_images: List[np.ndarray]) -> List[np.ndarray]:
     """
     Run AI inference on probe images.
     
@@ -274,16 +288,16 @@ def _run_inference(probe_images: List[np.ndarray]) -> List[np.ndarray]:
         List of pathology probability maps
     """
     # Try local PyTorch model first
-    if _PYTORCH_AVAILABLE and config.FRAMEWORK.lower() == 'pytorch':
-        result = _run_pytorch_inference(probe_images)
+    if _PYTORCH_AVAILABLE and str(cfg.FRAMEWORK).lower() == 'pytorch':
+        result = _run_pytorch_inference(cfg, probe_images)
         if result is not None:
             return result
     
     # Fall back to remote inference
-    return _run_remote_inference(probe_images)
+    return _run_remote_inference(cfg, probe_images)
 
 
-def _run_pytorch_inference(probe_images: List[np.ndarray]) -> Optional[List[np.ndarray]]:
+def _run_pytorch_inference(cfg: Config, probe_images: List[np.ndarray]) -> Optional[List[np.ndarray]]:
     """
     Run inference using local PyTorch model.
     
@@ -300,21 +314,23 @@ def _run_pytorch_inference(probe_images: List[np.ndarray]) -> Optional[List[np.n
     
     try:
         print(f"Using local PyTorch model: {model_path}")
-        model = inference_pt.load_pytorch_model(model_path, num_classes=config.CLASSES)
+        model = inference_pt.load_pytorch_model(cfg, model_path, num_classes=cfg.CLASSES)
         
         pathology_maps = []
-        use_fast_mode = getattr(config, 'WEB_FAST_TILES', True)
+        use_fast_mode = bool(cfg.WEB_FAST_TILES)
         
-        progress_every = int(getattr(config, 'WEB_PROGRESS_EVERY', 25))
+        progress_every = int(cfg.WEB_PROGRESS_EVERY)
         total_probes = len(probe_images)
-        batch_size = int(getattr(config, 'WEB_PT_BATCH_SIZE', 0))
+        batch_size = int(cfg.WEB_PT_BATCH_SIZE)
         if batch_size <= 0:
             batch_size = None
         for idx, probe in enumerate(probe_images, start=1):
             pm = inference_pt.apply_model_raw_pytorch(
-                probe, model,
-                classes=config.CLASSES,
-                shapes=config.IMAGE_SHAPE,
+                cfg,
+                probe,
+                model,
+                classes=cfg.CLASSES,
+                shapes=cfg.IMAGE_SHAPE,
                 batch_size=batch_size,
             )
             pathology_maps.append(pm)
@@ -328,7 +344,7 @@ def _run_pytorch_inference(probe_images: List[np.ndarray]) -> Optional[List[np.n
         return None
 
 
-def _run_remote_inference(probe_images: List[np.ndarray]) -> List[np.ndarray]:
+def _run_remote_inference(cfg: Config, probe_images: List[np.ndarray]) -> List[np.ndarray]:
     """
     Run inference using remote TensorFlow Serving endpoint.
     
@@ -345,10 +361,10 @@ def _run_remote_inference(probe_images: List[np.ndarray]) -> List[np.ndarray]:
         
         resize_opts = tfs.ResizeOptions(
             chunk_size=(256, 256),
-            model_input_size=tuple(config.IMAGE_SHAPE)
+            model_input_size=tuple(cfg.IMAGE_SHAPE)
         )
-        
-        endpoint = getattr(config, 'ENDPOINT_URL', 'http://51.250.28.160:7500')
+
+        endpoint = str(cfg.ENDPOINT_URL)
         
         total_probes = len(probe_images)
         if total_probes == 0:
@@ -394,6 +410,7 @@ def _estimate_tissue_fraction(
 # =============================================================================
 
 def _extract_contours(
+    cfg: Config,
     pathology_maps: List[np.ndarray],
     probe_coords: List[Tuple[int, int]]
 ) -> Dict[str, Any]:
@@ -410,8 +427,8 @@ def _extract_contours(
     results = {}
     roi_index = 0
     
-    conf_threshold = float(getattr(config, 'WEB_CONF_THRESHOLD', 0.5))
-    class_index = int(getattr(config, 'WEB_ATYPICAL_CLASS_INDEX', 2))
+    conf_threshold = float(cfg.WEB_CONF_THRESHOLD)
+    class_index = int(cfg.WEB_ATYPICAL_CLASS_INDEX)
     
     for idx, pmap in enumerate(pathology_maps):
         # Extract atypical class probability

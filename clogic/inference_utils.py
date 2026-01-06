@@ -14,14 +14,14 @@ from typing import Optional, Tuple, Any
 import numpy as np
 import cv2
 
-import config
+from config import Config
 
 
 # -----------------------------------------------------------------------------
 # Remote Endpoint Utilities
 # -----------------------------------------------------------------------------
 
-def check_remote_available(timeout: Optional[float] = None) -> bool:
+def check_remote_available(cfg: Config, timeout: Optional[float] = None) -> bool:
     """
     Check if the remote inference endpoint is reachable via TCP.
     
@@ -31,7 +31,7 @@ def check_remote_available(timeout: Optional[float] = None) -> bool:
     Returns:
         True if endpoint is reachable, False otherwise.
     """
-    endpoint = getattr(config, 'ENDPOINT_URL', None)
+    endpoint = getattr(cfg, 'ENDPOINT_URL', None)
     if not endpoint:
         return False
     
@@ -43,21 +43,21 @@ def check_remote_available(timeout: Optional[float] = None) -> bool:
         if not host:
             return False
             
-        connection_timeout = timeout if timeout is not None else getattr(config, 'HEALTH_TIMEOUT', 1.5)
+        connection_timeout = timeout if timeout is not None else float(getattr(cfg, 'HEALTH_TIMEOUT', 1.5))
         with socket.create_connection((host, port), timeout=connection_timeout):
             return True
     except Exception:
         return False
 
 
-def get_endpoint_url() -> str:
+def get_endpoint_url(cfg: Config) -> str:
     """
     Get the configured remote inference endpoint URL.
     
     Returns:
         Endpoint URL string.
     """
-    return getattr(config, 'ENDPOINT_URL', 'http://127.0.0.1:8501')
+    return str(getattr(cfg, 'ENDPOINT_URL', 'http://127.0.0.1:8501'))
 
 
 # -----------------------------------------------------------------------------
@@ -65,6 +65,7 @@ def get_endpoint_url() -> str:
 # -----------------------------------------------------------------------------
 
 def run_inference(
+    cfg: Config,
     image: np.ndarray,
     model: Any,
     mode: str = 'direct',
@@ -85,32 +86,36 @@ def run_inference(
         Pathology map as numpy array.
     """
     # Import framework-specific modules lazily to avoid import errors
-    if config.FRAMEWORK.lower() == 'pytorch':
-        import clogic.inference_pytorch as inference
-        
-        if mode == 'remote':
-            # Remote inference uses TensorFlow Serving
-            import clogic.inference as tf_inference
-            return tf_inference.apply_remote(image)
-        elif mode == 'smooth':
-            # Use TTA + smooth windowing
-            return inference.apply_model_smooth_pytorch(
-                image, model, shape=shapes[0]
-            )
-        else:
-            # Standard fast inference
-            return inference.apply_model_raw_pytorch(
-                image, model, classes=classes, shapes=shapes
-            )
+    if str(cfg.FRAMEWORK).lower() != 'pytorch':
+        raise RuntimeError('TensorFlow inference is deprecated; set FRAMEWORK=pytorch')
+
+    import clogic.inference_pytorch as inference
+
+    if mode == 'remote':
+        import tfs_connector as tfs
+
+        resize_opts = tfs.ResizeOptions(
+            chunk_size=(256, 256),
+            model_input_size=tuple(shapes),
+        )
+        endpoint = get_endpoint_url(cfg)
+        maps = tfs.apply_segmentation_model_parallel(
+            [image],
+            endpoint_url=endpoint,
+            model_name=str(getattr(cfg, 'MODEL_NAME', 'demetra')),
+            batch_size=1,
+            resize_options=resize_opts,
+            normalization=lambda x: x / 255,
+            parallelism_mode=1,
+            thread_count=4,
+        )
+        return maps[0]
+    elif mode == 'smooth':
+        # Use TTA + smooth windowing
+        return inference.apply_model_smooth_pytorch(cfg, image, model, shape=shapes[0])
     else:
-        import clogic.inference as inference
-        
-        if mode == 'direct':
-            return inference.apply_model(image, model, shapes=shapes)
-        elif mode == 'smooth':
-            return inference.apply_model_smooth(image, model, shape=shapes[0])
-        else:  # mode == 'remote'
-            return inference.apply_remote(image)
+        # Standard fast inference
+        return inference.apply_model_raw_pytorch(cfg, image, model, classes=classes, shapes=shapes)
 
 
 # -----------------------------------------------------------------------------

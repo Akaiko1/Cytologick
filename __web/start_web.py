@@ -18,7 +18,7 @@ import webbrowser
 
 from flask import Flask, flash, redirect, render_template, request, url_for
 
-import config
+from config import Config
 import __web.deepzoom_server as deep
 import __web.__get_slide_roi as gsr
 
@@ -47,7 +47,7 @@ def _refresh_slide_list(app: Flask) -> None:
     ]
 
 
-def create_app(slides_folder: str) -> Flask:
+def create_app(cfg: Config, slides_folder: str) -> Flask:
     """
     Create and configure the main Flask application.
     
@@ -65,6 +65,7 @@ def create_app(slides_folder: str) -> Flask:
     app.file_names = []     # Display names for slides
     app.threads = {}        # Mapping of slide index -> viewer thread
     app.slides_folder = slides_folder
+    app.cfg = cfg
     
     _refresh_slide_list(app)
     
@@ -81,7 +82,7 @@ def create_app(slides_folder: str) -> Flask:
             files=app.files,
             file_names=app.file_names,
             state=app.threads,
-            exp_ip=config.IP_EXPOSED
+            exp_ip=app.cfg.IP_EXPOSED
         )
     
     @app.route('/upload', methods=['GET', 'POST'])
@@ -124,7 +125,7 @@ def create_app(slides_folder: str) -> Flask:
             files=app.files,
             file_names=app.file_names,
             state=app.threads,
-            exp_ip=config.IP_EXPOSED
+            exp_ip=app.cfg.IP_EXPOSED
         )
     
     @app.route("/<int:index>")
@@ -142,19 +143,19 @@ def create_app(slides_folder: str) -> Flask:
         if index not in app.threads:
             # Start new viewer thread for this slide
             slide_path = app.files[index]
-            rois = gsr.get_slide_rois(slide_path)
+            rois = gsr.get_slide_rois(app.cfg, slide_path)
             
             viewer_thread = threading.Thread(
                 name=f'cytologick_viewer_{index}',
                 target=deep.start_web,
-                args=[slide_path, rois, index, target_port],
+                args=[app.cfg, slide_path, rois, index, target_port],
                 daemon=True  # Modern Python daemon thread syntax
             )
             viewer_thread.start()
             app.threads[index] = viewer_thread
         
         # Open browser tab for viewer
-        viewer_url = f"http://{config.IP_EXPOSED}:{target_port}"
+        viewer_url = f"http://{app.cfg.IP_EXPOSED}:{target_port}"
         webbrowser.open_new_tab(viewer_url)
         
         return render_template(
@@ -162,13 +163,13 @@ def create_app(slides_folder: str) -> Flask:
             files=app.files,
             file_names=app.file_names,
             state=app.threads,
-            exp_ip=config.IP_EXPOSED
+            exp_ip=app.cfg.IP_EXPOSED
         )
     
     return app
 
 
-def run(slides_folder: str, host: str = '0.0.0.0', port: int = 5001) -> None:
+def run(cfg: Config, slides_folder: str, host: str = '0.0.0.0', port: int = 5001) -> None:
     """
     Start the web application server.
     
@@ -177,6 +178,6 @@ def run(slides_folder: str, host: str = '0.0.0.0', port: int = 5001) -> None:
         host: Host address to bind to (default: all interfaces)
         port: Port number to listen on (default: 5001)
     """
-    app = create_app(slides_folder)
+    app = create_app(cfg, slides_folder)
     print(f"Starting Cytologick web server on http://{host}:{port}")
     app.run(host=host, port=port, threaded=True)

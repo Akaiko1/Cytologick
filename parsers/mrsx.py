@@ -7,10 +7,14 @@ import os
 
 import numpy as np
 
-import config
+from config import Config, load_config
 
 
 Rectangle = namedtuple('Rectangle', 'xmin ymin xmax ymax')
+
+
+def _resolve_cfg(cfg: Config | None) -> Config:
+    return cfg if cfg is not None else load_config()
 
 
 def extract_atlas(slidepath, jsonpath, openslide_path):
@@ -46,7 +50,22 @@ def extract_atlas(slidepath, jsonpath, openslide_path):
         cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
 
-def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug=False):
+def extract_all_cells(
+    slides_folder,
+    json_folder,
+    openslide_path,
+    classes,
+    debug: bool = False,
+    cfg: Config | None = None,
+    broaden_individual_rect: int | None = None,
+    exclude_duplicates: bool | None = None,
+):
+    cfg = _resolve_cfg(cfg)
+    if broaden_individual_rect is None:
+        broaden_individual_rect = int(getattr(cfg, 'BROADEN_INDIVIDUAL_RECT', 0))
+    if exclude_duplicates is None:
+        exclude_duplicates = bool(getattr(cfg, 'EXCLUDE_DUPLICATES', False))
+
     if hasattr(os, 'add_dll_directory'):
         with os.add_dll_directory(openslide_path):
             import openslide
@@ -77,7 +96,7 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
         with open(json_path[0], 'r') as f:
             rois = json.load(f)
         
-        regions = __get_regions(rois)
+        regions = __get_regions(rois, exclude_duplicates=exclude_duplicates)
 
         print(f'Parsing {slide}: {len(regions)} regions total')
 
@@ -91,16 +110,35 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
             if not 100 <= max_x - min_x <= 200 or not 100 <= max_y - min_y <= 200:  # This sets min and max size for resulting roi crop (+- 2)
                 continue
             
-            span = config.BROADEN_INDIVIDUAL_RECT
+            span = broaden_individual_rect
             w_max_x, w_max_y, w_min_x, w_min_y = max_x + span, max_y + span, min_x - span, min_y - span
 
             crop = slide.read_region((w_min_x, w_min_y), 0, (w_max_x - w_min_x, w_max_y - w_min_y))
             roi = np.asarray(crop)
             mask = np.zeros(roi.shape) if debug else np.zeros(roi.shape[:2], dtype=np.uint8)
 
-            __draw_masks(classes, debug, __get_rect_regions(rois, (w_min_x, w_min_y), (w_max_x, w_max_y)), mask)
+            __draw_masks(
+                classes,
+                debug,
+                __get_rect_regions(
+                    rois,
+                    (w_min_x, w_min_y),
+                    (w_max_x, w_max_y),
+                    exclude_duplicates=exclude_duplicates,
+                ),
+                mask,
+            )
             if debug:
-                 __debug_draw_contours(classes, __get_rect_regions(rois, (w_min_x, w_min_y), (w_max_x, w_max_y)), roi)
+                 __debug_draw_contours(
+                     classes,
+                     __get_rect_regions(
+                         rois,
+                         (w_min_x, w_min_y),
+                         (w_max_x, w_max_y),
+                         exclude_duplicates=exclude_duplicates,
+                     ),
+                     roi,
+                 )
 
             roi = roi[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
             mask = mask[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
@@ -112,7 +150,19 @@ def extract_all_cells(slides_folder, json_folder, openslide_path, classes, debug
             cv2.imwrite(os.path.join(masks_path, f'{name}_coords_{max_x}_{max_y}.bmp'), mask)
 
 
-def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom_levels=[256], debug=False):
+def extract_all_slides(
+    slides_folder,
+    json_folder,
+    openslide_path,
+    classes,
+    zoom_levels=[256],
+    debug: bool = False,
+    cfg: Config | None = None,
+    exclude_duplicates: bool | None = None,
+):
+    cfg = _resolve_cfg(cfg)
+    if exclude_duplicates is None:
+        exclude_duplicates = bool(getattr(cfg, 'EXCLUDE_DUPLICATES', False))
 
     slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
     print('Total slides: ', len(slides_list))
@@ -143,11 +193,30 @@ def extract_all_slides(slides_folder, json_folder, openslide_path, classes, zoom
                 print(f'{rect_name} larger than 8000px - skipping')
                 continue
             
-            __extract_rect_regions(rect_coords, slide, json_path[0], openslide_path,
-             classes=classes, zoom_levels=zoom_levels, rect_name=rect_name, debug=debug)
+            __extract_rect_regions(
+                rect_coords,
+                slide,
+                json_path[0],
+                openslide_path,
+                classes=classes,
+                zoom_levels=zoom_levels,
+                rect_name=rect_name,
+                debug=debug,
+                exclude_duplicates=exclude_duplicates,
+            )
 
 
-def __extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name='roi', zoom_levels=[128, 256, 512], classes={}, debug=False):
+def __extract_rect_regions(
+    rect,
+    slidepath,
+    jsonpath,
+    openslide_path,
+    rect_name='roi',
+    zoom_levels=[128, 256, 512],
+    classes={},
+    debug: bool = False,
+    exclude_duplicates: bool = False,
+):
     if hasattr(os, 'add_dll_directory'):
         with os.add_dll_directory(openslide_path):
             import openslide
@@ -160,7 +229,7 @@ def __extract_rect_regions(rect, slidepath, jsonpath, openslide_path, rect_name=
         rois = json.load(f)
 
     top, bot = rect
-    regions = __get_rect_regions(rois, top, bot)
+    regions = __get_rect_regions(rois, top, bot, exclude_duplicates=exclude_duplicates)
 
     if not regions:
         print(f'regions is none for {rect_name}, skipping')
@@ -322,7 +391,7 @@ def __extract_rects(rois):
     return rects
 
 
-def __get_rect_regions(rois, top, bot):
+def __get_rect_regions(rois, top, bot, exclude_duplicates: bool = False):
     regions, registry = [], []
     
     for idx, roi in enumerate(rois):
@@ -346,7 +415,7 @@ def __get_rect_regions(rois, top, bot):
             regions.append(None)
             continue
         
-        if config.EXCLUDE_DUPLICATES:
+        if exclude_duplicates:
             close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
             if close_idx is not None:
                 regions[close_idx] = None
@@ -359,7 +428,7 @@ def __get_rect_regions(rois, top, bot):
     return [r for r in regions if r is not None]
 
 
-def __get_regions(rois, local_coords=True):
+def __get_regions(rois, local_coords: bool = True, exclude_duplicates: bool = False):
     regions, registry = [], []
 
     for idx, roi in enumerate(rois):
@@ -375,7 +444,7 @@ def __get_regions(rois, local_coords=True):
 
         norm_points = [[[p[0] - min_x, p[1] - min_y]] for p in points] if local_coords else points
 
-        if config.EXCLUDE_DUPLICATES:
+        if exclude_duplicates:
             close_idx = __index_close(((min_x, min_y), (max_x, max_y)), registry)
             if close_idx is not None:
 

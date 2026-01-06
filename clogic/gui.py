@@ -15,8 +15,7 @@ Classes:
 
 import glob
 import os
-import socket
-from urllib.parse import urlparse
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -27,24 +26,21 @@ from PyQt5.QtWidgets import (
     QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget
 )
 
-import config
+from config import Config, load_config
 import clogic.contours as contours
 import clogic.graphics as drawing
 import clogic.model_loading as model_loading
 import clogic.inference_utils as inference_utils
 
-# Framework-specific imports
-if config.FRAMEWORK.lower() == 'pytorch':
-    import clogic.inference_pytorch as inference
-else:
-    import clogic.inference as inference
 
-# OpenSlide import with DLL handling for Windows
-if hasattr(os, 'add_dll_directory'):
-    with os.add_dll_directory(config.OPENSLIDE_PATH):
-        import openslide
-else:
-    import openslide
+def _import_openslide(cfg: Config):
+    if hasattr(os, 'add_dll_directory') and getattr(cfg, 'OPENSLIDE_PATH', None):
+        with os.add_dll_directory(str(cfg.OPENSLIDE_PATH)):
+            import openslide  # type: ignore
+            return openslide
+
+    import openslide  # type: ignore
+    return openslide
 
 
 # =============================================================================
@@ -99,7 +95,7 @@ class Preview(QWidget):
         control_widget.setLayout(control_layout)
         
         # Add inference mode radio buttons
-        remote_ok = inference_utils.check_remote_available()
+        remote_ok = inference_utils.check_remote_available(self.parent.cfg)
         self._add_mode_buttons(control_layout, remote_ok)
         
         # Display area for the image
@@ -163,10 +159,10 @@ class Preview(QWidget):
             radiobutton = QRadioButton(self.mode_names[idx])
             
             # Fallback to local mode if remote unavailable
-            if config.UNET_PRED_MODE == 'remote' and not remote_ok and self.parent.model is not None:
-                config.UNET_PRED_MODE = 'direct'
+            if self.parent.unet_pred_mode == 'remote' and not remote_ok and self.parent.model is not None:
+                self.parent.unet_pred_mode = 'direct'
             
-            if mode == config.UNET_PRED_MODE:
+            if mode == self.parent.unet_pred_mode:
                 radiobutton.setChecked(True)
             
             radiobutton.mode = mode
@@ -185,7 +181,7 @@ class Preview(QWidget):
     def _on_mode_selected(self):
         """Handle inference mode radio button selection."""
         radioButton = self.sender()
-        config.UNET_PRED_MODE = radioButton.mode
+        self.parent.unet_pred_mode = radioButton.mode
     
     def _run_analysis(self):
         """Execute model inference on the preview image."""
@@ -194,11 +190,12 @@ class Preview(QWidget):
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
         # Run inference using shared utility
         pathology_map = inference_utils.run_inference(
+            self.parent.cfg,
             source,
             self.parent.model,
-            mode=config.UNET_PRED_MODE,
-            classes=config.CLASSES,
-            shapes=config.IMAGE_SHAPE
+            mode=self.parent.unet_pred_mode,
+            classes=int(self.parent.cfg.CLASSES),
+            shapes=tuple(self.parent.cfg.IMAGE_SHAPE),
         )
         
         # Process results into visualization
@@ -250,7 +247,7 @@ class Menu(QWidget):
         # Find all MRXS slide files recursively
         # Find all MRXS slide files recursively from both locations
         self.slide_list = []
-        search_paths = [config.HDD_SLIDES, config.SLIDE_DIR]
+        search_paths = [self.parent.cfg.HDD_SLIDES, self.parent.cfg.SLIDE_DIR]
         
         for path in search_paths:
             if os.path.exists(path):
@@ -292,7 +289,7 @@ class Menu(QWidget):
     def _on_slide_selected(self, index: int):
         """Handle slide file selection."""
         slide_path = self.slide_list[index]
-        self.parent.current_slide = openslide.OpenSlide(slide_path)
+        self.parent.current_slide = self.parent.openslide.OpenSlide(slide_path)
         self.levels = self.parent.current_slide.level_dimensions
 
         # Populate zoom levels with descriptive labels (limit to < 4 to prevent memory issues)
@@ -365,9 +362,13 @@ class Viewer(QWidget):
     slideImage = None   # Current slide image
     model = None        # Loaded model
 
-    def __init__(self):
+    def __init__(self, cfg: Optional[Config] = None):
         """Initialize the main viewer window."""
         super().__init__()
+
+        self.cfg = cfg if cfg is not None else load_config()
+        self.openslide = _import_openslide(self.cfg)
+        self.unet_pred_mode = str(getattr(self.cfg, 'UNET_PRED_MODE', 'direct'))
         
         self.appw, self.apph = 800, 800
         self.current_slide = None
@@ -391,7 +392,7 @@ class Viewer(QWidget):
     
     def _load_model(self):
         """Load the local inference model."""
-        self.model = model_loading.load_local_model()
+        self.model = model_loading.load_local_model(self.cfg)
     
     def _setup_layout(self):
         """Configure the viewer window layout."""
@@ -440,7 +441,7 @@ class Viewer(QWidget):
         
         # Correct size to match model requirements
         width, height = drawing.get_corrected_size(
-            width, height, config.IMAGE_CHUNK[0]
+            width, height, self.cfg.IMAGE_CHUNK[0]
         )
         
         # Read region from slide
