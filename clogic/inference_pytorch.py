@@ -1,8 +1,8 @@
 """
 PyTorch implementation of inference pipeline for Cytologick.
 
-This module provides PyTorch equivalents to the TensorFlow inference functions,
-maintaining identical functionality and output format.
+This module provides the primary inference implementation for local model execution.
+All functions return probability maps (H, W, C) with softmax applied.
 """
 
 import torch
@@ -17,160 +17,247 @@ import config
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def image_to_tensor_pytorch(image, add_dim=True):
+# =============================================================================
+# Shared Utilities
+# =============================================================================
+
+def _get_default_batch_size() -> int:
+    """Get optimal batch size based on available hardware."""
+    return 32 if torch.cuda.is_available() else 16
+
+
+def _pad_image(source: np.ndarray, shapes: tuple) -> tuple[np.ndarray, int, int]:
+    """
+    Pad image to be evenly divisible by tile shapes.
+
+    Args:
+        source: Input image (H, W, C)
+        shapes: Tile size (height, width)
+
+    Returns:
+        Tuple of (padded_image, original_height, original_width)
+    """
+    orig_h, orig_w = source.shape[:2]
+    pad_h = (shapes[0] - (orig_h % shapes[0])) % shapes[0]
+    pad_w = (shapes[1] - (orig_w % shapes[1])) % shapes[1]
+    padded = cv2.copyMakeBorder(source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE)
+    return padded, orig_h, orig_w
+
+
+def _extract_tiles(source: np.ndarray, shapes: tuple) -> tuple[list, list]:
+    """
+    Extract non-overlapping tiles from image.
+
+    Args:
+        source: Padded image (H, W, C)
+        shapes: Tile size (height, width)
+
+    Returns:
+        Tuple of (list of tile arrays, list of (x, y) coordinates)
+    """
+    tiles = []
+    coords = []
+    for x in range(0, source.shape[0], shapes[0]):
+        for y in range(0, source.shape[1], shapes[1]):
+            tile = source[x:x + shapes[0], y:y + shapes[1]]
+            tiles.append(tile)
+            coords.append((x, y))
+    return tiles, coords
+
+
+def image_to_tensor_pytorch(image: np.ndarray, add_dim: bool = True) -> torch.Tensor:
     """
     Convert image to PyTorch tensor with proper preprocessing.
-    
+
     Args:
-        image: Input image as numpy array
+        image: Input image as numpy array (H, W, C), values 0-255
         add_dim: Whether to add batch dimension
-        
+
     Returns:
-        Preprocessed tensor
+        Preprocessed tensor (B, C, H, W) or (C, H, W) if add_dim=False
     """
     # Normalize to [0, 1] and convert to tensor
-    image = torch.from_numpy(image / 255.0).float()
-    
+    tensor = torch.from_numpy(image / 255.0).float()
+
+    # Permute from (H, W, C) to (C, H, W) and add batch dim for resize
+    tensor = tensor.permute(2, 0, 1).unsqueeze(0)
+
     # Resize to model input shape
-    image = F.interpolate(
-        image.permute(2, 0, 1).unsqueeze(0), 
-        size=config.IMAGE_SHAPE, 
-        mode='bilinear', 
+    tensor = F.interpolate(
+        tensor,
+        size=config.IMAGE_SHAPE,
+        mode='bilinear',
         align_corners=False
     )
-    
+
     if not add_dim:
-        image = image.squeeze(0)
-    
-    return image
+        tensor = tensor.squeeze(0)
+
+    return tensor
 
 
-def create_mask_pytorch(pred_mask):
+def _run_batched_inference(
+    model: torch.nn.Module,
+    tiles: list[np.ndarray],
+    batch_size: int | None = None,
+    return_probs: bool = True
+) -> np.ndarray:
+    """
+    Run batched inference on a list of tiles.
+
+    Args:
+        model: PyTorch model (already on device and in eval mode)
+        tiles: List of image tiles (H, W, C)
+        batch_size: Batch size for inference (None for auto)
+        return_probs: If True, return softmax probabilities; if False, return argmax
+
+    Returns:
+        Array of predictions, shape depends on return_probs:
+        - return_probs=True: (N, H, W, C) probabilities
+        - return_probs=False: (N, H, W) class indices
+    """
+    if batch_size is None:
+        batch_size = _get_default_batch_size()
+
+    outputs = []
+
+    with torch.no_grad():
+        for i in range(0, len(tiles), batch_size):
+            batch_tiles = tiles[i:i + batch_size]
+            # Build tensor batch [B, C, H, W]
+            batch_t = torch.cat(
+                [image_to_tensor_pytorch(t) for t in batch_tiles], dim=0
+            ).to(DEVICE)
+
+            logits = model(batch_t)
+
+            if return_probs:
+                probs = F.softmax(logits, dim=1).cpu().numpy()  # [B, C, H, W]
+                probs = np.transpose(probs, (0, 2, 3, 1))       # [B, H, W, C]
+                outputs.append(probs)
+            else:
+                classes = torch.argmax(logits, dim=1).cpu().numpy()  # [B, H, W]
+                outputs.append(classes)
+
+    return np.concatenate(outputs, axis=0)
+
+
+def create_mask_pytorch(pred_mask: torch.Tensor) -> np.ndarray:
     """
     Create a mask from PyTorch model predictions by taking the argmax.
-    
+
     Args:
-        pred_mask: Model prediction tensor
-        
+        pred_mask: Model prediction tensor (B, C, H, W)
+
     Returns:
-        Predicted mask as numpy array
+        Predicted mask as numpy array (H, W)
     """
     pred_mask = torch.argmax(pred_mask, dim=1)
     return pred_mask[0].cpu().numpy()
 
 
-def apply_model_pytorch(source, model, shapes=config.IMAGE_SHAPE):
+# =============================================================================
+# Main Inference Functions
+# =============================================================================
+
+def apply_model_pytorch(
+    source: np.ndarray,
+    model: torch.nn.Module,
+    shapes: tuple = config.IMAGE_SHAPE
+) -> np.ndarray:
     """
     Apply PyTorch model to image using sliding window approach.
-    
+
+    Returns discrete class indices (sparse map). For probability maps,
+    use apply_model_raw_pytorch instead.
+
     Args:
-        source: Input image as numpy array
+        source: Input image as numpy array (H, W, C)
         model: PyTorch model
         shapes: Window size tuple
-        
+
     Returns:
-        Pathology map as numpy array
+        Pathology map as numpy array (H, W) with class indices
     """
     model.eval()
     model = model.to(DEVICE)
-    
-    # Compute minimal padding to fit whole tiles; pad=0 when divisible
-    pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
-    pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
-    source_pads = cv2.copyMakeBorder(
-        source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE
-    )
 
-    pathology_map = np.zeros(source_pads.shape[:2])
+    # Pad and extract tiles
+    source_padded, orig_h, orig_w = _pad_image(source, shapes)
+    tiles, coords = _extract_tiles(source_padded, shapes)
 
-    with torch.no_grad():
-        for x in range(0, source_pads.shape[0], shapes[0]):
-            for y in range(0, source_pads.shape[1], shapes[1]):
-                patch = source_pads[x: x + shapes[0], y: y + shapes[1]]
-                
-                # Convert patch to tensor and move to device
-                patch_tensor = image_to_tensor_pytorch(patch).to(DEVICE)
-                
-                # Get prediction
-                pred_mask = model(patch_tensor)
-                prediction = create_mask_pytorch(pred_mask)
-                
-                # Resize prediction back to patch size
-                prediction_resized = cv2.resize(
-                    prediction.astype(np.uint8), shapes, interpolation=cv2.INTER_NEAREST
-                )
-                
-                pathology_map[x: x + shapes[0], y: y + shapes[1]] = prediction_resized
+    # Run batched inference (return class indices, not probs)
+    predictions = _run_batched_inference(model, tiles, return_probs=False)
 
-    return pathology_map[:source.shape[0], :source.shape[1]].astype(np.uint8)
+    # Reconstruct map
+    pathology_map = np.zeros(source_padded.shape[:2], dtype=np.uint8)
+    for idx, (x, y) in enumerate(coords):
+        pred = predictions[idx]
+        # Resize prediction back to tile size using nearest neighbor
+        pred_resized = cv2.resize(
+            pred.astype(np.uint8), shapes, interpolation=cv2.INTER_NEAREST
+        )
+        pathology_map[x:x + shapes[0], y:y + shapes[1]] = pred_resized
+
+    return pathology_map[:orig_h, :orig_w]
 
 
-def apply_model_raw_pytorch(source, model, classes, shapes=config.IMAGE_SHAPE, batch_size: int | None = None):
+def apply_model_raw_pytorch(
+    source: np.ndarray,
+    model: torch.nn.Module,
+    classes: int,
+    shapes: tuple = config.IMAGE_SHAPE,
+    batch_size: int | None = None
+) -> np.ndarray:
     """
-    Apply PyTorch model and return raw probability maps.
-    
+    Apply PyTorch model and return probability maps.
+
+    This is the primary inference function for most use cases.
+    Returns softmax probabilities suitable for threshold-based detection.
+
     Args:
-        source: Input image as numpy array
+        source: Input image as numpy array (H, W, C)
         model: PyTorch model
-        classes: Number of classes
+        classes: Number of output classes
         shapes: Window size tuple
-        
+        batch_size: Batch size for inference (None for auto)
+
     Returns:
-        Raw probability map as numpy array
+        Probability map as numpy array (H, W, C) with values in [0, 1]
     """
     model.eval()
     model = model.to(DEVICE)
-    
-    pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
-    pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
-    source_pads = cv2.copyMakeBorder(
-        source, 0, pad_h, 0, pad_w, cv2.BORDER_REPLICATE
+
+    # Pad and extract tiles
+    source_padded, orig_h, orig_w = _pad_image(source, shapes)
+    tiles, coords = _extract_tiles(source_padded, shapes)
+
+    # Run batched inference (return probabilities)
+    predictions = _run_batched_inference(model, tiles, batch_size, return_probs=True)
+
+    # Reconstruct probability map
+    pathology_map = np.zeros(
+        (source_padded.shape[0], source_padded.shape[1], classes),
+        dtype=np.float32
     )
+    for idx, (x, y) in enumerate(coords):
+        # Predictions are already at model output size (IMAGE_SHAPE)
+        pathology_map[x:x + shapes[0], y:y + shapes[1]] = predictions[idx]
 
-    pathology_map = np.zeros((source_pads.shape[0], source_pads.shape[1], classes), dtype=np.float32)
-
-    # Collect patches and their target locations
-    coords: list[tuple[int,int]] = []
-    tiles: list[np.ndarray] = []
-    for x in range(0, source_pads.shape[0], shapes[0]):
-        for y in range(0, source_pads.shape[1], shapes[1]):
-            patch = source_pads[x: x + shapes[0], y: y + shapes[1]]
-            tiles.append(patch)
-            coords.append((x, y))
-
-    # Determine batch size
-    if batch_size is None:
-        batch_size = 32 if torch.cuda.is_available() else 16
-
-    with torch.no_grad():
-        for i in range(0, len(tiles), batch_size):
-            batch_np = tiles[i:i+batch_size]
-            # Build tensor batch [B, C, H, W]
-            batch_t = torch.cat([image_to_tensor_pytorch(t) for t in batch_np], dim=0).to(DEVICE)
-            logits = model(batch_t)
-            probs = F.softmax(logits, dim=1).cpu().numpy()  # [B, C, H, W]
-            probs = np.transpose(probs, (0, 2, 3, 1))       # [B, H, W, C]
-
-            for j, pred in enumerate(probs):
-                x, y = coords[i + j]
-                # pred already at target size (shapes); place into map
-                pathology_map[x: x + shapes[0], y: y + shapes[1]] = pred.astype(np.float32)
-
-    return pathology_map[:source.shape[0], :source.shape[1]].astype(np.float32)
+    return pathology_map[:orig_h, :orig_w]
 
 
-def load_pytorch_model(model_path: str, num_classes: int = 3):
+def load_pytorch_model(model_path: str, num_classes: int = 3) -> torch.nn.Module:
     """
     Load a trained PyTorch model from file.
-    
+
     Args:
         model_path: Path to the saved model state dict
         num_classes: Number of output classes
-        
+
     Returns:
-        Loaded PyTorch model
+        Loaded PyTorch model in eval mode
     """
-    # Build model without pretrained weights; we will load user weights below
     model = smp.Unet(
         encoder_name='efficientnet-b3',
         encoder_weights=None,
@@ -178,68 +265,49 @@ def load_pytorch_model(model_path: str, num_classes: int = 3):
         activation=None  # return logits; softmax applied in inference
     )
 
-    state = torch.load(model_path, map_location=DEVICE)
+    state = torch.load(model_path, map_location=DEVICE, weights_only=True)
     model.load_state_dict(state)
     model.eval()
-    
+
     return model
 
 
-def apply_model_smooth_pytorch(source, model, shape=config.IMAGE_SHAPE[0]):
+def apply_model_smooth_pytorch(
+    source: np.ndarray,
+    model: torch.nn.Module,
+    shape: int = config.IMAGE_SHAPE[0]
+) -> np.ndarray:
     """
     Apply PyTorch model with smooth windowing to reduce edge artifacts.
-    
-    Uses clogic.smooth to perform:
-    1. Overlapping window prediction (reduces checkerboard artifacts)
-    2. Test Time Augmentation (8x rotation/flip averaging)
-    
+
+    Uses overlapping windows with spline blending for seamless predictions.
+    Optionally applies Test Time Augmentation (8x rotation/flip averaging).
+
     Args:
-        source: Input image as numpy array
+        source: Input image as numpy array (H, W, C)
         model: PyTorch model
-        shape: Window size
-        
+        shape: Window size (single int, assumes square windows)
+
     Returns:
-        Pathology map as numpy array
+        Probability map as numpy array (H, W, C) with values in [0, 1]
     """
     import clogic.smooth as smooth
-    
+
     model.eval()
     model = model.to(DEVICE)
 
-    # Define prediction wrapper for smooth.py
-    # Input: numpy array (batch_size, H, W, C)
-    # Output: numpy array (batch_size, H, W, n_classes)
-    def _pred_func_pytorch(img_batch_subdiv):
-        batch_size = 32 if torch.cuda.is_available() else 16
-        outputs = []
-        
-        with torch.no_grad():
-            for i in range(0, len(img_batch_subdiv), batch_size):
-                batch_np = img_batch_subdiv[i:i+batch_size]
-                
-                # Convert to tensor: [B, H, W, C] -> [B, C, H, W]
-                # Note: image_to_tensor_pytorch handles normalization /255.0
-                batch_t = torch.cat([image_to_tensor_pytorch(t) for t in batch_np], dim=0).to(DEVICE)
-                
-                logits = model(batch_t)
-                
-                # Softmax and move to CPU
-                probs = F.softmax(logits, dim=1).cpu().numpy()  # [B, C, H, W]
-                probs = np.transpose(probs, (0, 2, 3, 1))       # [B, H, W, C]
-                outputs.append(probs)
-                
-        return np.concatenate(outputs, axis=0)
+    def _pred_func(img_batch: np.ndarray) -> np.ndarray:
+        """Prediction wrapper for smooth.py - handles batch of tiles."""
+        # Use shared batched inference (returns probs in NHWC format)
+        return _run_batched_inference(model, list(img_batch), return_probs=True)
 
-    # Run smooth prediction
-    # use_tta=False gives ~8x speedup while still keeping smooth overlapping windows
     predictions_smooth = smooth.predict_img_with_smooth_windowing(
         source,
         window_size=shape,
         subdivisions=2,  # 50% overlap
         nb_classes=config.CLASSES,
-        pred_func=_pred_func_pytorch,
+        pred_func=_pred_func,
         use_tta=config.USE_TTA
     )
-    
-    # Return probability map (H, W, C)
+
     return predictions_smooth.astype(np.float32)

@@ -1,3 +1,18 @@
+"""
+TensorFlow inference module (DEPRECATED).
+
+This module is deprecated in favor of inference_pytorch.py.
+It remains for backward compatibility with remote TensorFlow Serving endpoints.
+For local inference, use inference_pytorch.py instead.
+"""
+
+import warnings
+warnings.warn(
+    "clogic.inference (TensorFlow) is deprecated. Use clogic.inference_pytorch instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
 import tensorflow as tf
 import numpy as np
 import cv2

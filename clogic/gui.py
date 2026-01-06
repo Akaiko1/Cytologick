@@ -273,18 +273,24 @@ class Menu(QWidget):
     def _setup_layout(self):
         """Configure the menu layout with dropdowns."""
         layout = QVBoxLayout()
-        
-        # Slide file selection dropdown
+
+        # Slide file selection
+        slide_label = QLabel("Slide:")
         self.slide_select = QComboBox()
+        self.slide_select.setMinimumWidth(300)
         self.slide_select.addItems(self.slide_list)
         self.slide_select.currentIndexChanged.connect(self._on_slide_selected)
         self.slide_select.activated.connect(self._on_slide_selected)
-        
-        # Zoom level selection dropdown
+
+        # Zoom level selection
+        zoom_label = QLabel("Zoom Level:")
         self.level_select = QComboBox()
+        self.level_select.setMinimumWidth(100)
         self.level_select.currentIndexChanged.connect(self._on_level_selected)
-        
+
+        layout.addWidget(slide_label)
         layout.addWidget(self.slide_select)
+        layout.addWidget(zoom_label)
         layout.addWidget(self.level_select)
         self.setLayout(layout)
     
@@ -293,11 +299,14 @@ class Menu(QWidget):
         slide_path = self.slide_list[index]
         self.parent.current_slide = openslide.OpenSlide(slide_path)
         self.levels = self.parent.current_slide.level_dimensions
-        
-        # Populate zoom levels (limit to < 4 to prevent memory issues)
+
+        # Populate zoom levels with descriptive labels (limit to < 4 to prevent memory issues)
         self.level_select.clear()
-        level_items = [str(i) for i, _ in enumerate(self.levels) if i < 4]
-        self.level_select.addItems(level_items)
+        for i, dims in enumerate(self.levels):
+            if i >= 4:
+                break
+            w, h = dims
+            self.level_select.addItem(f"Level {i} ({w}x{h})")
     
     def _on_level_selected(self, level_index: int):
         """Handle zoom level selection."""

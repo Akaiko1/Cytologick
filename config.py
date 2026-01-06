@@ -37,15 +37,6 @@ LABELS = {
 SLIDE_DIR = os.path.join('.', 'current') # Only for GUI
 UNET_PRED_MODE = 'remote' # 'smooth', 'direct'
 USE_TTA = False # Enable Test Time Augmentation (8x slower) within smooth mode
-# Theme options:
-# - 'auto' (platform QSS)
-# - 'qt' (qt_material theme)
-# - 'windows' / 'mac' (platform QSS)
-# - 'qdarkstyle' (external package, if installed)
-# - 'qss' (load a custom QSS from path)
-GUI_THEME = 'auto'
-GUI_MATERIAL_THEME = 'dark_teal.xml'
-GUI_CUSTOM_QSS = ''
 #endregion
 
 #region Dataset
@@ -105,7 +96,7 @@ def _load_ini_config(config_file):
 def _update_globals_from_dict(config):
     global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
     global FRAMEWORK, DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
-    global SLIDE_DIR, UNET_PRED_MODE, GUI_THEME, USE_TTA, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE, WEB_ATYPICAL_CLASS_INDEX
+    global SLIDE_DIR, UNET_PRED_MODE, USE_TTA, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE, WEB_ATYPICAL_CLASS_INDEX
     
     general = config.get('general', {})
     if 'current_slide' in general:
@@ -146,12 +137,6 @@ def _update_globals_from_dict(config):
         UNET_PRED_MODE = gui['unet_pred_mode']
     if 'use_tta' in gui:
         USE_TTA = gui['use_tta']
-    if 'theme' in gui:
-        GUI_THEME = gui['theme']
-    if 'material_theme' in gui:
-        GUI_MATERIAL_THEME = gui['material_theme']
-    if 'custom_qss' in gui:
-        GUI_CUSTOM_QSS = gui['custom_qss']
     
     dataset = config.get('dataset', {})
     if 'exclude_duplicates' in dataset:
