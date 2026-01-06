@@ -153,7 +153,11 @@ def get_xml_rois(filename) -> list:
     all_nodes = []
 
     for node in root.findall('node'):
-        content = node.getchildren()[1]
+        # lxml's getchildren() is deprecated; list(node) is the supported equivalent.
+        children = list(node)
+        if len(children) < 2:
+            continue
+        content = children[1]
         bookmark = content.find('SimpleBookmark')
         slide_flag = content.find('slide_flag')
 
@@ -165,15 +169,28 @@ def get_xml_rois(filename) -> list:
 
         xml_points = content.find('polygon_data')
 
-        for point in xml_points.find('polygon_points').getchildren():
-            points.append([point.get('polypointX'), point.get('polypointY')])
+        polygon_points = xml_points.find('polygon_points')
+        if polygon_points is None:
+            continue
+
+        for point in list(polygon_points):
+            try:
+                px = int(float(point.get('polypointX')))
+                py = int(float(point.get('polypointY')))
+            except (TypeError, ValueError):
+                continue
+            points.append([px, py])
         
         if 'Annotation' not in label:
             all_nodes.append({
                 'label': label,
                 'points': points,
-                'rect': [slide_flag.get('brLeft'), slide_flag.get('brTop'), 
-                         slide_flag.get('brRight'), slide_flag.get('brBottom')]
+                'rect': [
+                    int(float(slide_flag.get('brLeft'))),
+                    int(float(slide_flag.get('brTop'))),
+                    int(float(slide_flag.get('brRight'))),
+                    int(float(slide_flag.get('brBottom'))),
+                ]
             })
 
     return all_nodes

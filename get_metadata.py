@@ -6,7 +6,11 @@ import os
 from pathlib import Path
 from pprint import pprint
 
-with os.add_dll_directory(config.OPENSLIDE_PATH):
+# OpenSlide loading is platform-specific: os.add_dll_directory exists only on Windows.
+if hasattr(os, 'add_dll_directory'):
+    with os.add_dll_directory(config.OPENSLIDE_PATH):
+        import openslide
+else:
     import openslide
 
 PROPERTIES = [
@@ -56,7 +60,7 @@ def __pretty_bytes(size_in_bytes):
 
 def get_set_data(ext='.mrxs'):
     slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
-    slide_names = [s.rstrip(f'{ext}').split(os.sep)[-1] for s in slides_list]
+    slide_names = [os.path.splitext(os.path.basename(s))[0] for s in slides_list]
 
     sizes = __get_sizes(slides_list)
     summary = __get_summary(slides_list, sizes)
@@ -78,13 +82,13 @@ def get_set_data(ext='.mrxs'):
 
 def get_slides_data(ext='.mrxs'):
     slides_list = glob.glob(os.path.join(config.HDD_SLIDES, '**', f'*{ext}'), recursive=True)
-    slide_names = [s.rstrip(f'{ext}').split(os.sep)[-1] for s in slides_list]
+    slide_names = [os.path.splitext(os.path.basename(s))[0] for s in slides_list]
 
     if not os.path.exists('meta'):
         os.mkdir('meta')
 
-    for idx, slide_name in enumerate(slides_list):
-        slide_data = openslide.OpenSlide(slide_name)
+    for idx, slide_path in enumerate(slides_list):
+        slide_data = openslide.OpenSlide(slide_path)
 
         image_zero = slide_data.get_thumbnail((1024, 1024))
         filename = f"{os.path.join('meta', slide_names[idx])}.png"

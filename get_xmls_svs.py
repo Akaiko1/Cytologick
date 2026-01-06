@@ -22,7 +22,7 @@ def main(temp_folder=config.TEMP_FOLDER, slides_folder=config.HDD_SLIDES_SVS):
     svs_report = {'Total objects': 0}
 
     for entry in xml_list:
-        filename = entry.split('\\')[-1].rstrip('.xml')
+        filename = os.path.splitext(os.path.basename(entry))[0]
         tree = ET.parse(entry)
         root = tree.getroot()
         annotations = root.find('Annotations')
@@ -42,7 +42,9 @@ def main(temp_folder=config.TEMP_FOLDER, slides_folder=config.HDD_SLIDES_SVS):
     
     pprint.pprint(svs_report)
 
-    with open(os.path.join(temp_folder, f'{filename}.json'), 'w') as f:
+    # Aggregate report for all XMLs in the folder.
+    out_name = 'svs_report.json'
+    with open(os.path.join(temp_folder, out_name), 'w') as f:
         json.dump(svs_report, f)
 
 
