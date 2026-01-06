@@ -1,446 +1,307 @@
-# Cytologick - Research Tool for Pap Smear Analysis
+# Cytologick
 
-## What is Cytologick?
+**AI-powered research tool for cervical cytology analysis**
 
-Cytologick is a Python-based research tool for analyzing Pap smear slides using artificial intelligence. This software is designed for research and educational purposes to explore automated detection of cellular abnormalities like LSIL, HSIL, and ASCUS in cytological samples.
+Cytologick is a Python application for analyzing Pap smear slides using deep learning. It provides both a desktop GUI and an experimental web interface for viewing whole-slide images and running AI-assisted detection of cellular abnormalities.
 
-PyTorch is the recommended framework for training and local inference in this repository. The PyTorch pipeline includes mixed precision (AMP), a cosine LR scheduler, tqdm progress bars, and per‑epoch checkpoints.
+> **Research Use Only**: This software is for research and educational purposes. It is not a medical device and should not be used for clinical diagnosis.
 
-## What it does
+![Cytologick Example](./assets/example.jpg)
 
-- Loads MRXS slide files
-- Trains U-Net segmentation models on annotated cell data
-- Supports both TensorFlow and PyTorch frameworks (PyTorch recommended)
-- Provides Qt desktop interface for viewing slides
-- Runs inference on slide regions
-- Works with ASAP annotation files
-- Detects LSIL, HSIL, ASCUS, and ASCH cell patterns  
+---
 
-| ![Cytologick Example](./assets/example.jpg) |
-|:--:|
+## Features
 
-## Installation
+- **Slide Viewing**: Load and navigate MRXS whole-slide images
+- **AI Inference**: U-Net segmentation for detecting LSIL, HSIL, ASCUS, ASCH
+- **Desktop GUI**: PyQt5-based interface with region selection and analysis
+- **Web Interface**: Flask-based deep zoom viewer with overlay annotations
+- **Training Pipeline**: Train custom models with Mixup augmentation and Lovasz loss
 
-### Prerequisites
+---
 
-- [Conda](https://docs.conda.io/en/latest/miniconda.html) package manager
-- [OpenSlide](https://openslide.org) for reading medical slide files
+## Quick Start
 
-### Step 1: Create Python Environment
+### 1. Installation
 
-```bash
-conda create -n cytologick python=3.10
-conda activate cytologick
-```
+**Prerequisites:**
+- Python 3.10
+- Conda (recommended for managing dependencies)
 
-### Step 2: Install OpenSlide
+#### Step A: Install OpenSlide binaries
 
-**Windows:**
+**Crucial Step**: The Python library `openslide-python` is just a wrapper. You MUST install the OpenSlide binaries separately for it to work.
 
-```bash
-# Download from https://openslide.org/download/
-# Extract to a folder and note the path
-```
+- **Windows**: Download the binary zip from [openslide.org/download](https://openslide.org/download/). Extract it (e.g., to `C:/openslide/bin`) and add this path to your `config.yaml` or system PATH.
+- **macOS**: `brew install openslide`
+- **Linux**: `apt-get install libopenslide0`
 
-**Linux/macOS:**
+#### Step B: Install Python environment
 
 ```bash
-# Follow OS-specific instructions at https://openslide.org/download/
-```
+# Create environment
+conda create -n cyto python=3.10
+conda activate cyto
 
-### Step 3: Install ASAP (for annotation only)
-
-Download and install [ASAP](https://computationalpathologygroup.github.io/ASAP/) if you plan to create training datasets from annotated slides.
-
-### Step 4: Install Dependencies
-
-## Option A: PyTorch Only (Recommended)
-
-```bash
+# Install dependencies
 pip install -r requirements-pytorch.txt
+
+# Install Python bindings for OpenSlide
 conda install openslide-python
 ```
+*Note: Using conda for `openslide-python` often helps resolve binary path issues automatically.*
 
-## Option B: Both Frameworks (Full Support)
+### 2. Configure
 
-```bash
-pip install -r requirements.txt
-conda install openslide-python
-```
+This project includes a pre-configured `config.yaml` file. You must edit it to match your local paths.
 
-## Option C: TensorFlow Only (Optional)
-
-```bash
-pip install -r requirements-tensorflow.txt
-conda install openslide-python
-```
-
-**Notes:**
-
-- Both frameworks can be installed together
-- NumPy version constraint (`<2.0.0`) required for TensorFlow compatibility
-- Framework selection done via `config.yaml` (PyTorch recommended)
-
-### Step 5: Download Web Dependencies (Optional: for run_web.py)
-
-Download and place these files in `__web/static/`:
-
-- [jquery.js](https://jquery.com)
-- [openseadragon.js](https://openseadragon.github.io)
-- openseadragon-scalebar.js
-
-### Step 6: Configure Settings
-
-Edit `config.py` or create `config.yaml` to set your paths:
-
-**Required Settings:**
-
-```python
-OPENSLIDE_PATH = "C:/path/to/openslide/bin"  # Windows
-SLIDE_DIR = "./current"  # Folder containing your MRXS files
-```
-
-**Optional Settings:**
-
-```python
-FRAMEWORK = "pytorch"  # Choose "pytorch" (recommended) or "tensorflow"
-IP_EXPOSED = "127.0.0.1"  # Web interface IP
-UNET_PRED_MODE = "remote"  # Use cloud models
-```
-
-**Or use YAML config (config.yaml) — recommended:**
+**Edit `config.yaml`:**
 
 ```yaml
+general:
+  # Path to the folder containing OpenSlide DLLs/binaries (Windows only)
+  openslide_path: "C:/path/to/openslide/bin" 
+  
+  # Folder containing your .mrxs slide files
+  hdd_slides: "D:/Research/Slides" 
+
 neural_network:
-  framework: pytorch  # Options: 'pytorch' (recommended), 'tensorflow'
-general:
-  openslide_path: C:/path/to/openslide/bin
+  framework: pytorch
+
 gui:
-  slide_dir: ./current
-  theme: auto             # 'auto', 'qt', 'windows', 'mac', 'qdarkstyle', or 'qss'
-  material_theme: dark_teal.xml  # qt_material theme name if theme == 'qt'
-  custom_qss: ''          # Path to a .qss file if theme == 'qss'
-
-web:
-  endpoint_url: http://51.250.28.160:7500  # Cloud inference endpoint (optional)
-  health_timeout: 1.5                      # Seconds for cloud reachability check
-
+  slide_dir: "./current"
 ```
 
-### Minimal `config.yaml`
+### 3. Run
 
-Copy-paste and edit paths to get started quickly (PyTorch recommended):
+```bash
+# Desktop application
+python run.py
+
+# Web interface (experimental)
+python run_web.py
+```
+
+---
+
+## Project Structure
+
+```
+Cytologick/
+├── run.py                   # Desktop GUI entry point
+├── run_web.py               # Web interface entry point
+├── config.py                # Configuration defaults
+├── config.yaml              # User configuration
+│
+├── clogic/                  # Core logic
+│   ├── gui.py               # Desktop GUI (PyQt5)
+│   ├── ai_pytorch.py        # Training pipeline
+│   ├── inference_pytorch.py # PyTorch inference
+│   ├── inference_utils.py   # Shared inference utilities
+│   └── model_loading.py     # Model discovery
+│
+├── __web/                   # Web interface
+│   ├── start_web.py         # Flask app entry
+│   ├── deepzoom_server.py   # Tile server
+│   └── __get_slide_roi.py   # ROI extraction
+│
+├── _main/                   # Model storage
+│   └── new_best.pth         # Best trained model
+│
+├── dataset/                 # Training data (generated)
+│   ├── rois/                # Training images
+│   └── masks/               # Training masks
+│
+└── current/                 # Slide files for GUI viewing
+    └── *.mrxs
+```
+
+---
+
+## Training Models
+
+### Step 1: Prepare Annotations
+
+1. Open slides in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
+2. Draw rectangles around cell groups (label as `rect N`)
+3. Draw polygons around individual cells (label as LSIL, HSIL, etc.)
+4. Save as XML alongside the slide file
+
+### Step 2: Generate Dataset
+
+```bash
+# Extract annotations from ASAP XML files
+python get_xmls.py
+
+# Create training images and masks
+python get_dataset.py
+```
+
+### Step 3: Train
+
+```bash
+# Train a new model from scratch
+python model_new.py
+
+# Continue training an existing model
+python model_train.py
+```
+
+**Training outputs** (saved to project root):
+
+| File | Description |
+|------|-------------|
+| `_new_best.pth` | Best model by validation IoU |
+| `_new_final.pth` | Final model at training end |
+| `_new_last.pth` | Latest checkpoint |
+| `_new_epochNNN.pth` | Per-epoch checkpoints |
+
+### Step 4: Deploy to GUI
+
+Copy your trained model to the `_main/` folder:
+
+```bash
+cp _new_best.pth _main/new_best.pth
+```
+
+The GUIs automatically look for models in this order:
+
+1. `_main/new_best.pth` (Primary)
+2. `_main/new_final.pth`
+3. `_main/new_last.pth`
+4. `_main/model.pth` (Legacy)
+5. Any `.pth` file in `_main/`
+
+---
+
+## Configuration Reference
+
+The `config.yaml` file controls all settings.
+
+### General
 
 ```yaml
 general:
-  openslide_path: /path/to/openslide/bin
-  hdd_slides: /path/to/your/slides          # Folder with .mrxs files
+  openslide_path: "path/to/bin"   # Crucial for Windows
+  hdd_slides: "path/to/slides"    # Storage path
   temp_folder: temp
+```
 
+### Neural Network
+
+```yaml
 neural_network:
   framework: pytorch
   dataset_folder: dataset
   masks_folder: masks
   images_folder: rois
   classes: 3
-  labels:               # Map your annotation labels to class index 2 (foreground)
+  image_shape: [128, 128]
+  labels:
     LSIL: 2
     HSIL: 2
     ASCUS: 2
-
-gui:
-  slide_dir: ./current
-
-dataset:
-  exclude_duplicates: false
-  broaden_individual_rect: 1000
+    ASCH: 2
 ```
 
-## What You Need
-
-- **Slide Files**: MRXS format Pap smear slides
-- **Python Environment**: Python 3.10.6 or later with Conda
-- **[OpenSlide](https://openslide.org/)**: For reading medical slide files
-- **[ASAP](https://computationalpathologygroup.github.io/ASAP/)**: For slide annotation (optional, for training)
-- **Internet Connection**: For cloud-based AI analysis (recommended)
-
-## Quick Start
-
-### 1. Run Desktop Application (Recommended)
-
-```bash
-# Activate your environment
-conda activate cytologick
-
-# Run the application
-python run.py
-```
-
-Opens a desktop research application for experimental slide analysis.
-
-### 2. Web Interface (Experimental)
-
-```bash
-python run_web.py
-```
-
-Notes:
-
-- If `_main/model*.pth` exists and `FRAMEWORK: pytorch`, the web DeepZoom tiles include a red overlay of model predictions (threshold set by `web.web_conf_threshold`).
-- Web interface is experimental and under active refactoring.
-
-#### Web UI Screenshots
-
-| ![Web UI – Slides](assets/web_main.jpg) |
-|:--:|
-
-| ![Web UI – Report Preview](assets/web_report.jpg) |
-|:--:|
-
-#### Required JavaScript Assets
-
-The web preview relies on OpenSeadragon and jQuery. When you start `run_web.py`, the script verifies these files exist and prints an error if not found:
-
-- `__web/static/jquery.js`
-- `__web/static/openseadragon.js`
-- `__web/static/openseadragon-scalebar.js`
-
-Place the files in `__web/static/` (see “Step 5: Download Web Dependencies”). Without them, the web viewer will not work.
-
-## Getting Started
-
-### 1. Prepare Your Files
-
-- Place your MRXS slide files in the `current/` folder
-- Make sure OpenSlide path is configured in `config.py`
-
-### 2. Start Analysis
-
-```bash
-# Activate your environment
-conda activate cytologick
-
-# Run desktop application (recommended)
-python run.py
-```
-
-### 3. Using the Interface
-
-1. **Load Slide**: Select your MRXS file from the file browser
-2. **Run Analysis**: Click analyze to run experimental detection
-3. **View Results**: Areas of interest will be highlighted with annotations
-4. **Export Results**: Save analysis results for research purposes
-
-### Advanced: Training Your Own Models (PyTorch)
-
-#### Step 1: Prepare Your Annotated Data
-
-1. **Annotate slides** in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
-   - Draw rectangles around groups of abnormal cells, label those as 'rect N' where N is rectangle ID
-   - Draw polygons around individual abnormal cells inside a rectangle to form regions
-   - Label each region as (LSIL, HSIL, ASCUS, etc.)
-   - Save annotation files as XML
-
-2. **Organize your files:**
-
-   ``` bash
-   your_data_folder/
-   ├── slide1.mrxs
-   ├── slide1.xml
-   ├── slide2.mrxs
-   ├── slide2.xml
-   └── ...
-   ```
-
-#### Step 2: Configure Training Paths
-
-Edit `config.py` or `config.yaml` to point to your data:
-
-```python
-HDD_SLIDES = "/path/to/your_data_folder"
-DATASET_FOLDER = "dataset"
-```
-
-#### Step 3: Choose Your Framework
-
-Set your preferred framework in `config.yaml`:
+### GUI
 
 ```yaml
-neural_network:
-  framework: pytorch  # or "tensorflow"
+gui:
+  slide_dir: ./current
+  unet_pred_mode: direct      # 'direct', 'smooth', or 'remote'
+  theme: qdarkstyle           # 'auto', 'qt', 'windows', 'mac', 'qdarkstyle'
 ```
 
-#### Step 4: Run Training Pipeline (PyTorch)
+### Web
 
-```bash
-# Extract annotations from ASAP XML files
-python get_xmls.py
-
-# Create training dataset from extracted annotations
-python get_dataset.py
-
-# Train new model (uses configured framework; PyTorch recommended)
-python model_new.py
-
-# Continue training existing model
-python model_train.py
+```yaml
+web:
+  endpoint_url: http://remote-server:7500
+  health_timeout: 1.5
+  web_conf_threshold: 0.25    # Confidence threshold (0.0 - 1.0)
+  fast_tiles: true            # Speed up preview generation
 ```
 
-**Under the hood:**
+---
 
-- PyTorch: `clogic.ai_pytorch` + `segmentation_models_pytorch` (AMP, scheduler, tqdm)
-- TensorFlow: `clogic.ai` + `segmentation_models` (legacy)
+## Inference Modes
 
-#### Outputs and Checkpoints (PyTorch)
+| Mode | Description |
+|------|-------------|
+| `direct` | Fast local inference using PyTorch model |
+| `smooth` | Smoother predictions with overlapping windows |
+| `remote` | Send tiles to TensorFlow Serving endpoint |
 
-- Per-epoch checkpoints: `{model_path}_epochNNN.pth`
-- Rolling last checkpoint: `{model_path}_last.pth`
-- Best by IoU: `{model_path}_best.pth`
-- Final at end: `{model_path}_final.pth`
+The GUI shows cloud availability status and automatically falls back to local mode if remote is unavailable.
 
-By default, `model_new.py` saves to files prefixed by `_new` in the project root (e.g., `_new_best.pth`). Pass a folder in `model_path` to organize runs (e.g., `models/run1/cytounet`).
+---
 
-#### Dataset Structure (generated by get_dataset.py)
+## Web Interface
 
-- Images: `dataset/rois/` (or `${DATASET_FOLDER}/${IMAGES_FOLDER}` from config)
-- Masks: `dataset/masks/` (or `${DATASET_FOLDER}/${MASKS_FOLDER}` from config)
-- Tile sizes: 128×128 by default for training (see `config.IMAGE_SHAPE`)
+The web interface (`run_web.py`) requires specific JavaScript libraries to function.
 
-#### Step 5: Use Your Trained Model
+**Required Assets:**
+Download these files and place them in the `__web/static/` directory:
 
-After training completes, copy the trained model to use locally:
+1.  **jQuery**:
+    -   Download: [jquery-3.7.1.min.js](https://code.jquery.com/jquery-3.7.1.min.js)
+    -   Save as: `__web/static/jquery.js`
 
-**For PyTorch models (recommended):**
+2.  **OpenSeadragon**:
+    -   Download: [openseadragon-bin-5.0.1.zip](https://github.com/openseadragon/openseadragon/releases/download/v5.0.1/openseadragon-bin-5.0.1.zip)
+    -   Extract `openseadragon.min.js` from the zip.
+    -   Save as: `__web/static/openseadragon.js`
+    -   *Also extract the `images` folder from the zip and place it at `__web/static/images`.*
 
-```bash
-# Create folder if needed
-mkdir -p _main
+3.  **OpenSeadragon Scalebar**:
+    -   Download: [openseadragon-scalebar.js](https://github.com/usnistgov/OpenSeadragonScalebar/raw/master/openseadragon-scalebar.js)
+    -   Save as: `__web/static/openseadragon-scalebar.js`
 
-# Copy your best or final weights into _main
-cp _new_best.pth  _main/model_best.pth   # or
-cp _new_final.pth _main/model_final.pth  # or
-cp _new_last.pth  _main/model.pth
-```
+⚠️ **If these files are missing, the web viewer will not load.**
 
-The desktop app (`run.py`) looks for PyTorch weights in `_main/` under these names: `model.pth`, `model_best.pth`, `model_final.pth`.
+---
 
-**For TensorFlow models:**
+## Cell Types
 
-```bash
-cp -r trained_model_output/ _main/
-```
+Cytologick focuses on cervical cytology patterns:
 
-Your custom model will now be used automatically when you run `python run.py`.
+| Abbreviation | Full Name |
+|--------------|-----------|
+| **LSIL** | Low-grade Squamous Intraepithelial Lesion |
+| **HSIL** | High-grade Squamous Intraepithelial Lesion |
+| **ASCUS** | Atypical Squamous Cells of Undetermined Significance |
+| **ASCH** | Atypical Squamous Cells, Cannot Exclude HSIL |
 
-## Getting AI Models
+---
 
-### Option 1: Local Models (Recommended)
+## Technical Details
 
-For best performance and offline analysis:
+### Training Pipeline (PyTorch)
 
-1. **Create model folder:**
+- **Model**: U-Net with EfficientNet-B3 encoder
+- **Augmentation**: Mixup (alpha=0.4), rotation, affine transforms, noise
+- **Loss**: Lovasz Softmax + Cross Entropy with Label Smoothing (0.1)
+- **Optimizer**: NAdam with Cosine Annealing Warm Restarts
+- **Mixed Precision**: Automatic Mixed Precision (AMP) enabled
 
-   ```bash
-   mkdir _main
-   ```
+### Dependencies
 
-2. **Place your trained model:**
-   - PyTorch: Copy `.pth` weights to `_main/` as `model.pth`, `model_best.pth`, or `model_final.pth`
-   - TensorFlow: Copy SavedModel directory to `_main/`
-   - The application will automatically detect and load local models
+- PyTorch + segmentation_models_pytorch
+- PyQt5 for desktop GUI
+- Flask + OpenSlide for web interface
+- OpenCV, NumPy, Albumentations
 
-3. **Model requirements:**
-   - **PyTorch**: State dict (.pth files) in `_main/` folder (recommended)
-   - **TensorFlow**: SavedModel format in `_main/` folder  
-   - Input shape: (128, 128, 3)
-   - Output: Segmentation mask for cell classification
-
-**Local model characteristics:**
-
-- Runs offline (no internet required)
-- Inference speed depends on your hardware
-- Data processed locally
-- Model weights loaded into memory on startup
-
-### Option 2: Remote Models
-
-Models running on remote servers via TensorFlow Serving. Requires internet connection.
-
-**To use custom cloud models:**
-
-1. Edit `clogic/inference.py`
-2. Modify the `apply_remote` function parameters:
-   - `endpoint_url`: Your TensorFlow Serving endpoint
-   - `model_name`: Your model's name on the server
-
-Remote models send data over network to TensorFlow Serving endpoints.
-
-## Understanding Annotations
-
-### ASAP Annotation Format
-
-Cytologick uses ASAP annotation format for training data. See `annotation_example.xml` for a sample annotation file.
-
-**Key elements:**
-
-- **Rectangles**: Define regions of interest around abnormal cells
-- **Coordinates**: Precise pixel locations for each annotation
-- **Labels**: Cell type classifications (LSIL, HSIL, ASCUS, etc.)
-
-**Creating annotations:**
-
-1. Open slide in [ASAP](https://computationalpathologygroup.github.io/ASAP/)
-2. Draw rectangles around groups of abnormal cells, label those as 'rect N' where N is rectangle ID
-3. Draw polygons around individual abnormal cells inside a rectangle to form regions
-4. Label each region with appropriate cell type
-5. Save as XML annotation file
-
-## Cell Types (Research Focus)
-
-Cytologick research focuses on these cervical cell patterns:
-
-- **LSIL** - Low-grade Squamous Intraepithelial Lesion
-- **HSIL** - High-grade Squamous Intraepithelial Lesion  
-- **ASCUS** - Atypical Squamous Cells of Undetermined Significance
-- **ASCH** - Atypical Squamous Cells, Cannot Exclude HSIL
-
-## UI Themes (QSS)
-
-The app supports platform-specific QSS themes and falls back to qt-material if not present:
-
-- Windows: `styles/windows.qss` (dark, fluent-inspired)
-- macOS: `styles/mac.qss` (light, macOS-inspired)
-
-To force a theme, set in `config.yaml` under `gui.theme`: `auto` (default), `qt`, `windows`, `mac`, `qdarkstyle`, or `qss`.
-
-- If `gui.theme: qt`, choose a qt-material theme via `gui.material_theme` (e.g., `dark_amber.xml`, `dark_blue.xml`, `light_cyan.xml`).
-- If `gui.theme: qdarkstyle`, install it: `pip install qdarkstyle`.
-- If `gui.theme: qss`, point `gui.custom_qss` to your .qss file.
-
-## Cloud Status in Preview
-
-The Preview window shows a cloud status indicator:
-
-- Cloud: Available — remote endpoint reachable
-- Cloud: Unavailable — the “Cloud: Fast” option is hidden and the mode falls back to local
-
-You can set the endpoint and health check timeout in `config.yaml` under `web:`.
-
-## Keywords
-
-Pap smear research, cytology AI, medical image analysis research, LSIL detection research, HSIL detection research, ASCUS detection research, digital pathology research, deep learning, U-Net segmentation, TensorFlow, PyTorch, computer vision research
+---
 
 ## Contributing
 
-We welcome issues and pull requests! Please see `CONTRIBUTING.md` for guidelines on setup, coding style, testing, and how to propose changes.
-
-Quick links:
-
-- Contribution guide: `CONTRIBUTING.md`
-- License: `LICENSE`
+See `CONTRIBUTING.md` for guidelines.
 
 ## License
 
-MIT License — see `LICENSE` for full text.
+MIT License - see `LICENSE` for details.
 
-Important: Cytologick is for research and educational use only. It is not a medical device and is not intended for clinical diagnosis or treatment. Users are responsible for validating performance and complying with all applicable regulations before any clinical use.
+---
+
+*Cytologick is for research and educational use only. It is not intended for clinical diagnosis or treatment.*

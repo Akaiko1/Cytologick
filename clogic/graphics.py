@@ -41,7 +41,7 @@ def get_corrected_size(height, width, factor=256):
 
 
 def process_dense_pathology_map(pathology_map, threshold: float = 0.5):
-    markup = np.zeros((pathology_map[..., 0].shape + (4,)))
+    markup = np.zeros((pathology_map[..., 0].shape + (4,)), dtype=np.uint8)
     red_marks = markup[..., 2].copy()
     stats, texts_probs, texts_labels = {}, [], []
 
@@ -77,7 +77,7 @@ def process_dense_pathology_map(pathology_map, threshold: float = 0.5):
 
 
 def process_sparse_pathology_map(pathology_map):
-    markup = np.zeros((pathology_map.shape + (4,)))
+    markup = np.zeros((pathology_map.shape + (4,)), dtype=np.uint8)
     stats = {
         'Total objects': 0,
         'Groups': 0,

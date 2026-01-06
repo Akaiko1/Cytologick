@@ -4,12 +4,12 @@ import yaml
 import multiprocessing
 
 #region General
-# CURRENT_SLIDE = 'current\slide-2022-11-11T11-10-38-R1-S18.mrxs'
-CURRENT_SLIDE = os.path.abspath('slide-2022-09-12T15-38-25-R1-S2.mrxs') # 'current\slide-2022-09-12T15-38-25-R1-S2.mrxs'
-CURRENT_SLIDE_XML = 'current\\slide-2022-09-12T15-38-25-R1-S2\\Data0021.dat'
-OPENSLIDE_PATH = os.path.abspath('openslide\\bin') # 'E:\\Github\\DemetraAI\\openslide\\bin'
+# CURRENT_SLIDE = os.path.join('current', 'slide-2022-11-11T11-10-38-R1-S18.mrxs')
+CURRENT_SLIDE = os.path.abspath('slide-2022-09-12T15-38-25-R1-S2.mrxs')
+CURRENT_SLIDE_XML = os.path.join('current', 'slide-2022-09-12T15-38-25-R1-S2', 'Data0021.dat')
+OPENSLIDE_PATH = os.path.abspath(os.path.join('openslide', 'bin'))
 HDD_SLIDES = os.path.abspath('current')
-HDD_SLIDES_SVS = 'E:\\CYTOLOGY_2'
+HDD_SLIDES_SVS = 'E:\\CYTOLOGY_2' # Kept as legacy Windows path
 TEMP_FOLDER = 'temp'
 #endregion
 
@@ -34,8 +34,9 @@ LABELS = {
 #endregion
 
 #region GUI
-SLIDE_DIR = './current' # Only for GUI
+SLIDE_DIR = os.path.join('.', 'current') # Only for GUI
 UNET_PRED_MODE = 'remote' # 'smooth', 'direct'
+USE_TTA = False # Enable Test Time Augmentation (8x slower) within smooth mode
 # Theme options:
 # - 'auto' (platform QSS)
 # - 'qt' (qt_material theme)
@@ -104,7 +105,7 @@ def _load_ini_config(config_file):
 def _update_globals_from_dict(config):
     global CURRENT_SLIDE, CURRENT_SLIDE_XML, OPENSLIDE_PATH, HDD_SLIDES, HDD_SLIDES_SVS, TEMP_FOLDER
     global FRAMEWORK, DATASET_FOLDER, MASKS_FOLDER, IMAGES_FOLDER, IMAGE_CHUNK, IMAGE_SHAPE, CLASSES, LABELS
-    global SLIDE_DIR, UNET_PRED_MODE, GUI_THEME, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE, WEB_ATYPICAL_CLASS_INDEX
+    global SLIDE_DIR, UNET_PRED_MODE, GUI_THEME, USE_TTA, EXCLUDE_DUPLICATES, BROADEN_INDIVIDUAL_RECT, IP_EXPOSED, ENDPOINT_URL, HEALTH_TIMEOUT, WEB_CONF_THRESHOLD, WEB_FAST_TILES, WEB_TILE_CACHE_SIZE, WEB_ATYPICAL_CLASS_INDEX
     
     general = config.get('general', {})
     if 'current_slide' in general:
@@ -143,6 +144,8 @@ def _update_globals_from_dict(config):
         SLIDE_DIR = gui['slide_dir']
     if 'unet_pred_mode' in gui:
         UNET_PRED_MODE = gui['unet_pred_mode']
+    if 'use_tta' in gui:
+        USE_TTA = gui['use_tta']
     if 'theme' in gui:
         GUI_THEME = gui['theme']
     if 'material_theme' in gui:

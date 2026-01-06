@@ -170,64 +170,50 @@ def get_val_transforms():
     ])
 
 
-class JaccardLoss(nn.Module):
-    """
-    Jaccard (IoU) Loss for segmentation.
-    """
-    
-    def __init__(self, smooth=1e-7):
-        super(JaccardLoss, self).__init__()
-        self.smooth = smooth
-    
-    def forward(self, y_pred, y_true):
-        y_pred = F.softmax(y_pred, dim=1)
-        y_true_one_hot = F.one_hot(y_true.long(), num_classes=y_pred.shape[1]).permute(0, 3, 1, 2).float()
-        
-        intersection = (y_pred * y_true_one_hot).sum(dim=(2, 3))
-        union = y_pred.sum(dim=(2, 3)) + y_true_one_hot.sum(dim=(2, 3)) - intersection
-        
-        jaccard = (intersection + self.smooth) / (union + self.smooth)
-        return 1 - jaccard.mean()
 
-
-class FocalLoss(nn.Module):
+def mixup_data(x, y, alpha=0.4, device=DEVICE):
     """
-    Focal Loss for addressing class imbalance.
+    Returns mixed inputs, pairs of targets, and lambda.
     """
-    
-    def __init__(self, alpha=1, gamma=2, reduce=True):
-        super(FocalLoss, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.reduce = reduce
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
 
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
-        pt = torch.exp(-ce_loss)
-        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size).to(device)
 
-        if self.reduce:
-            return torch.mean(focal_loss)
-        else:
-            return focal_loss
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
 
 
 class CombinedLoss(nn.Module):
     """
-    Combined Jaccard and Focal Loss to match TensorFlow implementation.
+    Combined Lovasz Softmax and Cross Entropy Loss (with Label Smoothing).
     """
     
-    def __init__(self, jaccard_weight=1.0, focal_weight=1.0):
+    def __init__(self, lovasz_weight=1.0, ce_weight=1.0):
         super(CombinedLoss, self).__init__()
-        self.jaccard_loss = JaccardLoss()
-        self.focal_loss = FocalLoss()
-        self.jaccard_weight = jaccard_weight
-        self.focal_weight = focal_weight
+        # Lovasz Softmax Loss (typically for multiclass, using logit inputs)
+        self.lovasz_loss = smp.losses.LovaszLoss(mode='multiclass', per_image=True)
+        # Cross Entropy with Label Smoothing
+        self.ce_loss = nn.CrossEntropyLoss(label_smoothing=0.1)
+        self.lovasz_weight = lovasz_weight
+        self.ce_weight = ce_weight
     
     def forward(self, y_pred, y_true):
-        jaccard = self.jaccard_loss(y_pred, y_true)
-        focal = self.focal_loss(y_pred, y_true)
-        return self.jaccard_weight * jaccard + self.focal_weight * focal
+        # y_pred: (N, C, H, W) logits
+        # y_true: (N, H, W) long indices
+        
+        # Ensure y_true is long
+        if y_true.dtype != torch.long:
+            y_true = y_true.long()
+
+        lovasz = self.lovasz_loss(y_pred, y_true)
+        ce = self.ce_loss(y_pred, y_true)
+        
+        return self.lovasz_weight * lovasz + self.ce_weight * ce
 
 
 def iou_score(y_pred, y_true, num_classes=3):
@@ -326,78 +312,12 @@ def get_datasets(images_path: str, masks_path: str, train_split: float = 0.8):
     return train_subset, val_subset, total_samples
 
 
-def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, batch_size: int = 64,
-                            lr: float = 0.001, use_amp: bool = True):
+def _train_model_loop(model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx, 
+                      epochs, model_path, output_classes_metrics):
     """
-    Train a new U-Net model with EfficientNetB3 encoder using PyTorch.
-    
-    This function mirrors the TensorFlow implementation exactly.
-    
-    Args:
-        model_path: Path where the trained model will be saved
-        output_classes: Number of segmentation classes (e.g., 3 for background, LSIL, HSIL)
-        epochs: Number of training epochs
-        batch_size: Training batch size (default: 64)
+    Common training loop for PyTorch models.
     """
-    # Reproducibility
-    set_seed(42)
-
-    # Construct dataset paths from configuration
-    images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
-    masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
-    
-    # Load and prepare datasets
-    train_dataset, val_dataset, total_samples = get_datasets(images_path, masks_path)
-    
-    # Create data loaders
-    num_workers = min(4, os.cpu_count() or 4)
-    pin_mem = torch.cuda.is_available()
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        num_workers=num_workers, 
-        pin_memory=pin_mem,
-        persistent_workers=bool(num_workers)
-    )
-    val_loader = DataLoader(
-        val_dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
-        num_workers=num_workers, 
-        pin_memory=pin_mem,
-        persistent_workers=bool(num_workers)
-    )
-    
-    print(f"Train samples: {len(train_dataset)}")
-    print(f"Validation samples: {len(val_dataset)}")
-    print(f"Total samples: {total_samples}")
-    
-    # Create U-Net model with EfficientNetB3 backbone
-    # Output logits; losses/metrics handle softmax explicitly
-    model = smp.Unet(
-        encoder_name='efficientnet-b3',
-        encoder_weights='imagenet',
-        classes=output_classes,
-        activation=None
-    )
-    model = model.to(DEVICE)
-    
-    # Define loss, optimizer, and scheduler
-    criterion = CombinedLoss()
-    optimizer = torch.optim.NAdam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
-    if torch.cuda.is_available():
-        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
-        amp_ctx = lambda: torch.amp.autocast('cuda', enabled=use_amp)
-    else:
-        scaler = None
-        amp_ctx = nullcontext
-    
-    # Training loop
     best_iou = 0.0
-    train_losses = []
-    val_ious = []
     
     for epoch in range(epochs):
         # Training phase
@@ -410,9 +330,15 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
             masks = masks.to(DEVICE).long()
             
             optimizer.zero_grad()
+            
+            # Apply Mixup
+            inputs, targets_a, targets_b, lam = mixup_data(images, masks, alpha=0.4, device=DEVICE)
+
             with amp_ctx():
-                outputs = model(images)
-                loss = criterion(outputs, masks)
+                outputs = model(inputs)
+                # Compute loss for both targets and mix
+                loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+                
             if scaler is not None:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -422,15 +348,14 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
                 optimizer.step()
             
             running_loss += loss.item()
-            # Live update progress bar with metrics
             if hasattr(pbar, 'set_postfix'):
+                # Handle both scalar and tensor loss for display
+                loss_val = loss.item() if isinstance(loss, torch.Tensor) else loss
                 avg_loss = running_loss / (batch_idx + 1)
                 lr_now = optimizer.param_groups[0]['lr']
                 pbar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr_now:.3e}")
             
-        
         avg_train_loss = running_loss / len(train_loader)
-        train_losses.append(avg_train_loss)
         
         # Validation phase
         model.eval()
@@ -446,8 +371,8 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
                 outputs = model(images)
                 
                 # Calculate metrics
-                iou = iou_score(outputs, masks, output_classes)
-                f1 = f1_score(outputs, masks, output_classes)
+                iou = iou_score(outputs, masks, output_classes_metrics)
+                f1 = f1_score(outputs, masks, output_classes_metrics)
                 
                 val_iou += iou
                 val_f1 += f1
@@ -457,7 +382,6 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
         
         avg_val_iou = val_iou / len(val_loader)
         avg_val_f1 = val_f1 / len(val_loader)
-        val_ious.append(avg_val_iou)
         
         print(f'Epoch {epoch+1}/{epochs}: Train Loss: {avg_train_loss:.4f}, Val IoU: {avg_val_iou:.4f}, Val F1: {avg_val_f1:.4f}')
 
@@ -467,45 +391,54 @@ def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, b
         except Exception:
             pass
 
-        # Save weights every epoch to avoid progress loss
-        epoch_weights = f"{model_path}_epoch{epoch+1:03d}.pth"
+        # Save weights every epoch
+        base_path = os.path.splitext(model_path)[0]
+        epoch_weights = f"{base_path}_epoch{epoch+1:03d}.pth"
         torch.save(model.state_dict(), epoch_weights)
-        torch.save(model.state_dict(), f"{model_path}_last.pth")
+        torch.save(model.state_dict(), f"{base_path}_last.pth")
 
         # Save best model
         if avg_val_iou > best_iou:
             best_iou = avg_val_iou
-            torch.save(model.state_dict(), f"{model_path}_best.pth")
+            torch.save(model.state_dict(), f"{base_path}_best.pth")
             print(f'New best model saved with IoU: {best_iou:.4f}')
     
     # Save final model
-    torch.save(model.state_dict(), f"{model_path}_final.pth")
+    torch.save(model.state_dict(), f"{base_path}_final.pth")
     print(f'Training completed. Best IoU: {best_iou:.4f}')
 
 
-def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 64, lr: float = 0.0001, use_amp: bool = True):
+def _setup_training_components(model, lr, use_amp):
     """
-    Continue training an existing PyTorch model.
+    Setup optimizer, scheduler, criterion, and mixed precision components.
+    """
+    criterion = CombinedLoss()
+    optimizer = torch.optim.NAdam(model.parameters(), lr=lr)
+    # Note: T_mult=2 matches original train_new_model implementation
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
     
-    Args:
-        model_path: Path to the existing trained model to load and continue training
-        epochs: Number of additional epochs to train
-        batch_size: Training batch size (default: 64)
-        lr: Learning rate for the optimizer (default: 0.0001)
-    """
-    # Reproducibility
-    set_seed(42)
+    if torch.cuda.is_available():
+        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+        amp_ctx = lambda: torch.amp.autocast('cuda', enabled=use_amp)
+    else:
+        scaler = None
+        amp_ctx = nullcontext
+        
+    return criterion, optimizer, scheduler, scaler, amp_ctx
 
-    # Construct dataset paths from configuration
+
+def _prepare_data_loaders(batch_size):
+    """
+    Create data loaders from config paths.
+    """
     images_path = os.path.join(config.DATASET_FOLDER, config.IMAGES_FOLDER)
     masks_path = os.path.join(config.DATASET_FOLDER, config.MASKS_FOLDER)
     
-    # Load and prepare datasets
     train_dataset, val_dataset, total_samples = get_datasets(images_path, masks_path)
     
-    # Create data loaders
     num_workers = min(4, os.cpu_count() or 4)
     pin_mem = torch.cuda.is_available()
+    
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
@@ -523,8 +456,44 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
         persistent_workers=bool(num_workers)
     )
     
-    # Load existing model
-    # Output logits; losses/metrics handle softmax explicitly
+    return train_loader, val_loader, total_samples
+
+
+def train_new_model_pytorch(model_path: str, output_classes: int, epochs: int, batch_size: int = 64,
+                            lr: float = 0.001, use_amp: bool = True):
+    """
+    Train a new U-Net model using PyTorch.
+    """
+    set_seed(42)
+    
+    train_loader, val_loader, total_samples = _prepare_data_loaders(batch_size)
+    print(f"Total samples: {total_samples}")
+    
+    model = smp.Unet(
+        encoder_name='efficientnet-b3',
+        encoder_weights='imagenet',
+        classes=output_classes,
+        activation=None
+    )
+    model = model.to(DEVICE)
+    
+    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(model, lr, use_amp)
+    
+    _train_model_loop(
+        model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
+        epochs, model_path, output_classes
+    )
+
+
+def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 64, lr: float = 0.0001, use_amp: bool = True):
+    """
+    Continue training an existing PyTorch model.
+    """
+    set_seed(42)
+    
+    train_loader, val_loader, _ = _prepare_data_loaders(batch_size)
+    
+    # Load existing architecture
     model = smp.Unet(
         encoder_name='efficientnet-b3',
         encoder_weights='imagenet',
@@ -534,90 +503,12 @@ def train_current_model_pytorch(model_path: str, epochs: int, batch_size: int = 
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model = model.to(DEVICE)
     
-    # Define loss, optimizer, scheduler, and AMP scaler
-    criterion = CombinedLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
-    if torch.cuda.is_available():
-        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
-        amp_ctx = lambda: torch.amp.autocast('cuda', enabled=use_amp)
-    else:
-        scaler = None
-        amp_ctx = nullcontext
+    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(model, lr, use_amp)
     
-    # Continue training
-    best_iou = 0.0
-    
-    for epoch in range(epochs):
-        # Training phase
-        model.train()
-        running_loss = 0.0
-        
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False, dynamic_ncols=True)
-        for batch_idx, (images, masks) in enumerate(pbar):
-            images = images.to(DEVICE).float()
-            masks = masks.to(DEVICE).long()
-            
-            optimizer.zero_grad()
-            with amp_ctx():
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-            if scaler is not None:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                optimizer.step()
-            
-            running_loss += loss.item()
-            if hasattr(pbar, 'set_postfix'):
-                avg_loss = running_loss / (batch_idx + 1)
-                lr_now = optimizer.param_groups[0]['lr']
-                pbar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr_now:.3e}")
-        
-        avg_train_loss = running_loss / len(train_loader)
-        
-        # Validation phase
-        model.eval()
-        val_iou = 0.0
-        
-        with torch.no_grad():
-            vbar = tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False, dynamic_ncols=True)
-            for images, masks in vbar:
-                images = images.to(DEVICE).float()
-                masks = masks.to(DEVICE).long()
-                
-                outputs = model(images)
-                iou = iou_score(outputs, masks, config.CLASSES)
-                val_iou += iou
-                if hasattr(vbar, 'set_postfix'):
-                    seen = max(1, vbar.n)
-                    vbar.set_postfix(iou=f"{val_iou/seen:.4f}")
-        
-        avg_val_iou = val_iou / len(val_loader)
-        
-        print(f'Epoch {epoch+1}/{epochs}: Train Loss: {avg_train_loss:.4f}, Val IoU: {avg_val_iou:.4f}')
-
-        # Step LR scheduler
-        try:
-            scheduler.step(epoch + 1)
-        except Exception:
-            pass
-
-        # Save weights every epoch to avoid progress loss
-        base = os.path.splitext(model_path)[0]
-        epoch_weights = f"{base}_epoch{epoch+1:03d}.pth"
-        torch.save(model.state_dict(), epoch_weights)
-        torch.save(model.state_dict(), f"{base}_last.pth")
-
-        # Save best model
-        if avg_val_iou > best_iou:
-            best_iou = avg_val_iou
-            torch.save(model.state_dict(), f"{base}_best.pth")
-            print(f'Model updated with IoU: {best_iou:.4f}')
-    
-    print(f'Training completed. Best IoU: {best_iou:.4f}')
+    _train_model_loop(
+        model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
+        epochs, model_path, config.CLASSES
+    )
 
 
 def create_mask_pytorch(pred_mask):

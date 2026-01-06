@@ -1,28 +1,45 @@
+"""
+Desktop GUI for Cytologick - PyQt5-based slide viewer with AI analysis.
+
+This module provides a desktop application for:
+- Viewing whole-slide microscopy images (MRXS format)
+- Selecting regions of interest for AI analysis
+- Running inference using local or remote models
+- Displaying analysis results with confidence overlays
+
+Classes:
+    Preview: Analysis preview window with inference controls
+    Menu: Slide selection and zoom level controls  
+    Viewer: Main application window with slide navigation
+"""
+
 import glob
-from PyQt5.QtWidgets import QApplication, QWidget, QComboBox, QHBoxLayout,\
-     QVBoxLayout, QLabel, QScrollArea, QStackedLayout, QPushButton, QRadioButton, QSlider
-from PyQt5.QtGui import QPixmap, QPalette, QPainter, QBrush, QPen
-from PyQt5.QtCore import Qt
+import os
 import socket
 from urllib.parse import urlparse
 
 import cv2
-import os
+import numpy as np
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QBrush, QPainter, QPen, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication, QComboBox, QHBoxLayout, QLabel, QPushButton,
+    QRadioButton, QScrollArea, QSlider, QVBoxLayout, QWidget
+)
 
 import config
 import clogic.contours as contours
 import clogic.graphics as drawing
+import clogic.model_loading as model_loading
+import clogic.inference_utils as inference_utils
 
-import numpy as np
-
-# Import framework-specific modules based on config
+# Framework-specific imports
 if config.FRAMEWORK.lower() == 'pytorch':
     import clogic.inference_pytorch as inference
-    import torch
 else:
     import clogic.inference as inference
-    import tensorflow as tf
 
+# OpenSlide import with DLL handling for Windows
 if hasattr(os, 'add_dll_directory'):
     with os.add_dll_directory(config.OPENSLIDE_PATH):
         import openslide
@@ -30,385 +47,450 @@ else:
     import openslide
 
 
+# =============================================================================
+# Preview Window - Analysis results display
+# =============================================================================
+
 class Preview(QWidget):
+    """
+    Analysis preview window showing inference results.
+    
+    Displays the selected region with optional overlay showing detected
+    abnormalities. Provides controls for inference mode selection and
+    confidence threshold adjustment.
+    
+    Attributes:
+        modes: Available inference modes ['smooth', 'direct', 'remote']
+        mode_names: Human-readable names for each mode
+        conf_threshold: Detection confidence threshold (0-1)
+    """
+    
+    # Inference mode options
     modes = ['smooth', 'direct', 'remote']
     mode_names = ['Local: Comprehensive', 'Local: Fast', 'Cloud: Fast']
 
-    def __init__(self, parent, pixmap):
+    def __init__(self, parent: 'Viewer', pixmap: QPixmap):
+        """
+        Initialize the preview window.
+        
+        Args:
+            parent: Parent Viewer widget (provides model access)
+            pixmap: Image to display for analysis
+        """
         super().__init__()
-
+        
         self.parent = parent
         self.image = pixmap
-        self.map = None
-        self.conf_threshold = 0.6  # default 60%
+        self.map = None  # Overlay map (set after analysis)
+        self.conf_threshold = 0.6  # Default 60% confidence
         
         self.setWindowTitle("Preview")
-        self.setPreviewLayout()
+        self._setup_layout()
         self.setMaximumSize(2000, 1200)
     
-    def _remote_available(self, timeout: float | None = None) -> bool:
-        """Quick TCP reachability check for the configured remote endpoint.
-
-        Uses the default endpoint from the TF inference module if available.
-        """
-        # Prefer endpoint from config
-        endpoint = getattr(config, 'ENDPOINT_URL', None)
-        if not endpoint:
-            try:
-                # Import here to avoid TF import when using PyTorch-only mode
-                import clogic.inference as tf_inf
-                endpoint = tf_inf.apply_remote.__defaults__[2] if len(tf_inf.apply_remote.__defaults__) >= 3 else 'http://127.0.0.1:8501'
-            except Exception:
-                endpoint = 'http://127.0.0.1:8501'
-
-        try:
-            parsed = urlparse(endpoint)
-            host = parsed.hostname
-            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-            if not host:
-                return False
-            to = timeout if timeout is not None else getattr(config, 'HEALTH_TIMEOUT', 1.5)
-            with socket.create_connection((host, port), timeout=to):
-                return True
-        except Exception:
-            return False
-
-    def setPreviewLayout(self):
+    def _setup_layout(self):
+        """Configure the preview window layout with controls."""
         main_layout = QHBoxLayout()
-
-        display_layout = QVBoxLayout()
-        display_widget = QWidget()
-        display_widget.setMaximumWidth(200)
-        display_widget.setLayout(display_layout)
-
-        remote_ok = self._remote_available()
-        for idx, mode in enumerate(self.modes):
-            if mode == 'remote' and not remote_ok:
-                # Skip cloud option if endpoint not reachable
-                continue
-            
-            # guard disabling offline modes
-            if self.parent.model is None and 'remote' not in mode:
-                continue
-
-            radiobutton = QRadioButton(self.mode_names[idx])
-            # Fallback to a local mode if remote is not available
-            if config.UNET_PRED_MODE == 'remote' and not remote_ok and self.parent.model is not None:
-                config.UNET_PRED_MODE = 'direct'
-            if mode == config.UNET_PRED_MODE:
-                radiobutton.setChecked(True)
-            radiobutton.mode = mode
-            radiobutton.toggled.connect(self.__modeSelected)
-            display_layout.addWidget(radiobutton)
-
+        
+        # --- Control Panel (right side) ---
+        control_layout = QVBoxLayout()
+        control_widget = QWidget()
+        control_widget.setMaximumWidth(200)
+        control_widget.setLayout(control_layout)
+        
+        # Add inference mode radio buttons
+        remote_ok = inference_utils.check_remote_available()
+        self._add_mode_buttons(control_layout, remote_ok)
+        
+        # Display area for the image
         self.display = QLabel()
-        self.display.paintEvent = self.printImage
-
+        self.display.paintEvent = self._paint_image
+        
+        # Results info label
         self.info = QLabel()
         self.info.setText('Analysis \nResults')
-
-        # Cloud status label
+        
+        # Cloud status indicator
         self.cloud_status = QLabel()
         self.cloud_status.setText('Cloud: Available' if remote_ok else 'Cloud: Unavailable')
         self.cloud_status.setStyleSheet('color: #2ecc71;' if remote_ok else 'color: #e74c3c;')
-
-        # Confidence slider controls
+        
+        # Confidence threshold slider
         self.conf_label = QLabel()
-        self._set_conf_label()
+        self._update_conf_label()
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setMinimum(0)
         self.slider.setMaximum(100)
         self.slider.setSingleStep(1)
         self.slider.setValue(int(self.conf_threshold * 100))
-        self.slider.valueChanged.connect(self._conf_changed)
-
+        self.slider.valueChanged.connect(self._on_conf_changed)
+        
+        # Analyze button
         self.button = QPushButton('Analyze')
-        self.button.clicked.connect(self.runModel)
-
-        display_layout.addWidget(self.cloud_status)
-        display_layout.addWidget(self.conf_label)
-        display_layout.addWidget(self.slider)
-        display_layout.addWidget(self.info)
-        display_layout.addWidget(self.button)
+        self.button.clicked.connect(self._run_analysis)
+        
+        # Assemble the control panel
+        control_layout.addWidget(self.cloud_status)
+        control_layout.addWidget(self.conf_label)
+        control_layout.addWidget(self.slider)
+        control_layout.addWidget(self.info)
+        control_layout.addWidget(self.button)
+        
+        # Assemble main layout
         main_layout.addWidget(self.display)
-        main_layout.addWidget(display_widget)
-
+        main_layout.addWidget(control_widget)
+        
         self.setLayout(main_layout)
         self.resize(self.image.width(), self.image.height())
-
-    def _set_conf_label(self):
-        self.conf_label.setText(f'Min confidence: {int(self.conf_threshold*100)}%')
-
-    def _conf_changed(self, val):
-        self.conf_threshold = float(val) / 100.0
-        self._set_conf_label()
     
-    def runModel(self):
-        source = cv2.imread('gui_preview.bmp', 1)
-        source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
-        source_resized = cv2.resize(source, (int(source.shape[1]/2), int(source.shape[0]/2)))
-
-        if config.FRAMEWORK.lower() == 'pytorch':
-            match config.UNET_PRED_MODE:
-                case 'direct':
-                    # Use probability map to compute per-lesion confidence
-                    pathology_map = inference.apply_model_raw_pytorch(source_resized, self.parent.model, classes=config.CLASSES, shapes=(128, 128))
-                case 'smooth':
-                    # Smooth currently falls back to regular; still return probabilities
-                    pathology_map = inference.apply_model_raw_pytorch(source_resized, self.parent.model, classes=config.CLASSES, shapes=(128, 128))
-                case 'remote':
-                    # Remote inference still uses TensorFlow serving
-                    import clogic.inference as tf_inference
-                    pathology_map = tf_inference.apply_remote(source)
-        else:
-            match config.UNET_PRED_MODE:
-                case 'direct':
-                    pathology_map = inference.apply_model(source_resized, self.parent.model, shapes=(128, 128))
-                case 'smooth':
-                    pathology_map = inference.apply_model_smooth(source_resized, self.parent.model, shape=128)
-                case 'remote':
-                    pathology_map = inference.apply_remote(source)
-
-        map_to_display = self.process_pathology_map(pathology_map, config.UNET_PRED_MODE)
-        cv2.imwrite('gui_map.png', map_to_display)
-
-        self.map = QPixmap('gui_map.png')
-        self.display.repaint()
-
-    def process_pathology_map(self, pathology_map, mode):
-        # If we received a probability map (H, W, C), use dense processing with threshold
-        if isinstance(pathology_map, np.ndarray) and pathology_map.ndim == 3:
-            markup, stats = drawing.process_dense_pathology_map(pathology_map, threshold=self.conf_threshold)
-        else:
-            markup, stats = drawing.process_sparse_pathology_map(pathology_map)
-
-        self.set_info_text(stats)
-        return markup
-
-    def set_info_text(self, stats):
-        # Dense stats: dict of lesion_idx -> prob, show summary
-        if stats and all(isinstance(k, int) for k in stats.keys()):
-            vals = list(stats.values())
-            n = len(vals)
-            avg = int(round((sum(vals) / max(1, n)) * 100))
-            text = f'Detections: {n}\nAvg conf: {avg}%'
-        else:
-            text = ''
-            for key, val in stats.items():
-                text += f'{key}: {val}\n'
-        self.info.setText(text)
-
-    def __modeSelected(self):
+    def _add_mode_buttons(self, layout: QVBoxLayout, remote_ok: bool):
+        """
+        Add inference mode selection radio buttons.
+        
+        Args:
+            layout: Layout to add buttons to
+            remote_ok: Whether remote endpoint is available
+        """
+        for idx, mode in enumerate(self.modes):
+            # Skip cloud option if endpoint not reachable
+            if mode == 'remote' and not remote_ok:
+                continue
+            
+            # Skip local modes if no model is loaded
+            if self.parent.model is None and mode != 'remote':
+                continue
+            
+            radiobutton = QRadioButton(self.mode_names[idx])
+            
+            # Fallback to local mode if remote unavailable
+            if config.UNET_PRED_MODE == 'remote' and not remote_ok and self.parent.model is not None:
+                config.UNET_PRED_MODE = 'direct'
+            
+            if mode == config.UNET_PRED_MODE:
+                radiobutton.setChecked(True)
+            
+            radiobutton.mode = mode
+            radiobutton.toggled.connect(self._on_mode_selected)
+            layout.addWidget(radiobutton)
+    
+    def _update_conf_label(self):
+        """Update the confidence threshold label text."""
+        self.conf_label.setText(f'Min confidence: {int(self.conf_threshold * 100)}%')
+    
+    def _on_conf_changed(self, value: int):
+        """Handle confidence slider value change."""
+        self.conf_threshold = float(value) / 100.0
+        self._update_conf_label()
+    
+    def _on_mode_selected(self):
+        """Handle inference mode radio button selection."""
         radioButton = self.sender()
         config.UNET_PRED_MODE = radioButton.mode
     
-    def printImage(self, event):
+    def _run_analysis(self):
+        """Execute model inference on the preview image."""
+        # Load and preprocess the source image
+        source = cv2.imread('gui_preview.bmp', 1)
+        source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
+        source_resized = cv2.resize(
+            source, 
+            (source.shape[1] // 2, source.shape[0] // 2)
+        )
+        
+        # Run inference using shared utility
+        pathology_map = inference_utils.run_inference(
+            source_resized,
+            self.parent.model,
+            mode=config.UNET_PRED_MODE,
+            classes=config.CLASSES,
+            shapes=config.IMAGE_SHAPE
+        )
+        
+        # Process results into visualization
+        markup, stats = inference_utils.process_pathology_map(
+            pathology_map, 
+            threshold=self.conf_threshold
+        )
+        cv2.imwrite('gui_map.png', markup)
+        
+        # Update display
+        self.map = QPixmap('gui_map.png')
+        self.info.setText(inference_utils.format_detection_stats(stats))
+        self.display.repaint()
+    
+    def _paint_image(self, event):
+        """Custom paint event to draw image with overlay."""
         painter = QPainter(self.display)
         painter.drawPixmap(self.display.rect(), self.image)
-
+        
         if self.map is not None:
             painter.drawPixmap(self.display.rect(), self.map)
-        
+
+
+# =============================================================================
+# Menu Window - Slide and zoom level selection
+# =============================================================================
 
 class Menu(QWidget):
+    """
+    Slide selection menu window.
+    
+    Provides controls for:
+    - Selecting slide files from the configured directory
+    - Choosing zoom level for viewing
+    """
 
-    def __init__(self, parent):
+    def __init__(self, parent: 'Viewer'):
+        """
+        Initialize the menu window.
+        
+        Args:
+            parent: Parent Viewer widget to update on selection
+        """
         super().__init__()
-
-        self.slide_list=glob.glob(os.path.join(config.HDD_SLIDES, '**', '*.mrxs'), recursive=True)
-        self.levels = []
+        
         self.parent = parent
-
+        self.levels = []  # Available zoom levels for current slide
+        
+        # Find all MRXS slide files recursively
+        # Find all MRXS slide files recursively from both locations
+        self.slide_list = []
+        search_paths = [config.HDD_SLIDES, config.SLIDE_DIR]
+        
+        for path in search_paths:
+            if os.path.exists(path):
+                self.slide_list.extend(glob.glob(
+                    os.path.join(path, '**', '*.mrxs'), 
+                    recursive=True
+                ))
+        
+        # Remove duplicates if any
+        self.slide_list = sorted(list(set(self.slide_list)))
+        
         self.setWindowTitle("Select Slide")
-        self.setMenuLayout()
-
-    def setMenuLayout(self):
+        self._setup_layout()
+    
+    def _setup_layout(self):
+        """Configure the menu layout with dropdowns."""
         layout = QVBoxLayout()
-
+        
+        # Slide file selection dropdown
         self.slide_select = QComboBox()
         self.slide_select.addItems(self.slide_list)
-        self.slide_select.currentIndexChanged.connect(self.slide_selected)
-        self.slide_select.activated.connect(self.slide_selected)
-
+        self.slide_select.currentIndexChanged.connect(self._on_slide_selected)
+        self.slide_select.activated.connect(self._on_slide_selected)
+        
+        # Zoom level selection dropdown
         self.level_select = QComboBox()
-        self.level_select.currentIndexChanged.connect(self.level_selected)
-
+        self.level_select.currentIndexChanged.connect(self._on_level_selected)
+        
         layout.addWidget(self.slide_select)
         layout.addWidget(self.level_select)
-
         self.setLayout(layout)
     
-    def slide_selected(self, i):
-        self.parent.current_slide = openslide.OpenSlide(os.path.join(config.SLIDE_DIR, self.slide_list[i]))
+    def _on_slide_selected(self, index: int):
+        """Handle slide file selection."""
+        slide_path = self.slide_list[index]
+        self.parent.current_slide = openslide.OpenSlide(slide_path)
         self.levels = self.parent.current_slide.level_dimensions
+        
+        # Populate zoom levels (limit to < 4 to prevent memory issues)
         self.level_select.clear()
-        # set to < 5 because 5 or more will cause software to crash due to image size being too large
-        self.level_select.addItems([str(e[0]) for e in enumerate(self.levels) if e[0] < 4])
-
-    def level_selected(self, i):
-        if i < 0:
+        level_items = [str(i) for i, _ in enumerate(self.levels) if i < 4]
+        self.level_select.addItems(level_items)
+    
+    def _on_level_selected(self, level_index: int):
+        """Handle zoom level selection."""
+        if level_index < 0:
             return
-        position = len(self.levels) - i - 1
-        self.parent.prop = int(self.levels[0][0]/self.levels[position][0])  # passing coefficient for region previev
+        
+        # Calculate position from the end (higher index = more zoom)
+        position = len(self.levels) - level_index - 1
+        
+        # Calculate scaling coefficient for region preview
+        self.parent.prop = int(
+            self.levels[0][0] / self.levels[position][0]
+        )
+        
+        # Read and display the slide at selected level
         width, height = self.levels[position]
-        slide = self.parent.current_slide.read_region((0, 0), position, (width, height))
+        slide = self.parent.current_slide.read_region(
+            (0, 0), position, (width, height)
+        )
         slide.save('gui_temp.bmp', 'bmp')
-
+        
+        # Update viewer display
         self.parent.slideImage = QPixmap('gui_temp.bmp')
-        self.parent.image.resize(self.parent.slideImage.width(), self.parent.slideImage.height())
-        self.parent.scrollArea.horizontalScrollBar().setValue(int(self.parent.image.width()/3))  # code moves the slider closer to center
-        self.parent.scrollArea.verticalScrollBar().setValue(int(self.parent.image.height()/2.5))  # code moves the slider closer to center
+        self.parent.image.resize(
+            self.parent.slideImage.width(), 
+            self.parent.slideImage.height()
+        )
+        
+        # Center the scroll position
+        self.parent.scrollArea.horizontalScrollBar().setValue(
+            int(self.parent.image.width() / 3)
+        )
+        self.parent.scrollArea.verticalScrollBar().setValue(
+            int(self.parent.image.height() / 2.5)
+        )
         self.parent.image.repaint()
 
 
+# =============================================================================
+# Main Viewer Window
+# =============================================================================
+
 class Viewer(QWidget):
-    doDraw = False
-    drag = False
-    slideImage = None
-    model = None
+    """
+    Main application window for slide viewing and region selection.
+    
+    Provides:
+    - Scrollable slide view with drag-to-select regions
+    - Region preview and analysis via Preview window
+    - Status display showing coordinates
+    
+    Attributes:
+        model: Loaded inference model (PyTorch or TensorFlow)
+        current_slide: Currently open OpenSlide object
+        slideImage: QPixmap of current slide view
+    """
+    
+    # Class-level state
+    doDraw = False      # Whether to draw selection rectangle
+    drag = False        # Whether mouse is being dragged
+    slideImage = None   # Current slide image
+    model = None        # Loaded model
 
     def __init__(self):
+        """Initialize the main viewer window."""
         super().__init__()
-
+        
         self.appw, self.apph = 800, 800
         self.current_slide = None
-
+        
+        # Selection coordinates
+        self.p_x = self.p_y = 0  # Press position
+        self.r_x = self.r_y = 0  # Release position
+        self.prop = 1  # Scaling coefficient
+        
         self.setWindowTitle("Cytologick")
         self.setGeometry(100, 100, self.appw, self.apph)
-        self.setViewerLayout()
+        self._setup_layout()
         self.show()
-
+        
+        # Show slide menu
         self.slide_menu = Menu(self)
         self.slide_menu.show()
-
-        self._load_local_model()
-
-    def _load_local_model(self):
-        """Load local model based on configured framework."""
-        if config.FRAMEWORK.lower() == 'pytorch':
-            self._load_pytorch_model()
-        else:
-            self._load_tensorflow_model()
-    
-    def _load_pytorch_model(self):
-        """Load PyTorch model from _main folder."""
-        model_files = [
-            '_main/model.pth',
-            '_main/model_best.pth', 
-            '_main/model_final.pth'
-        ]
         
-        for model_path in model_files:
-            if os.path.exists(model_path):
-                print(f'Local PyTorch model located at {model_path}, loading')
-                try:
-                    self.model = inference.load_pytorch_model(model_path, config.CLASSES)
-                    print('PyTorch model loaded successfully')
-                    return
-                except Exception as e:
-                    print(f'Failed to load PyTorch model: {e}')
-                    continue
-        
-        print('No PyTorch model found in _main/ folder')
-        self.model = None
+        # Load AI model
+        self._load_model()
     
-    def _load_tensorflow_model(self):
-        """Load TensorFlow model from _main folder."""
-        if os.path.exists('_main'):
-            print('Local TensorFlow model located, loading')
-            try:
-                self.model = tf.keras.models.load_model('_main', compile=False)
-                print('TensorFlow model loaded successfully')
-            except Exception as e:
-                print(f'Failed to load TensorFlow model: {e}')
-                self.model = None
-        else:
-            print('No TensorFlow model found in _main/ folder')
-            self.model = None
-
-    def setViewerLayout(self):
+    def _load_model(self):
+        """Load the local inference model."""
+        self.model = model_loading.load_local_model()
+    
+    def _setup_layout(self):
+        """Configure the viewer window layout."""
+        # Main display area with scrolling
         display = QHBoxLayout()
-
+        
         self.image = QLabel()
-        self.image.mousePressEvent = self.pressPos
-        self.image.mouseMoveEvent = self.movePos
-        self.image.mouseReleaseEvent = self.releasePos
-        self.image.paintEvent = self.printRect
-
+        self.image.mousePressEvent = self._on_mouse_press
+        self.image.mouseMoveEvent = self._on_mouse_move
+        self.image.mouseReleaseEvent = self._on_mouse_release
+        self.image.paintEvent = self._paint_rect
+        
         self.scrollArea = QScrollArea()
         self.scrollArea.setWidget(self.image)
-
         display.addWidget(self.scrollArea)
-
+        
+        # Status terminal at bottom
         wrapping = QVBoxLayout()
-
+        
         self.terminal = QLabel()
-        self.terminal.setStyleSheet("background-color: black; color: white; padding: 5px")
+        self.terminal.setStyleSheet(
+            "background-color: black; color: white; padding: 5px"
+        )
         self.terminal.resize(25, 200)
-
+        
         wrapping.addLayout(display)
         wrapping.addWidget(self.terminal)
-
         self.setLayout(wrapping)
     
-    def showPreview(self):
-        x, y, width, height = self.p_x * self.prop, self.p_y * self.prop, (self.r_x - self.p_x) * self.prop, (self.r_y - self.p_y) * self.prop
-
+    def _show_preview(self):
+        """Open a preview window for the selected region."""
+        # Calculate region coordinates with scaling
+        x = int(self.p_x * self.prop)
+        y = int(self.p_y * self.prop)
+        width = int((self.r_x - self.p_x) * self.prop)
+        height = int((self.r_y - self.p_y) * self.prop)
+        
         if not width or not height:
             return
-
+        
+        # Handle negative dimensions (drag direction)
         if width < 0:
             x, width = x + width, abs(width)
         if height < 0:
             y, height = y + height, abs(height)
-
-        width, height = drawing.get_corrected_size(width, height, config.IMAGE_CHUNK[0])
+        
+        # Correct size to match model requirements
+        width, height = drawing.get_corrected_size(
+            width, height, config.IMAGE_CHUNK[0]
+        )
+        
+        # Read region from slide
         region = self.current_slide.read_region((x, y), 0, (width, height))
         region.save('gui_preview.bmp', 'bmp')
-
+        
+        # Show preview window
         preview = Preview(self, QPixmap('gui_preview.bmp'))
         preview.show()
     
-    def pressPos(self, event):
+    # --- Mouse Event Handlers ---
+    
+    def _on_mouse_press(self, event):
+        """Record starting position of drag selection."""
         self.p_x = event.pos().x()
         self.p_y = event.pos().y()
-
         self.drag = True
-
         self.terminal.setText(f'Click coordinates: {self.p_x}, {self.p_y}')
-
-    def movePos(self, event):
+    
+    def _on_mouse_move(self, event):
+        """Update selection rectangle during drag."""
         if not self.drag:
             return
-
+        
         self.r_x = event.pos().x()
         self.r_y = event.pos().y()
-
         self.doDraw = True
-
         self.image.repaint()
     
-    def releasePos(self , event):
+    def _on_mouse_release(self, event):
+        """Complete selection and show preview."""
         self.r_x = event.pos().x()
         self.r_y = event.pos().y()
-
         self.doDraw = False
         self.drag = False
-
+        
         self.terminal.setText(f'Release coordinates: {self.r_x}, {self.r_y}')
-        self.showPreview()
+        self._show_preview()
     
-    def printRect(self, event):
+    def _paint_rect(self, event):
+        """Custom paint event to draw slide and selection rectangle."""
         if self.slideImage is None:
             return
         
         painter = QPainter(self.image)
         painter.drawPixmap(self.image.rect(), self.slideImage)
-
+        
         if not self.doDraw:
             return
-
+        
+        # Draw selection rectangle
         painter.setPen(QPen(Qt.black, 2, Qt.SolidLine))
         painter.setBrush(QBrush(Qt.green, Qt.DiagCrossPattern))
-        painter.drawRect(self.p_x, self.p_y , self.r_x - self.p_x, self.r_y - self.p_y)
-    
+        painter.drawRect(
+            self.p_x, self.p_y, 
+            self.r_x - self.p_x, self.r_y - self.p_y
+        )

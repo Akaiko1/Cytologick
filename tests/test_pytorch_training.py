@@ -58,7 +58,7 @@ class TestPyTorchTraining:
 
     def test_loss_functions(self, pytorch_device):
         """Test custom loss functions."""
-        from clogic.ai_pytorch import JaccardLoss, FocalLoss, CombinedLoss
+        from clogic.ai_pytorch import CombinedLoss
         
         batch_size, num_classes, height, width = 2, 3, 128, 128
         
@@ -66,23 +66,30 @@ class TestPyTorchTraining:
         predictions = torch.randn(batch_size, num_classes, height, width)
         targets = torch.randint(0, num_classes, (batch_size, height, width))
         
-        # Test Jaccard Loss
-        jaccard_loss = JaccardLoss()
-        jaccard_value = jaccard_loss(predictions, targets)
-        assert isinstance(jaccard_value, torch.Tensor)
-        assert jaccard_value.item() >= 0
-        
-        # Test Focal Loss
-        focal_loss = FocalLoss()
-        focal_value = focal_loss(predictions, targets)
-        assert isinstance(focal_value, torch.Tensor)
-        assert focal_value.item() >= 0
-        
-        # Test Combined Loss
+        # Test Combined Loss (Lovasz + CE)
         combined_loss = CombinedLoss()
         combined_value = combined_loss(predictions, targets)
         assert isinstance(combined_value, torch.Tensor)
         assert combined_value.item() >= 0
+        
+    def test_mixup_augmentation(self, pytorch_device):
+        """Test Mixup augmentation."""
+        from clogic.ai_pytorch import mixup_data
+        
+        batch_size = 4
+        channels = 3
+        height, width = 64, 64
+        
+        x = torch.randn(batch_size, channels, height, width).to(pytorch_device)
+        y = torch.randint(0, 3, (batch_size, height, width)).to(pytorch_device)
+        
+        mixed_x, y_a, y_b, lam = mixup_data(x, y, alpha=0.4, device=pytorch_device)
+        
+        assert mixed_x.shape == x.shape
+        assert y_a.shape == y.shape
+        assert y_b.shape == y.shape
+        assert isinstance(lam, (float, np.floating))
+        assert 0 <= lam <= 1
 
     def test_metrics_calculation(self, pytorch_device):
         """Test IoU and F1 score calculation."""

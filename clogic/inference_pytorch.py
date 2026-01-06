@@ -189,8 +189,9 @@ def apply_model_smooth_pytorch(source, model, shape=config.IMAGE_SHAPE[0]):
     """
     Apply PyTorch model with smooth windowing to reduce edge artifacts.
     
-    This function would require implementing the smooth windowing logic for PyTorch.
-    For now, it falls back to the regular sliding window approach.
+    Uses clogic.smooth to perform:
+    1. Overlapping window prediction (reduces checkerboard artifacts)
+    2. Test Time Augmentation (8x rotation/flip averaging)
     
     Args:
         source: Input image as numpy array
@@ -200,6 +201,45 @@ def apply_model_smooth_pytorch(source, model, shape=config.IMAGE_SHAPE[0]):
     Returns:
         Pathology map as numpy array
     """
-    # For now, use regular sliding window
-    # TODO: Implement smooth windowing for PyTorch
-    return apply_model_pytorch(source, model, (shape, shape))
+    import clogic.smooth as smooth
+    
+    model.eval()
+    model = model.to(DEVICE)
+
+    # Define prediction wrapper for smooth.py
+    # Input: numpy array (batch_size, H, W, C)
+    # Output: numpy array (batch_size, H, W, n_classes)
+    def _pred_func_pytorch(img_batch_subdiv):
+        batch_size = 32 if torch.cuda.is_available() else 16
+        outputs = []
+        
+        with torch.no_grad():
+            for i in range(0, len(img_batch_subdiv), batch_size):
+                batch_np = img_batch_subdiv[i:i+batch_size]
+                
+                # Convert to tensor: [B, H, W, C] -> [B, C, H, W]
+                # Note: image_to_tensor_pytorch handles normalization /255.0
+                batch_t = torch.cat([image_to_tensor_pytorch(t) for t in batch_np], dim=0).to(DEVICE)
+                
+                logits = model(batch_t)
+                
+                # Softmax and move to CPU
+                probs = F.softmax(logits, dim=1).cpu().numpy()  # [B, C, H, W]
+                probs = np.transpose(probs, (0, 2, 3, 1))       # [B, H, W, C]
+                outputs.append(probs)
+                
+        return np.concatenate(outputs, axis=0)
+
+    # Run smooth prediction
+    # use_tta=False gives ~8x speedup while still keeping smooth overlapping windows
+    predictions_smooth = smooth.predict_img_with_smooth_windowing(
+        source,
+        window_size=shape,
+        subdivisions=2,  # 50% overlap
+        nb_classes=config.CLASSES,
+        pred_func=_pred_func_pytorch,
+        use_tta=config.USE_TTA
+    )
+    
+    # Return probability map (H, W, C)
+    return predictions_smooth.astype(np.float32)

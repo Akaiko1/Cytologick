@@ -40,10 +40,10 @@ def _spline_window(window_size, power=2):
     https://www.wolframalpha.com/input/?i=y%3Dx**2,+y%3D-(x-2)**2+%2B2,+y%3D(x-4)**2,+from+y+%3D+0+to+2
     """
     intersection = int(window_size/4)
-    wind_outer = (abs(2*(scipy.signal.triang(window_size))) ** power)/2
+    wind_outer = (abs(2*(scipy.signal.windows.triang(window_size))) ** power)/2
     wind_outer[intersection:-intersection] = 0
 
-    wind_inner = 1 - (abs(2*(scipy.signal.triang(window_size) - 1)) ** power)/2
+    wind_inner = 1 - (abs(2*(scipy.signal.windows.triang(window_size) - 1)) ** power)/2
     wind_inner[:intersection] = 0
     wind_inner[-intersection:] = 0
 
@@ -223,15 +223,21 @@ def _recreate_from_subdivs(subdivs, window_size, subdivisions, padded_out_shape)
     return y / (subdivisions ** 2)
 
 
-def predict_img_with_smooth_windowing(input_img, window_size, subdivisions, nb_classes, pred_func):
+def predict_img_with_smooth_windowing(input_img, window_size, subdivisions, nb_classes, pred_func, use_tta=True):
     """
     Apply the `pred_func` function to square patches of the image, and overlap
     the predictions to merge them smoothly.
-    See 6th, 7th and 8th idea here:
-    http://blog.kaggle.com/2017/05/09/dstl-satellite-imagery-competition-3rd-place-winners-interview-vladimir-sergey/
+    
+    Args:
+        use_tta: If True, performs 8x Test Time Augmentation (rotations/flips).
+                 If False, only uses overlapping windows (much faster).
     """
     pad = _pad_img(input_img, window_size, subdivisions)
-    pads = _rotate_mirror_do(pad)
+    
+    if use_tta:
+        pads = _rotate_mirror_do(pad)
+    else:
+        pads = [pad]
 
     # Note that the implementation could be more memory-efficient by merging
     # the behavior of `_windowed_subdivs` and `_recreate_from_subdivs` into
@@ -253,7 +259,7 @@ def predict_img_with_smooth_windowing(input_img, window_size, subdivisions, nb_c
     # to 4 rather than 2.
 
     res = []
-    for pad in tqdm(pads):
+    for pad in tqdm(pads, disable=not PLOT_PROGRESS and not use_tta):
         # For every rotation:
         sd = _windowed_subdivs(pad, window_size, subdivisions, nb_classes, pred_func)
         one_padded_result = _recreate_from_subdivs(
@@ -262,8 +268,10 @@ def predict_img_with_smooth_windowing(input_img, window_size, subdivisions, nb_c
 
         res.append(one_padded_result)
 
-    # Merge after rotations:
-    padded_results = _rotate_mirror_undo(res)
+    if use_tta:
+        padded_results = _rotate_mirror_undo(res)
+    else:
+        padded_results = res[0]
 
     prd = _unpad_img(padded_results, window_size, subdivisions)
 
