@@ -1,3 +1,4 @@
+import warnings
 from typing import List
 
 import numpy as np
@@ -5,6 +6,12 @@ import requests
 from orjson import orjson
 
 from tfs_connector.metrics import log_metrics
+
+warnings.warn(
+    "tfs_connector.tensorflow_layer (TensorFlow Serving) is deprecated.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 @log_metrics('irym_tfs_connector.metrics')

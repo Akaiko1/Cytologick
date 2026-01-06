@@ -1,3 +1,17 @@
+"""tfs_connector (TensorFlow Serving connector) (DEPRECATED).
+
+This package provides a REST client for TensorFlow Serving.
+It is deprecated; prefer local PyTorch inference where possible.
+"""
+
+import warnings
+
+warnings.warn(
+    "tfs_connector (TensorFlow Serving connector) is deprecated.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 from tfs_connector.metadata import get_model_metadata
 from tfs_connector.segmentation import apply_segmentation_model, apply_segmentation_model_parallel
 from tfs_connector.classification import apply_classification_model, apply_classification_model_parallel, \

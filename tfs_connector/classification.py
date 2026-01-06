@@ -1,11 +1,18 @@
 import datetime
 import logging
 import platform
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Callable
 
 import multiprocess.pool
 import numpy as np
+
+warnings.warn(
+    "tfs_connector.classification (TensorFlow Serving) is deprecated.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from tfs_connector import tensorflow_layer as tfl
 from tfs_connector.functions import split_evenly

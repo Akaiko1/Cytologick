@@ -1,6 +1,7 @@
 import os
 import config
 import logging
+import warnings
 
 try:
     import tensorflow as tf
@@ -70,6 +71,12 @@ def _load_tensorflow_model():
     if tf is None:
         print("TensorFlow not installed")
         return None
+
+    warnings.warn(
+        "TensorFlow local model loading is deprecated. Prefer PyTorch models and FRAMEWORK='pytorch'.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     if os.path.exists('_main'):
         print('Local TensorFlow model located, loading')

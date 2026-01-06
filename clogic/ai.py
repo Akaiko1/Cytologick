@@ -1,10 +1,16 @@
-"""
-AI module for Cytologick - handles neural network training and data processing.
+"""clogic.ai (TensorFlow) (DEPRECATED).
 
-This module provides functionality for training U-Net models for cytological
-image segmentation, including data augmentation, dataset preparation, and
-model training pipelines.
+This module contains the legacy TensorFlow/Keras training pipeline.
+It is deprecated in favor of the PyTorch pipeline.
 """
+
+import warnings
+
+warnings.warn(
+    "clogic.ai (TensorFlow/Keras training pipeline) is deprecated. Prefer the PyTorch pipeline.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import os
 import random
