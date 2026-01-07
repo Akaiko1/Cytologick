@@ -55,6 +55,12 @@ neural_network:
   pt_encoder_lr_mult: 0.1
   pt_grad_clip_norm: 1.0
 
+  # Cross-entropy label smoothing (0..1). With mixup enabled, 0.0 is a good default.
+  pt_label_smoothing: 0.0
+
+  # Mixup alpha for Beta(alpha, alpha). 0 disables mixup.
+  pt_mixup_alpha: 0.2
+
   # DataLoader multiprocessing
   # -1 = auto, 0 = single-process, >0 = worker processes
   pt_num_workers: -1

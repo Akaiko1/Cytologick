@@ -95,21 +95,49 @@ class TestPyTorchTraining:
         """Test IoU and F1 score calculation."""
         from clogic.ai_pytorch import iou_score, f1_score
         
-        batch_size, num_classes, height, width = 2, 3, 32, 32
+        batch_size, num_classes = 2, 3
         
-        # Create sample predictions and targets
-        predictions = torch.randn(batch_size, num_classes, height, width)
-        targets = torch.randint(0, num_classes, (batch_size, height, width))
-        
-        # Test IoU score
-        iou = iou_score(predictions, targets, num_classes)
-        assert isinstance(iou, (float, np.floating))
-        assert 0 <= iou <= 1
-        
-        # Test F1 score
-        f1 = f1_score(predictions, targets, num_classes)
-        assert isinstance(f1, (float, np.floating))
-        assert 0 <= f1 <= 1
+        # Deterministic targets with an absent class (class 2 is missing)
+        targets = torch.tensor(
+            [
+                [[0, 1],
+                 [0, 0]],
+                [[1, 1],
+                 [0, 0]],
+            ],
+            dtype=torch.long,
+            device=pytorch_device,
+        )
+
+        # Case 1: perfect prediction => IoU=1, F1=1
+        logits_perfect = torch.full((batch_size, num_classes, 2, 2), -10.0, device=pytorch_device)
+        for b in range(batch_size):
+            for i in range(2):
+                for j in range(2):
+                    cls = int(targets[b, i, j].item())
+                    logits_perfect[b, cls, i, j] = 10.0
+
+        iou = iou_score(logits_perfect, targets, num_classes)
+        f1 = f1_score(logits_perfect, targets, num_classes)
+        assert iou == pytest.approx(1.0, abs=1e-6)
+        assert f1 == pytest.approx(1.0, abs=1e-6)
+
+        # Case 2: predict all zeros for first sample (second sample perfect)
+        logits_mixed = logits_perfect.clone()
+        logits_mixed[0, :, :, :] = -10.0
+        logits_mixed[0, 0, :, :] = 10.0
+
+        iou2 = iou_score(logits_mixed, targets, num_classes)
+        f12 = f1_score(logits_mixed, targets, num_classes)
+
+        # Implementation aggregates over the whole batch (micro over batch), then averages over classes.
+        # Across both samples:
+        #   IoU0 = 5/6, IoU1 = 2/3, IoU2 = 1 (absent in both) => mean = 0.833333...
+        #   F10  = 10/11, F11  = 0.8, F12  = 1 => mean = 0.903030...
+        expected_iou = (5/6 + 2/3 + 1.0) / 3.0
+        expected_f1 = (10/11 + 0.8 + 1.0) / 3.0
+        assert iou2 == pytest.approx(expected_iou, abs=1e-5)
+        assert f12 == pytest.approx(expected_f1, abs=1e-5)
 
     def test_model_architecture(self, pytorch_device):
         """Test U-Net model creation and forward pass."""
@@ -117,7 +145,7 @@ class TestPyTorchTraining:
         
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
             activation='softmax2d'
         )
@@ -156,21 +184,19 @@ class TestPyTorchTraining:
         cfg.IMAGES_FOLDER = 'images'
         cfg.MASKS_FOLDER = 'masks'
         cfg.CLASSES = 3
+        cfg.PT_ENCODER_WEIGHTS = None  # avoid downloading imagenet weights during tests
 
         # Test training with minimal epochs
         model_path = os.path.join(temp_dir, 'test_model')
 
         # This would normally train, but we'll mock the heavy parts
-        with patch('torch.utils.data.DataLoader') as mock_loader:
+        # NOTE: ai_pytorch imports DataLoader into module namespace.
+        with patch('clogic.ai_pytorch.DataLoader') as mock_loader:
             mock_loader.return_value.__iter__.return_value = [sample_batch]
             mock_loader.return_value.__len__.return_value = 1
 
-            try:
-                train_new_model_pytorch(cfg, model_path, 3, epochs=1, batch_size=2)
-                assert mock_save.called
-            except Exception:
-                # Training might fail in test environment, but plumbing should be testable
-                pass
+            train_new_model_pytorch(cfg, model_path, 3, epochs=1, batch_size=2)
+            assert mock_save.called
 
     def test_dataset_splitting(self, cfg, sample_dataset_files):
         """Test train/validation dataset splitting."""
@@ -194,7 +220,7 @@ class TestPyTorchTraining:
         
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
             activation='softmax2d'
         )

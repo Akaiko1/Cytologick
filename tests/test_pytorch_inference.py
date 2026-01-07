@@ -64,9 +64,9 @@ class TestPyTorchInference:
         # Create and save a model
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         
         model_path = os.path.join(temp_dir, 'test_model.pth')
@@ -92,9 +92,9 @@ class TestPyTorchInference:
         # Create model
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         model.eval()
         
@@ -118,9 +118,9 @@ class TestPyTorchInference:
         # Create model
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         model.eval()
         
@@ -146,9 +146,9 @@ class TestPyTorchInference:
         # Create model
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         model.eval()
         
@@ -166,16 +166,16 @@ class TestPyTorchInference:
         prob_sums = pathology_map.sum(axis=2)
         assert np.allclose(prob_sums, 1.0, atol=1e-5)
 
-    def test_pytorch_tensorflow_output_compatibility(self, cfg, pytorch_device):
-        """Test that PyTorch and TensorFlow inference produce similar outputs."""
+    def test_inference_output_format_compatibility(self, cfg, pytorch_device):
+        """Test that PyTorch inference produces the expected output format."""
         import segmentation_models_pytorch as smp
         
         # Create PyTorch model
         pytorch_model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         pytorch_model.eval()
         
@@ -187,7 +187,7 @@ class TestPyTorchInference:
         with torch.no_grad():
             pytorch_result = apply_model_pytorch(cfg, test_image, pytorch_model, shapes=(128, 128))
         
-        # Check output format compatibility
+        # Check output format
         assert isinstance(pytorch_result, np.ndarray)
         assert pytorch_result.shape == test_image.shape[:2]
         assert pytorch_result.dtype in [np.int64, np.int32, np.uint8]
@@ -202,9 +202,9 @@ class TestPyTorchInference:
         # Create model
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         model.eval()
         
@@ -244,9 +244,9 @@ class TestPyTorchInference:
         # Create model and move to device
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         model = model.to(pytorch_device)
         model.eval()
@@ -269,9 +269,9 @@ class TestPyTorchInference:
         # Create model
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         model.eval()
         

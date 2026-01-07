@@ -10,7 +10,6 @@ This directory contains comprehensive tests for the PyTorch functionality in Cyt
 - **`test_pytorch_training.py`** - PyTorch training pipeline tests
 - **`test_pytorch_inference.py`** - PyTorch inference pipeline tests
 - **`test_framework_selection.py`** - Framework switching and configuration tests
-- **`test_gui_pytorch.py`** - GUI integration with PyTorch models
 - **`test_integration.py`** - End-to-end integration tests
 
 ### Test Categories
@@ -18,7 +17,7 @@ This directory contains comprehensive tests for the PyTorch functionality in Cyt
 #### 1. Training Pipeline Tests (`test_pytorch_training.py`)
 - Dataset creation and loading
 - Data augmentation transforms
-- Loss function implementations (Jaccard + Focal)
+- Loss function implementations (Lovasz + CrossEntropy)
 - Metrics calculation (IoU, F1 score)
 - Model architecture validation
 - Training loop functionality
@@ -29,7 +28,7 @@ This directory contains comprehensive tests for the PyTorch functionality in Cyt
 - Sliding window inference
 - Raw probability output
 - Memory efficiency
-- Output format compatibility with TensorFlow
+- Output format / shape compatibility
 
 #### 3. Framework Selection Tests (`test_framework_selection.py`)
 - Configuration switching between TensorFlow/PyTorch
@@ -38,17 +37,9 @@ This directory contains comprehensive tests for the PyTorch functionality in Cyt
 - Module import behavior
 - Training script framework routing
 
-#### 4. GUI Integration Tests (`test_gui_pytorch.py`)
-- PyTorch model loading in GUI
-- Preview window functionality
-- Inference mode selection
-- Error handling in GUI
-- Framework switching in GUI context
-
 #### 5. Integration Tests (`test_integration.py`)
 - End-to-end pipeline testing
-- Cross-framework compatibility
-- Model format compatibility
+- Pipeline-level sanity checks
 - Complete workflow validation
 
 ## Running Tests
@@ -72,7 +63,6 @@ pytest --cov=clogic
 # Run specific test categories
 pytest -m pytorch          # PyTorch-specific tests
 pytest -m integration      # Integration tests
-pytest -m gui              # GUI tests
 ```
 
 ### Running Specific Test Files
@@ -86,9 +76,6 @@ pytest tests/test_pytorch_inference.py
 
 # Framework selection tests
 pytest tests/test_framework_selection.py
-
-# GUI integration tests
-pytest tests/test_gui_pytorch.py
 
 # Integration tests
 pytest tests/test_integration.py
@@ -129,7 +116,6 @@ Tests are marked with the following pytest markers:
 
 - **`@pytest.mark.pytorch`** - PyTorch-specific functionality
 - **`@pytest.mark.tensorflow`** - TensorFlow-specific functionality  
-- **`@pytest.mark.gui`** - GUI integration tests
 - **`@pytest.mark.slow`** - Tests that take longer to run
 - **`@pytest.mark.integration`** - End-to-end integration tests
 
@@ -144,7 +130,6 @@ Tests are marked with the following pytest markers:
 
 ### Optional for Full Testing
 - tensorflow >= 2.10.0 (for compatibility tests)
-- PyQt5 >= 5.15.0 (for GUI tests)
 
 ## Coverage Requirements
 
@@ -155,7 +140,7 @@ Tests maintain minimum 70% code coverage for the `clogic` module. Coverage repor
 Tests are designed to run in CI environments with:
 - Automatic PyTorch dependency detection
 - GPU/CPU compatibility
-- Mock heavy GUI components
+- Mocking for heavyweight dependencies where needed
 - Timeout protection for long-running tests
 
 ## Troubleshooting
@@ -163,7 +148,7 @@ Tests are designed to run in CI environments with:
 ### Common Issues
 
 1. **PyTorch not available**: Tests will be skipped automatically
-2. **GUI tests failing**: Ensure proper mocking of PyQt5 components
+2. **Optional deps**: install extras as needed (e.g. TensorFlow)
 3. **Memory issues**: Tests include cleanup and memory management
 4. **Model loading errors**: Check file paths and model compatibility
 

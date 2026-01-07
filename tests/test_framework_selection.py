@@ -37,6 +37,30 @@ class TestFrameworkSelection:
         assert cfg.FRAMEWORK.lower() == 'pytorch'
         assert cfg.CLASSES == 3
         assert cfg.DATASET_FOLDER == 'test_dataset'
+        # Defaults should remain intact when not specified
+        assert cfg.PT_LABEL_SMOOTHING == 0.0
+        assert cfg.PT_MIXUP_ALPHA == 0.2
+
+    def test_yaml_config_overrides_new_knobs(self, temp_dir):
+        """New training knobs should be configurable via YAML."""
+        import yaml
+
+        config_data = {
+            'neural_network': {
+                'framework': 'pytorch',
+                'classes': 3,
+                'pt_label_smoothing': 0.05,
+                'pt_mixup_alpha': 0.0,
+            }
+        }
+
+        config_path = os.path.join(temp_dir, 'config.yaml')
+        with open(config_path, 'w') as f:
+            yaml.dump(config_data, f)
+
+        cfg = load_config(config_path)
+        assert cfg.PT_LABEL_SMOOTHING == pytest.approx(0.05)
+        assert cfg.PT_MIXUP_ALPHA == pytest.approx(0.0)
 
     def test_module_imports_available(self):
         """PyTorch modules import without config side-effects."""

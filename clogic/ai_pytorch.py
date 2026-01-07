@@ -249,12 +249,12 @@ class CombinedLoss(nn.Module):
     Combined Lovasz Softmax and Cross Entropy Loss (with Label Smoothing).
     """
     
-    def __init__(self, lovasz_weight=1.0, ce_weight=1.0):
+    def __init__(self, lovasz_weight=1.0, ce_weight=1.0, label_smoothing: float = 0.0):
         super(CombinedLoss, self).__init__()
         # Lovasz Softmax Loss (typically for multiclass, using logit inputs)
         self.lovasz_loss = smp.losses.LovaszLoss(mode='multiclass', per_image=True)
         # Cross Entropy with Label Smoothing
-        self.ce_loss = nn.CrossEntropyLoss(label_smoothing=0.1)
+        self.ce_loss = nn.CrossEntropyLoss(label_smoothing=float(label_smoothing))
         self.lovasz_weight = lovasz_weight
         self.ce_weight = ce_weight
     
@@ -284,6 +284,10 @@ def iou_score(y_pred, y_true, num_classes=3):
     Returns:
         Mean IoU score
     """
+    # Ensure class-index masks
+    if y_true.dtype != torch.long:
+        y_true = y_true.long()
+
     y_pred = torch.argmax(y_pred, dim=1)
     
     ious = []
@@ -294,7 +298,7 @@ def iou_score(y_pred, y_true, num_classes=3):
         intersection = (pred_cls & true_cls).float().sum()
         union = (pred_cls | true_cls).float().sum()
         
-        if union == 0:
+        if union.item() == 0:
             ious.append(1.0)  # If no pixels for this class, perfect score
         else:
             ious.append((intersection / union).item())
@@ -314,6 +318,10 @@ def f1_score(y_pred, y_true, num_classes=3):
     Returns:
         Mean F1 score
     """
+    # Ensure class-index masks
+    if y_true.dtype != torch.long:
+        y_true = y_true.long()
+
     y_pred = torch.argmax(y_pred, dim=1)
     
     f1_scores = []
@@ -324,12 +332,14 @@ def f1_score(y_pred, y_true, num_classes=3):
         tp = (pred_cls & true_cls).float().sum()
         fp = (pred_cls & ~true_cls).float().sum()
         fn = (~pred_cls & true_cls).float().sum()
-        
-        precision = tp / (tp + fp + 1e-7)
-        recall = tp / (tp + fn + 1e-7)
-        f1 = 2 * (precision * recall) / (precision + recall + 1e-7)
-        
-        f1_scores.append(f1.item())
+
+        # Dice/F1 for segmentation: 2TP / (2TP + FP + FN)
+        denom = (2 * tp + fp + fn)
+        if denom.item() == 0:
+            f1_scores.append(1.0)  # No pixels in both pred and gt for this class
+        else:
+            f1 = (2 * tp) / (denom + 1e-7)
+            f1_scores.append(f1.item())
     
     return np.mean(f1_scores)
 
@@ -400,14 +410,21 @@ def _train_model_loop(
             masks = masks.to(DEVICE).long()
             
             optimizer.zero_grad(set_to_none=True)
-            
-            # Apply Mixup
-            inputs, targets_a, targets_b, lam = mixup_data(images, masks, alpha=0.4, device=DEVICE)
+
+            mixup_alpha = float(getattr(cfg, 'PT_MIXUP_ALPHA', 0.2) or 0.2)
+            if mixup_alpha < 0:
+                raise ValueError(f'PT_MIXUP_ALPHA must be >= 0, got {mixup_alpha}')
 
             with amp_ctx():
-                outputs = model(inputs)
-                # Compute loss for both targets and mix
-                loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+                if mixup_alpha > 0:
+                    # Apply Mixup
+                    inputs, targets_a, targets_b, lam = mixup_data(images, masks, alpha=mixup_alpha, device=DEVICE)
+                    outputs = model(inputs)
+                    # Compute loss for both targets and mix
+                    loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+                else:
+                    outputs = model(images)
+                    loss = criterion(outputs, masks)
                 
             clip_norm = float(getattr(cfg, 'PT_GRAD_CLIP_NORM', 0.0) or 0.0)
             if scaler is not None:
@@ -487,7 +504,11 @@ def _setup_training_components(cfg: Config, model, lr, use_amp):
     """
     Setup optimizer, scheduler, criterion, and mixed precision components.
     """
-    criterion = CombinedLoss()
+    label_smoothing = float(getattr(cfg, 'PT_LABEL_SMOOTHING', 0.0) or 0.0)
+    if not (0.0 <= label_smoothing <= 1.0):
+        raise ValueError(f'PT_LABEL_SMOOTHING must be in [0, 1], got {label_smoothing}')
+
+    criterion = CombinedLoss(label_smoothing=label_smoothing)
 
     pt_optimizer = str(getattr(cfg, 'PT_OPTIMIZER', 'adamw')).lower()
     weight_decay = float(getattr(cfg, 'PT_WEIGHT_DECAY', 1e-4))

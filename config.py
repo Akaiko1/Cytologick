@@ -85,6 +85,10 @@ class Config:
     PT_WEIGHT_DECAY: float = 1e-4
     PT_ENCODER_LR_MULT: float = 0.1
     PT_GRAD_CLIP_NORM: float = 1.0
+    # With mixup enabled in training loop, default to 0.0 to avoid over-regularization.
+    PT_LABEL_SMOOTHING: float = 0.0
+    # Mixup alpha for Beta(alpha, alpha). 0 disables mixup.
+    PT_MIXUP_ALPHA: float = 0.2
     PT_NUM_WORKERS: int = -1  # -1 = auto; 0 disables multiprocessing DataLoader
 
     LABELS: dict[str, int] = field(
@@ -190,6 +194,12 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.PT_ENCODER_LR_MULT = _to_float(neural['pt_encoder_lr_mult'])
     if 'pt_grad_clip_norm' in neural:
         cfg.PT_GRAD_CLIP_NORM = _to_float(neural['pt_grad_clip_norm'])
+
+    if 'pt_label_smoothing' in neural:
+        cfg.PT_LABEL_SMOOTHING = _to_float(neural['pt_label_smoothing'])
+
+    if 'pt_mixup_alpha' in neural:
+        cfg.PT_MIXUP_ALPHA = _to_float(neural['pt_mixup_alpha'])
 
     if 'pt_num_workers' in neural:
         cfg.PT_NUM_WORKERS = _to_int(neural['pt_num_workers'])

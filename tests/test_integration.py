@@ -38,9 +38,9 @@ class TestPyTorchIntegration:
         # 2. Test model creation
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         
         # 3. Test loss function
@@ -86,7 +86,7 @@ class TestPyTorchIntegration:
             loaded_outputs = loaded_model(batch_images)
             assert loaded_outputs.shape == test_outputs.shape
 
-    def test_pytorch_tensorflow_output_equivalence(self, cfg, sample_image):
+    def test_pytorch_inference_is_deterministic(self, cfg, sample_image):
         """Sanity-check PyTorch inference tensor path is deterministic."""
         import torch
         import segmentation_models_pytorch as smp
@@ -97,7 +97,7 @@ class TestPyTorchIntegration:
             encoder_name='efficientnet-b3',
             encoder_weights=None,  # Use None to avoid pre-trained weights for fair comparison
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         pytorch_model.eval()
         
@@ -154,9 +154,9 @@ class TestPyTorchIntegration:
         # Create PyTorch model
         pytorch_model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         
         # Save PyTorch model
@@ -205,45 +205,6 @@ class TestPyTorchIntegration:
             except Exception as e:
                 assert "CUDA" not in str(e)
 
-    @pytest.mark.skip(reason="GUI tests require display environment - skip for now")
-    def test_gui_integration_with_pytorch(self, temp_dir):
-        """Test GUI can load and use PyTorch models."""
-        import torch
-        import segmentation_models_pytorch as smp
-        
-        # Create and save a PyTorch model
-        model = smp.Unet(
-            encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
-            classes=3,
-            activation='softmax2d'
-        )
-        
-        main_dir = os.path.join(temp_dir, '_main')
-        os.makedirs(main_dir)
-        model_path = os.path.join(main_dir, 'model.pth')
-        torch.save(model.state_dict(), model_path)
-        
-        # Test GUI model loading
-        from clogic.gui import Viewer
-        
-        with patch('clogic.gui.config') as mock_config:
-            mock_config.FRAMEWORK = 'pytorch'
-            mock_config.CLASSES = 3
-            mock_config.OPENSLIDE_PATH = '/mock/path'
-            
-            with patch('os.path.exists') as mock_exists:
-                def exists_side_effect(path):
-                    return path == model_path
-                mock_exists.side_effect = exists_side_effect
-                
-                with patch('clogic.gui.QApplication'), \
-                     patch('clogic.gui.Menu'), \
-                     patch('clogic.gui.QWidget'):
-                    
-                    viewer = Viewer()
-                    assert viewer.model is not None
-
     def test_inference_pipeline_integration(self, cfg, temp_dir, sample_image):
         """Test complete inference pipeline with PyTorch."""
         import torch
@@ -253,9 +214,9 @@ class TestPyTorchIntegration:
         # Create and save model
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         
         model_path = os.path.join(temp_dir, 'inference_test_model.pth')
@@ -281,9 +242,9 @@ class TestPyTorchIntegration:
         # Test with larger model and data
         model = smp.Unet(
             encoder_name='efficientnet-b3',
-            encoder_weights='imagenet',
+            encoder_weights=None,
             classes=3,
-            activation='softmax2d'
+            activation=None
         )
         model.eval()
         
