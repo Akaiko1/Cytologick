@@ -17,7 +17,6 @@ import random
 from typing import Tuple, Optional
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -194,6 +193,14 @@ def display(display_list, tensors: bool = True):
         display_list: List of images to display
         tensors: Whether the images are TensorFlow tensors (default: True)
     """
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "matplotlib is unavailable (often due to a NumPy/Matplotlib binary mismatch). "
+            "Fix by installing compatible wheels (commonly: 'pip install \"numpy<2\" matplotlib') "
+            "or by running without display functions."
+        ) from e
     plt.figure(figsize=(15, 15))
 
     titles = ['Input Image', 'True Mask', 'Predicted Mask']

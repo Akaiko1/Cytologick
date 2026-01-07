@@ -16,9 +16,7 @@ import inspect
 from albumentations.pytorch import ToTensorV2
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,6 +30,21 @@ from clogic.preprocessing_pytorch import preprocess_rgb_image
 
 # Global configurations
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def _log_device_selection(prefix: str = ""):
+    prefix = (prefix + " ") if prefix else ""
+    if torch.cuda.is_available():
+        try:
+            device_count = torch.cuda.device_count()
+            current_index = torch.cuda.current_device()
+            current_name = torch.cuda.get_device_name(current_index)
+            all_names = [torch.cuda.get_device_name(i) for i in range(device_count)]
+            print(f"{prefix}CUDA available: True | torch device: {DEVICE} | current GPU: {current_index} ({current_name}) | GPUs: {all_names}")
+        except Exception:
+            print(f"{prefix}CUDA available: True | torch device: {DEVICE}")
+    else:
+        print(f"{prefix}CUDA available: False | torch device: {DEVICE}")
 
 # Progress bar (tqdm) - optional
 try:
@@ -528,11 +541,24 @@ def _setup_training_components(cfg: Config, model, lr, use_amp):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
     
     if torch.cuda.is_available():
-        scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
-        amp_ctx = lambda: torch.amp.autocast('cuda', enabled=use_amp)
+        # PyTorch AMP APIs differ slightly across versions.
+        # - `torch.cuda.amp.GradScaler` exists broadly.
+        # - `torch.amp.GradScaler` exists in newer versions.
+        try:
+            scaler = torch.amp.GradScaler('cuda', enabled=use_amp)  # type: ignore[attr-defined]
+        except AttributeError:
+            scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+        def amp_ctx():
+            try:
+                return torch.amp.autocast(device_type='cuda', enabled=use_amp)  # type: ignore[attr-defined]
+            except AttributeError:
+                return torch.cuda.amp.autocast(enabled=use_amp)
     else:
         scaler = None
-        amp_ctx = nullcontext
+
+        def amp_ctx():
+            return nullcontext()
         
     return criterion, optimizer, scheduler, scaler, amp_ctx
 
@@ -591,6 +617,7 @@ def train_new_model_pytorch(
     Train a new U-Net model using PyTorch.
     """
     set_seed(42)
+    _log_device_selection(prefix="[train_new_model_pytorch]")
     
     train_loader, val_loader, total_samples = _prepare_data_loaders(cfg, batch_size)
     print(f"Total samples: {total_samples}")
@@ -626,6 +653,7 @@ def train_current_model_pytorch(
     Continue training an existing PyTorch model.
     """
     set_seed(42)
+    _log_device_selection(prefix="[train_current_model_pytorch]")
     
     train_loader, val_loader, _ = _prepare_data_loaders(cfg, batch_size)
     
@@ -685,6 +713,14 @@ def display_pytorch(display_list, titles=['Input Image', 'True Mask', 'Predicted
         display_list: List of images to display
         titles: List of titles for each image
     """
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as e:  # pragma: no cover
+        raise ImportError(
+            "matplotlib is unavailable (often due to a NumPy/Matplotlib binary mismatch). "
+            "Fix by installing compatible wheels (commonly: 'pip install \"numpy<2\" matplotlib') "
+            "or by running without display functions."
+        ) from e
     plt.figure(figsize=(15, 5))
     
     for i in range(len(display_list)):
