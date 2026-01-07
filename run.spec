@@ -15,7 +15,7 @@ datas = []
 a = Analysis(
     ['run.py'],
     pathex=[project_root],
-    binaries=openslide_binaries,
+    binaries=[],
     datas=datas,
     # Some imports are dynamic (openslide inside a function; remote connector optional)
     hiddenimports=['openslide', 'tfs_connector'],

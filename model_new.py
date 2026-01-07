@@ -7,4 +7,4 @@ if __name__ == '__main__':
         raise RuntimeError('TensorFlow training is deprecated; set FRAMEWORK=pytorch')
 
     from clogic import ai_pytorch as ai
-    ai.train_new_model_pytorch(cfg, '_new', 3, 5, batch_size=4)
+    ai.train_new_model_pytorch(cfg, '_new', 3, 50, batch_size=4)
