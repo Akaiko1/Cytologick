@@ -61,7 +61,11 @@ conda install openslide-python
 
 ### 2. Configure
 
-This project includes a pre-configured `config.yaml` file. You must edit it to match your local paths.
+This repo includes an example config file. Copy it to `config.yaml` and edit it to match your local paths.
+
+```bash
+cp config.example.yaml config.yaml
+```
 
 **Edit `config.yaml`:**
 

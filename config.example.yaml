@@ -1,0 +1,99 @@
+# Cytologick example configuration
+#
+# Usage:
+#   1) Copy this file to `config.yaml`
+#   2) Edit paths for your machine
+#
+# Notes:
+# - Do not commit real slide data or patient data.
+# - `openslide-python` requires OpenSlide binaries installed on the system.
+
+general:
+  # A default slide name used by the GUI/demo flows.
+  # Point this to a file that exists on your machine.
+  current_slide: "example.mrxs"
+
+  # Optional: path to an XML/annotation file for the current slide.
+  current_slide_xml: "./current/example/annotations.xml"
+
+  # Windows only: path to OpenSlide binaries (DLLs). On macOS/Linux keep empty.
+  # openslide_path: "C:/openslide/bin"
+  openslide_path: ""
+
+  # Folder containing your MRXS slides
+  hdd_slides: "/path/to/mrxs-slides"
+
+  # Optional: folder containing SVS slides
+  hdd_slides_svs: "/path/to/svs-slides"
+
+  temp_folder: "temp"
+
+neural_network:
+  # Primary supported framework in this repo.
+  framework: pytorch  # Options: 'tensorflow', 'pytorch'
+
+  # Dataset layout used by training.
+  dataset_folder: "dataset"
+  masks_folder: "masks"
+  images_folder: "rois"
+  image_chunk: [256, 256]
+  image_shape: [128, 128]
+  classes: 3
+
+  # PyTorch / segmentation-models-pytorch encoder config
+  pt_encoder_name: "efficientnet-b3"
+  pt_encoder_weights: "imagenet"
+
+  # Backwards-compatible default (resize + /255 scaling). Set true to use SMP
+  # encoder-specific preprocessing (recommended with imagenet weights).
+  pt_use_encoder_preprocessing: false
+
+  # Training knobs (PyTorch)
+  pt_optimizer: "adamw"
+  pt_lr: 1.0e-3
+  pt_weight_decay: 1.0e-4
+  pt_encoder_lr_mult: 0.1
+  pt_grad_clip_norm: 1.0
+
+  # DataLoader multiprocessing
+  # -1 = auto, 0 = single-process, >0 = worker processes
+  pt_num_workers: -1
+
+  # Label mapping used by the XML/annotation parsing pipeline.
+  labels:
+    LSIL: 2
+    HSIL: 2
+    "Group HSIL": 2
+    ASCH: 2
+    "Group atypical": 2
+    ASCUS: 2
+    Atypical: 2
+    "Atypical naked": 2
+
+gui:
+  slide_dir: "./current"
+  unet_pred_mode: "direct"  # Options: 'remote', 'smooth', 'direct'
+  use_tta: false
+
+dataset:
+  exclude_duplicates: false
+  broaden_individual_rect: 1000
+
+web:
+  ip_exposed: "127.0.0.1"
+
+  # Optional external endpoint (legacy / experimental). Leave empty if unused.
+  endpoint_url: ""
+
+  health_timeout: 1.5
+  web_conf_threshold: 0.6
+  fast_tiles: true
+  tile_cache_size: 256
+  atypical_class_index: 2
+  scan_all_tissue: false
+  progress_every: 25
+  min_tissue_fraction: 0.05
+  tissue_gray_threshold: 220
+
+  # Local PyTorch batch size (0 = auto)
+  pt_batch_size: 0
