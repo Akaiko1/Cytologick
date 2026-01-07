@@ -1,204 +1,96 @@
 # Contributing to Cytologick
 
-We welcome contributions from the medical, AI, and software development communities! Cytologick benefits from diverse expertise in pathology, machine learning, and software engineering.
+This repository is a research-oriented Python application for working with whole-slide cytology images (MRXS), running PyTorch inference, and training segmentation models.
 
-## 🤝 How to Contribute
+Contributions are welcome, but please keep changes pragmatic and easy to review.
 
-### For Medical Professionals
+## What to contribute
 
-- **Clinical Validation** - Test Cytologick with real clinical data and provide feedback
-- **Medical Expertise** - Review AI predictions and suggest improvements
-- **Dataset Contribution** - Share annotated datasets (following privacy regulations)
-- **Use Case Documentation** - Help us understand real-world workflow requirements
+- Bug fixes and robustness improvements (I/O, parsing, preprocessing, inference)
+- Documentation fixes (README/config hints, troubleshooting)
+- Tests that cover real regressions
+- Training and evaluation improvements that do not change UX unexpectedly
 
-### For AI/ML Researchers
+If you plan a larger change, open an issue first and describe the goal and the intended user impact.
 
-- **Model Improvements** - Enhance existing architectures or propose new ones
-- **Performance Optimization** - Improve training efficiency and inference speed
-- **New Features** - Add support for additional cell types or slide formats
-- **Benchmarking** - Compare models and establish performance baselines
+## Development setup (recommended)
 
-### For Software Developers
+Follow the project README for system prerequisites (OpenSlide binaries are required; `openslide-python` alone is not enough).
 
-- **Bug Fixes** - Identify and fix software issues
-- **UI/UX Improvements** - Enhance user interface and experience
-- **Platform Support** - Add support for new operating systems or deployment options
-- **Documentation** - Improve installation guides and user documentation
-
-## 🚀 Getting Started
-
-### 1. Fork the Repository
+Typical local setup uses conda:
 
 ```bash
-git clone https://github.com/Akaiko1/Cytologick.git
-cd Cytologick
-git checkout -b feature/your-feature-name
-```
+conda create -n cyto python=3.12
+conda activate cyto
 
-### 2. Set Up Development Environment
+# Project deps (PyTorch path)
+pip install -r requirements-pytorch.txt
 
-Follow the installation instructions in the README (PyTorch path recommended), then install dev tools and set up git hooks:
+# OpenSlide Python bindings (often easier via conda)
+conda install openslide-python
 
-```bash
-# Install development dependencies
+# Dev tooling
 pip install -r requirements-dev.txt
-
-# Install pre-commit hooks (run once)
-pre-commit install
 ```
 
-### 3. Make Your Changes
+Note: TensorFlow training is considered legacy in this repo. New work should target the PyTorch path unless explicitly discussed.
 
-- Follow existing code style and conventions
-- Add tests for new functionality
-- Update documentation as needed
-
-### 4. Run Linters and Tests
-
-Before opening a PR, please make sure the code is formatted, linted, and tests pass:
+## Running locally
 
 ```bash
-# Format and lint
+# Desktop app
+python run.py
+
+# Web app (experimental)
+python run_web.py
+
+# Training (uses config.yaml)
+python model_train.py
+```
+
+## Code style
+
+Use the existing style; keep diffs small and focused.
+
+```bash
 black .
 ruff check .
 
-# Optional static type check
+# Optional (useful for larger refactors)
 mypy clogic parsers
-
-# Run tests (PyTorch path recommended)
-pytest -q
-
-# Or run specific tests
-pytest tests/test_pytorch_inference.py -q
 ```
 
-### 5. Submit a Pull Request
+If you use pre-commit locally:
 
-- Write clear commit messages
-- Include detailed description of changes
-- Reference any related issues
+```bash
+pre-commit install
+```
 
-#### PR checklist
+## Tests
 
-- [ ] Code is formatted with `black`
-- [ ] Lint passes with `ruff`
-- [ ] Tests pass with `pytest`
-- [ ] Docs/README updated where applicable
-- [ ] No large binaries (slides/models) added; consider Git LFS if needed
+Pytest is configured in [pytest.ini](pytest.ini) and runs coverage by default.
 
-## 📋 Contribution Guidelines
+```bash
+pytest
 
-### Code Style
+# Example: run a specific test module
+pytest tests/test_pytorch_inference.py
+```
 
-- Follow PEP 8 for Python code
-- Use meaningful variable and function names
-- Add docstrings for new functions and classes
-- Include type hints where appropriate
+Some tests are marked (see `pytest.ini`): `pytorch`, `tensorflow`, `gui`, `slow`, `integration`.
 
-### Medical Data Privacy
+## Data and binaries
 
-- **Never commit patient data** to the repository
-- Use synthetic or properly anonymized data for testing
-- Contributors are responsible for ensuring compliance with applicable privacy regulations in their jurisdiction
-- Include privacy considerations in documentation
+- Do not commit patient data.
+- Do not commit large slide files (`.mrxs`, `.svs`) or model checkpoints (`.pth`). If you must reference them, use reproducible download instructions or a separate storage.
+- Keep example artifacts small and anonymized/synthetic.
 
-### Testing
-
-- Add unit tests for new functionality
-- Test with various slide formats and sizes
-- Validate medical accuracy with domain experts
-- Include performance benchmarks for model changes
-
-Notes:
-
-- Some tests are framework-specific and will be skipped if the framework is not installed
-- Prefer the PyTorch path for local development; TensorFlow path is maintained for legacy support
-
-### Documentation
-
-- Update README.md for new features
-- Add inline code comments for complex logic
-- Include examples and use cases
-- Document API changes thoroughly
-
-## 🐛 Reporting Issues
-
-### Bug Reports
+## Pull requests
 
 Please include:
 
-- Operating system and Python version
-- Detailed steps to reproduce the issue
-- Expected vs. actual behavior
-- Error messages and stack traces
-- Sample data (if privacy-compliant)
+- A short summary of what changed and why
+- How you tested it (commands and environment)
+- Any config changes needed (`config.yaml` keys)
 
-### Feature Requests
-
-Please describe:
-
-- The problem you're trying to solve
-- Proposed solution or feature
-- Use case and benefits
-- Implementation suggestions (if any)
-
-## 🏥 Medical Validation
-
-### Clinical Testing
-
-- Test with diverse patient populations
-- Validate across different laboratories and equipment
-- Compare with pathologist ground truth
-- Document performance metrics and limitations
-
-### Regulatory Considerations
-
-- This software is intended for research and educational purposes only
-- Any clinical or diagnostic use is solely at the user's discretion and responsibility
-- Users and contributors should consult with relevant regulatory authorities regarding compliance requirements in their jurisdiction
-
-## 🎯 Priority Areas
-
-We're particularly interested in contributions for:
-
-1. **Model Accuracy** - Improving detection of subtle abnormalities
-2. **Performance** - Faster inference for real-time analysis
-3. **Robustness** - Handling various slide qualities and staining protocols
-4. **Usability** - Making the software more accessible to medical professionals
-5. **Integration** - Connecting with existing laboratory information systems
-
-## 📞 Community
-
-### Getting Help
-
-- Open an issue for technical questions
-- Join our discussions for general questions
-- Contact maintainers for collaboration opportunities
-
-### Code of Conduct
-
-- Be respectful and inclusive
-- Focus on constructive feedback
-- Maintain patient privacy at all times
-- Acknowledge the medical nature of this work
-
-## 🏆 Recognition
-
-Contributors may be:
-
-- Listed in project contributors
-- Acknowledged in relevant publications (subject to publication guidelines)
-- Invited to collaborate on research papers (based on contribution significance)
-- Recognized in project documentation
-
-## 📜 Legal
-
-By contributing to Cytologick, you agree that your contributions will be licensed under the same license as the project. Contributors must ensure they have the legal right to contribute any code, data, or other materials, and that such contributions do not infringe on third-party rights.
-
----
-
-## Disclaimer
-
-This software is provided for research and educational purposes. The project maintainers make no warranties regarding the accuracy, reliability, or suitability of this software for any particular purpose. Users are responsible for validating the software's performance and ensuring compliance with applicable regulations before any use.
-
-Thank you for your interest in improving medical AI technology! Every contribution helps advance automated cytology screening research.
+PRs that touch training/inference should include at least one reproducible check (e.g., a small unit test, or a deterministic smoke test on synthetic input).
