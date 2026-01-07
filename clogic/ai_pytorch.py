@@ -344,7 +344,14 @@ def f1_score(y_pred, y_true, num_classes=3):
     return np.mean(f1_scores)
 
 
-def get_datasets(cfg: Config, images_path: str, masks_path: str, train_split: float = 0.8):
+def get_datasets(
+    cfg: Config,
+    images_path: str,
+    masks_path: str,
+    train_split: float | None = None,
+    *,
+    epoch: int = 0,
+):
     """
     Create PyTorch datasets from image and mask directories.
     
@@ -356,33 +363,86 @@ def get_datasets(cfg: Config, images_path: str, masks_path: str, train_split: fl
     Returns:
         Tuple containing (train_dataset, val_dataset, total_samples)
     """
-    # Create full dataset
+    # NOTE:
+    # - 'static' split: one random holdout subset (val) fixed across epochs.
+    # - 'cyclic' split: rotating/rolling holdout subset (val) changes each epoch.
+    #   This effectively swaps the current validation subset back into training
+    #   and brings in a new validation subset of the same size.
+
+    # Allow cfg-driven split ratio by default.
+    if train_split is None:
+        val_frac = float(getattr(cfg, 'PT_VAL_FRACTION', 0.2) or 0.2)
+        if not (0.0 < val_frac < 1.0):
+            raise ValueError(f'PT_VAL_FRACTION must be in (0, 1), got {val_frac}')
+        train_split = 1.0 - val_frac
+
+    # Create full dataset just to compute length and establish deterministic file ordering.
     full_dataset = CytologyDataset(images_path, masks_path, transform=None)
     total_samples = len(full_dataset)
-    
-    # Split dataset
+
+    # Split dataset sizes
     train_size = int(train_split * total_samples)
     val_size = total_samples - train_size
-    
-    train_indices = list(range(train_size))
-    val_indices = list(range(train_size, total_samples))
-    
+
+    # Edge cases: tiny datasets
+    if total_samples == 0:
+        raise ValueError('Dataset is empty: no images found')
+    if val_size <= 0:
+        # Keep at least one validation sample when possible
+        val_size = 1 if total_samples > 1 else 0
+        train_size = total_samples - val_size
+
+    # Determine split strategy
+    strategy = str(getattr(cfg, 'PT_VAL_STRATEGY', 'cyclic') or 'cyclic').strip().lower()
+    if strategy in {'cycle', 'cycling', 'rotate', 'rotating', 'rolling'}:
+        strategy = 'cyclic'
+    if strategy in {'holdout', 'random', 'fixed'}:
+        strategy = 'static'
+    if strategy not in {'cyclic', 'static'}:
+        raise ValueError(f"PT_VAL_STRATEGY must be 'cyclic' or 'static', got {strategy!r}")
+
+    seed = int(getattr(cfg, 'PT_VAL_SEED', 42) or 42)
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(total_samples)
+
+    # Compute indices
+    if val_size == 0:
+        val_indices: list[int] = []
+        train_indices = perm.tolist()
+    elif strategy == 'static':
+        val_indices = perm[:val_size].tolist()
+        train_indices = perm[val_size:].tolist()
+    else:
+        # Rotating/rolling holdout: shift a validation window each epoch.
+        if epoch < 0:
+            raise ValueError(f'epoch must be >= 0, got {epoch}')
+        start = (epoch * val_size) % total_samples
+        window = perm.tolist()
+        if start + val_size <= total_samples:
+            val_indices = window[start:start + val_size]
+        else:
+            tail = window[start:]
+            head = window[: (start + val_size) - total_samples]
+            val_indices = tail + head
+
+        # Complement for train indices
+        val_set = set(val_indices)
+        train_indices = [i for i in window if i not in val_set]
+
     # Create datasets with transforms
     train_dataset = CytologyDataset(images_path, masks_path, transform=get_train_transforms(cfg))
     val_dataset = CytologyDataset(images_path, masks_path, transform=get_val_transforms(cfg))
-    
+
     # Create subset datasets
     train_subset = torch.utils.data.Subset(train_dataset, train_indices)
     val_subset = torch.utils.data.Subset(val_dataset, val_indices)
-    
+
     return train_subset, val_subset, total_samples
 
 
 def _train_model_loop(
     cfg: Config,
     model,
-    train_loader,
-    val_loader,
     criterion,
     optimizer,
     scheduler,
@@ -391,6 +451,7 @@ def _train_model_loop(
     epochs,
     model_path,
     output_classes_metrics,
+    batch_size: int,
     save_base_path: str | None = None,
 ):
     """
@@ -399,7 +460,27 @@ def _train_model_loop(
     best_iou = 0.0
     base_path = os.path.splitext(save_base_path or model_path)[0]
     
+    # Prepare loaders. For cyclic validation we rebuild loaders each epoch.
+    val_strategy = str(getattr(cfg, 'PT_VAL_STRATEGY', 'cyclic') or 'cyclic').strip().lower()
+    if val_strategy in {'cycle', 'cycling', 'rotate', 'rotating', 'rolling'}:
+        val_strategy = 'cyclic'
+    if val_strategy in {'holdout', 'random', 'fixed'}:
+        val_strategy = 'static'
+
+    cached_loaders = None
+    cached_total_samples = None
+
     for epoch in range(epochs):
+        if val_strategy == 'cyclic':
+            train_loader, val_loader, total_samples = _prepare_data_loaders(cfg, batch_size, epoch=epoch)
+            cached_total_samples = total_samples
+        else:
+            if cached_loaders is None:
+                train_loader, val_loader, total_samples = _prepare_data_loaders(cfg, batch_size, epoch=0)
+                cached_loaders = (train_loader, val_loader)
+                cached_total_samples = total_samples
+            else:
+                train_loader, val_loader = cached_loaders
         # Training phase
         model.train()
         running_loss = 0.0
@@ -584,14 +665,26 @@ def _setup_training_components(cfg: Config, model, lr, use_amp):
     return criterion, optimizer, scheduler, scaler, amp_ctx
 
 
-def _prepare_data_loaders(cfg: Config, batch_size):
+def _prepare_data_loaders(cfg: Config, batch_size, *, epoch: int = 0):
     """
     Create data loaders from config paths.
     """
     images_path = os.path.join(cfg.DATASET_FOLDER, cfg.IMAGES_FOLDER)
     masks_path = os.path.join(cfg.DATASET_FOLDER, cfg.MASKS_FOLDER)
     
-    train_dataset, val_dataset, total_samples = get_datasets(cfg, images_path, masks_path)
+    # If caller didn't provide an explicit train_split, default to cfg.PT_VAL_FRACTION (80/20).
+    val_frac = float(getattr(cfg, 'PT_VAL_FRACTION', 0.2) or 0.2)
+    if not (0.0 < val_frac < 1.0):
+        raise ValueError(f'PT_VAL_FRACTION must be in (0, 1), got {val_frac}')
+    train_split = 1.0 - val_frac
+
+    train_dataset, val_dataset, total_samples = get_datasets(
+        cfg,
+        images_path,
+        masks_path,
+        train_split=train_split,
+        epoch=epoch,
+    )
     
     if int(getattr(cfg, 'PT_NUM_WORKERS', -1)) >= 0:
         num_workers = int(cfg.PT_NUM_WORKERS)
@@ -640,7 +733,8 @@ def train_new_model_pytorch(
     set_seed(42)
     _log_device_selection(prefix="[train_new_model_pytorch]")
     
-    train_loader, val_loader, total_samples = _prepare_data_loaders(cfg, batch_size)
+    # Print total samples once (epoch 0 split).
+    _, _, total_samples = _prepare_data_loaders(cfg, batch_size, epoch=0)
     print(f"Total samples: {total_samples}")
     
     model = smp.Unet(
@@ -656,8 +750,8 @@ def train_new_model_pytorch(
     criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(cfg, model, lr, use_amp)
     
     _train_model_loop(
-        cfg, model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
-        epochs, model_path, output_classes, save_base_path=model_path
+        cfg, model, criterion, optimizer, scheduler, scaler, amp_ctx,
+        epochs, model_path, output_classes, batch_size=batch_size, save_base_path=model_path
     )
 
 
@@ -676,7 +770,8 @@ def train_current_model_pytorch(
     set_seed(42)
     _log_device_selection(prefix="[train_current_model_pytorch]")
     
-    train_loader, val_loader, _ = _prepare_data_loaders(cfg, batch_size)
+    # Warm up loaders (epoch 0 split) to validate dataset and print device info early.
+    _prepare_data_loaders(cfg, batch_size, epoch=0)
     
     # Load existing architecture
     model = smp.Unet(
@@ -707,8 +802,8 @@ def train_current_model_pytorch(
                 save_base_path = save_base_path.rsplit('_epoch', 1)[0]
 
     _train_model_loop(
-        cfg, model, train_loader, val_loader, criterion, optimizer, scheduler, scaler, amp_ctx,
-        epochs, model_path, cfg.CLASSES, save_base_path=save_base_path
+        cfg, model, criterion, optimizer, scheduler, scaler, amp_ctx,
+        epochs, model_path, cfg.CLASSES, batch_size=batch_size, save_base_path=save_base_path
     )
 
 

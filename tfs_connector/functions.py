@@ -5,7 +5,7 @@ import numpy as np
 from tfs_connector.metrics import log_metrics
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def split_evenly(input_list: List, number_of_chunks: int) -> Generator[List, None, None]:
     """
     Splits a list into chunk of approximately equal size
@@ -20,7 +20,7 @@ def split_evenly(input_list: List, number_of_chunks: int) -> Generator[List, Non
             for i in range(number_of_chunks))
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def split_segmentation_results_by_classes(segmentation_results: np.ndarray) -> List[np.ndarray]:
     """
     Splits an ndarray [..., classes] into list of ndarrays, one ndarray for each probability class
@@ -31,7 +31,7 @@ def split_segmentation_results_by_classes(segmentation_results: np.ndarray) -> L
             range(segmentation_results.shape[-1])]
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def parse_segmentation_results_into_probability_and_rois(segmentation_results: List[np.ndarray],
                                                          probabilities_class: int,
                                                          probability_treshold: float = 0.5) \

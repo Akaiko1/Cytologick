@@ -214,6 +214,68 @@ class TestPyTorchTraining:
         assert len(train_dataset) == 4
         assert len(val_dataset) == 1
 
+    def test_cyclic_validation_changes_each_epoch(self, cfg, sample_dataset_files):
+        """Cyclic/rotating holdout should change validation indices each epoch."""
+        from clogic.ai_pytorch import get_datasets
+
+        cfg.PT_VAL_STRATEGY = 'cyclic'
+        cfg.PT_VAL_FRACTION = 0.2
+        cfg.PT_VAL_SEED = 123
+
+        train0, val0, total0 = get_datasets(
+            cfg,
+            sample_dataset_files['images_dir'],
+            sample_dataset_files['masks_dir'],
+            train_split=0.8,
+            epoch=0,
+        )
+
+        train1, val1, total1 = get_datasets(
+            cfg,
+            sample_dataset_files['images_dir'],
+            sample_dataset_files['masks_dir'],
+            train_split=0.8,
+            epoch=1,
+        )
+
+        assert total0 == total1
+        assert len(val0) == len(val1) == 1
+        assert len(train0) == len(train1) == 4
+
+        # Different validation sample each epoch (with val_size=1)
+        assert list(val0.indices) != list(val1.indices)
+
+        # Train/val disjoint within each epoch
+        assert set(train0.indices).isdisjoint(set(val0.indices))
+        assert set(train1.indices).isdisjoint(set(val1.indices))
+
+    def test_static_validation_is_stable_across_epochs(self, cfg, sample_dataset_files):
+        """Static holdout should keep the same validation indices across epochs."""
+        from clogic.ai_pytorch import get_datasets
+
+        cfg.PT_VAL_STRATEGY = 'static'
+        cfg.PT_VAL_FRACTION = 0.2
+        cfg.PT_VAL_SEED = 123
+
+        train0, val0, _ = get_datasets(
+            cfg,
+            sample_dataset_files['images_dir'],
+            sample_dataset_files['masks_dir'],
+            train_split=0.8,
+            epoch=0,
+        )
+
+        train1, val1, _ = get_datasets(
+            cfg,
+            sample_dataset_files['images_dir'],
+            sample_dataset_files['masks_dir'],
+            train_split=0.8,
+            epoch=999,
+        )
+
+        assert list(val0.indices) == list(val1.indices)
+        assert set(train0.indices) == set(train1.indices)
+
     def test_model_device_placement(self, pytorch_device):
         """Test model can be moved to available device."""
         import segmentation_models_pytorch as smp

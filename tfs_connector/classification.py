@@ -23,7 +23,7 @@ from tfs_connector.model_urls import get_model_predict_url
 from tfs_connector.parallelism_mode import ParallelismMode
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def apply_classification_model_parallel(images: List[np.ndarray],
                                         model_name: str,
                                         model_version: int = 1,
@@ -53,7 +53,7 @@ def apply_classification_model_parallel(images: List[np.ndarray],
     :return: Results of ANN processing, list of probabilities of classes (np.ndarray)
     """
 
-    main_logger = logging.getLogger('irym_tfs_connector.main')
+    main_logger = logging.getLogger('tfs_connector.main')
 
     if parallelism_mode not in ParallelismMode.ALLOWED_PARALLELISM_MODES:
         raise ValueError(f'Parameter parallelism_mode={parallelism_mode} has value that is not '
@@ -112,7 +112,7 @@ def apply_classification_model_parallel(images: List[np.ndarray],
 
 
 @save_and_restore_kmp_duplicate_lib_ok
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def apply_classification_model(images: List[np.ndarray],
                                model_name: str,
                                model_version: int = 1,
@@ -133,7 +133,7 @@ def apply_classification_model(images: List[np.ndarray],
     """
     results = []
 
-    pulse_logger = logging.getLogger('irym_tfs_connector.pulse')
+    pulse_logger = logging.getLogger('tfs_connector.pulse')
 
     batches_bounds = __get_bounds_of_batches_by_size(images, batch_size)
 
@@ -170,7 +170,7 @@ def __get_bounds_of_batches_by_size(input_list: List, batch_size: int) -> List[T
     return result
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __apply_classification_model_to_batch(all_images: List[np.ndarray], batch_bounds: Tuple[int, int],
                                           model_predict_url: str,
                                           normalization: Optional[Callable[[np.ndarray], np.ndarray]] = None) \

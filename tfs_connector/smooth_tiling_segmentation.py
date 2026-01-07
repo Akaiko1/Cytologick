@@ -22,7 +22,7 @@ from tfs_connector.model_urls import get_model_predict_url
 from tfs_connector.tensorflow_layer import get_tensorflow_prediction
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def apply_smooth_tiling_segmentation_model(image: np.ndarray,
                                            model_name: str,
                                            endpoint_url: str,
@@ -52,7 +52,7 @@ def apply_smooth_tiling_segmentation_model(image: np.ndarray,
     :param normalization: Normalization function to apply when image is converted into tensor
     :return: Results of ANN processing: [..., classes_count] ndarray
     """
-    main_logger = logging.getLogger('irym_tfs_connector.main')
+    main_logger = logging.getLogger('tfs_connector.main')
 
     if parallelism_mode not in ParallelismMode.ALLOWED_PARALLELISM_MODES:
         raise ValueError(f'Parameter parallelism_mode={parallelism_mode} has value that is not '
@@ -95,7 +95,7 @@ def __get_send_to_ann_function(call_predict_url: str,
     :return: A function that sends series of images to TFS and returns predictions
     """
 
-    @log_metrics('irym_tfs_connector.metrics')
+    @log_metrics('tfs_connector.metrics')
     def __send_to_ann(_images: np.ndarray) -> List[np.ndarray]:
         image_tensors = [image_to_tensor(x, normalization) for x in _images]
         predictions = get_tensorflow_prediction(image_tensors, call_predict_url)
@@ -104,7 +104,7 @@ def __get_send_to_ann_function(call_predict_url: str,
     return __send_to_ann
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __pad_image(img: np.ndarray, chunk_size: int, subdivisions: int) -> np.ndarray:
     """
     Adds borders to img for a "valid" border pattern according to "chunk_size" and
@@ -124,7 +124,7 @@ def __pad_image(img: np.ndarray, chunk_size: int, subdivisions: int) -> np.ndarr
     return ret
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __create_reflections(image: np.ndarray) -> List[np.ndarray]:
     """
     Duplicate an ndarray (image) of shape (x, y, nb_channels) 8 times, in order
@@ -150,7 +150,7 @@ def __create_reflections(image: np.ndarray) -> List[np.ndarray]:
     return reflections
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __predict_img_with_smooth_windowing(input_img: np.ndarray,
                                         chunk_size: int,
                                         subdivisions: int,
@@ -226,7 +226,7 @@ def __predict_img_with_smooth_windowing(input_img: np.ndarray,
     return results
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __predict_reflections(reflections: List[np.ndarray],
                           chunk_size: int,
                           subdivisions: int,
@@ -255,7 +255,7 @@ def __predict_reflections(reflections: List[np.ndarray],
     return res
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __unpad_image(padded_img: np.ndarray, chunk_size: int, subdivisions: int) -> np.ndarray:
     """
     Undo what's done in the `__pad_image` function.
@@ -270,7 +270,7 @@ def __unpad_image(padded_img: np.ndarray, chunk_size: int, subdivisions: int) ->
     return ret
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __combine_reflections(reflections: List[np.ndarray]) -> np.ndarray:
     """
     Merges a list of 8 np arrays (images) of shape (x, y, nb_channels) generated
@@ -351,7 +351,7 @@ def __tile_reflection_and_predict(reflection: np.ndarray,
     return processed_reflection
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __tile_reflection(reflection: np.ndarray, subdivisions: int, chunk_size: int) -> np.ndarray:
     """
     Cuts a reflection into tiles (chunks) and streamlines them into single ndarray

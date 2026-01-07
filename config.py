@@ -91,6 +91,15 @@ class Config:
     PT_MIXUP_ALPHA: float = 0.2
     PT_NUM_WORKERS: int = -1  # -1 = auto; 0 disables multiprocessing DataLoader
 
+    # Validation split strategy
+    # - 'cyclic': rotating/rolling holdout. Each epoch uses a different validation subset.
+    # - 'static': a single random holdout subset used for all epochs.
+    PT_VAL_STRATEGY: str = 'cyclic'
+    # Fraction of samples to use for validation (0..1). Default 0.2 -> 80/20.
+    PT_VAL_FRACTION: float = 0.2
+    # Seed for deterministic train/val split permutation.
+    PT_VAL_SEED: int = 42
+
     LABELS: dict[str, int] = field(
         default_factory=lambda: {
             'LSIL': 2,
@@ -204,6 +213,13 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
     if 'pt_num_workers' in neural:
         cfg.PT_NUM_WORKERS = _to_int(neural['pt_num_workers'])
 
+    if 'pt_val_strategy' in neural:
+        cfg.PT_VAL_STRATEGY = str(neural['pt_val_strategy']).lower()
+    if 'pt_val_fraction' in neural:
+        cfg.PT_VAL_FRACTION = _to_float(neural['pt_val_fraction'])
+    if 'pt_val_seed' in neural:
+        cfg.PT_VAL_SEED = _to_int(neural['pt_val_seed'])
+
     if 'labels' in neural and neural['labels'] is not None:
         cfg.LABELS = dict(neural['labels'])
 
@@ -267,12 +283,98 @@ def _find_default_config_file() -> Optional[str]:
     return None
 
 
+def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Config) -> None:
+    """Print which supported YAML keys are missing and which defaults are used.
+
+    This is intentionally informational: it does not change config behavior.
+    """
+
+    expected: dict[str, dict[str, str]] = {
+        'general': {
+            'current_slide': 'CURRENT_SLIDE',
+            'current_slide_xml': 'CURRENT_SLIDE_XML',
+            'openslide_path': 'OPENSLIDE_PATH',
+            'hdd_slides': 'HDD_SLIDES',
+            'hdd_slides_svs': 'HDD_SLIDES_SVS',
+            'temp_folder': 'TEMP_FOLDER',
+        },
+        'neural_network': {
+            'framework': 'FRAMEWORK',
+            'dataset_folder': 'DATASET_FOLDER',
+            'masks_folder': 'MASKS_FOLDER',
+            'images_folder': 'IMAGES_FOLDER',
+            'image_chunk': 'IMAGE_CHUNK',
+            'image_shape': 'IMAGE_SHAPE',
+            'classes': 'CLASSES',
+            'pt_encoder_name': 'PT_ENCODER_NAME',
+            'pt_encoder_weights': 'PT_ENCODER_WEIGHTS',
+            'pt_use_encoder_preprocessing': 'PT_USE_ENCODER_PREPROCESSING',
+            'pt_optimizer': 'PT_OPTIMIZER',
+            'pt_lr': 'PT_LR',
+            'pt_weight_decay': 'PT_WEIGHT_DECAY',
+            'pt_encoder_lr_mult': 'PT_ENCODER_LR_MULT',
+            'pt_grad_clip_norm': 'PT_GRAD_CLIP_NORM',
+            'pt_label_smoothing': 'PT_LABEL_SMOOTHING',
+            'pt_mixup_alpha': 'PT_MIXUP_ALPHA',
+            'pt_num_workers': 'PT_NUM_WORKERS',
+            'pt_val_strategy': 'PT_VAL_STRATEGY',
+            'pt_val_fraction': 'PT_VAL_FRACTION',
+            'pt_val_seed': 'PT_VAL_SEED',
+            'labels': 'LABELS',
+        },
+        'gui': {
+            'slide_dir': 'SLIDE_DIR',
+            'unet_pred_mode': 'UNET_PRED_MODE',
+            'use_tta': 'USE_TTA',
+        },
+        'dataset': {
+            'exclude_duplicates': 'EXCLUDE_DUPLICATES',
+            'broaden_individual_rect': 'BROADEN_INDIVIDUAL_RECT',
+        },
+        'web': {
+            'ip_exposed': 'IP_EXPOSED',
+            'endpoint_url': 'ENDPOINT_URL',
+            'health_timeout': 'HEALTH_TIMEOUT',
+            'web_conf_threshold': 'WEB_CONF_THRESHOLD',
+            'atypical_class_index': 'WEB_ATYPICAL_CLASS_INDEX',
+            'fast_tiles': 'WEB_FAST_TILES',
+            'tile_cache_size': 'WEB_TILE_CACHE_SIZE',
+            'scan_all_tissue': 'WEB_SCAN_ALL_TISSUE',
+            'progress_every': 'WEB_PROGRESS_EVERY',
+            'min_tissue_fraction': 'WEB_MIN_TISSUE_FRACTION',
+            'tissue_gray_threshold': 'WEB_TISSUE_GRAY_THRESHOLD',
+            'pt_batch_size': 'WEB_PT_BATCH_SIZE',
+        },
+    }
+
+    missing_total = 0
+    for section, keymap in expected.items():
+        section_data = data.get(section, {})
+        if not isinstance(section_data, Mapping):
+            section_data = {}
+
+        missing: list[tuple[str, Any]] = []
+        for yaml_key, attr_name in keymap.items():
+            if yaml_key not in section_data:
+                missing.append((f'{section}.{yaml_key}', getattr(defaults, attr_name)))
+
+        if missing:
+            missing_total += len(missing)
+            print(f"[config] В '{path}' отсутствуют ключи секции '{section}'; используются дефолты:")
+            for full_key, default_value in missing:
+                print(f"  - {full_key}: {default_value!r}")
+
+    if missing_total == 0:
+        print(f"[config] Все поддерживаемые ключи найдены в '{path}'.")
+
+
 def load_config(config_file: Optional[str] = None) -> Config:
     """Load configuration into a Config object.
 
     This function has no side-effects besides an optional console print.
     """
     cfg = Config()
+    defaults = Config()
 
     path = config_file or _find_default_config_file()
     if not path:
@@ -284,6 +386,8 @@ def load_config(config_file: Optional[str] = None) -> Config:
     if path.endswith(('.yaml', '.yml')):
         with open(path, 'r') as f:
             data = yaml.safe_load(f) or {}
+        if multiprocessing.current_process().name == 'MainProcess':
+            _report_missing_yaml_keys(path, data, defaults)
     elif path.endswith('.ini'):
         data = _load_ini_to_mapping(path)
     else:

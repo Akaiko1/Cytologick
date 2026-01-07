@@ -4,15 +4,15 @@ import setuptools
 #     long_description = fh.read()
 
 setuptools.setup(
-    name='irym_tfs_connector',
+    name='tfs_connector',
     version='0.8.5',
     author='mahavoid',
     description='A small library that helps feed TensorFlow Serving REST API images.',
     # long_description=long_description,
     # long_description_content_type="text/markdown",
-    url='http://192.168.1.59:16326/simple/irym_tfs_connector',
+    url='http://192.168.1.59:16326/simple/tfs_connector',
     license='proprietary and confidential',
-    packages=['irym_tfs_connector'],
+    packages=['tfs_connector'],
     install_requires=['cv2',
                       'datetime',
                       'functools',

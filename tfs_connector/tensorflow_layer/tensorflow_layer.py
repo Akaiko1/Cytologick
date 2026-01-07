@@ -14,7 +14,7 @@ warnings.warn(
 )
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def get_tensorflow_prediction(chunks_as_tensors: List[np.ndarray], predict_url: str) -> list:
     """
     Sends a linear list of tensors to the TensorFlow Serving REST API predict method
@@ -28,7 +28,7 @@ def get_tensorflow_prediction(chunks_as_tensors: List[np.ndarray], predict_url: 
     return prediction
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __prepare_request_json(tensors: List[np.ndarray]) -> bytes:
     """
     Serializes a list of tensors into TFS API request. Made a separate method for logging and profiling purposes.
@@ -38,7 +38,7 @@ def __prepare_request_json(tensors: List[np.ndarray]) -> bytes:
     return predict_request
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __post_predict_request(tf_serving_url: str, predict_request: bytes) -> requests.Response:
     """
     Posts data to a Predict TFS API method. Made a separate method for logging and profiling purposes.
@@ -59,7 +59,7 @@ def __get_tensorflow_exception(response: requests.Response) -> Exception:
     return __unprocessible_enitity_response_error(response)
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __parse_response_json(response: requests.Response) -> list:
     """
     Deserializes json response containing predictions into list of pixels. Made a separate method for

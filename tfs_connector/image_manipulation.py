@@ -119,7 +119,7 @@ def cut_image_into_chunks(image: np.ndarray, chunk_size: Tuple[int, int],
     return result
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def pad_images(images: List[np.ndarray], chunk_size: Tuple[int, int]) -> List[np.ndarray]:
     """
     Pads a list of images according to a chunk_size. Does nothing if images are divisible into chunks without

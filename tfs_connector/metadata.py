@@ -6,7 +6,7 @@ from tfs_connector.metrics import log_metrics
 from tfs_connector.model_urls import get_model_metadata_url
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def get_model_metadata(endpoint_url: str, model_name: str, model_version: Union[str, int] = 1) -> dict:
     """
     Gets metadata of a model from TensorFlow REST API
@@ -20,7 +20,7 @@ def get_model_metadata(endpoint_url: str, model_name: str, model_version: Union[
     return response
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def get_model_input_size_from_metadata(endpoint_url: str, model_name: str, model_version: Union[str, int]) \
         -> Tuple[int, int]:
     """
@@ -38,7 +38,7 @@ def get_model_input_size_from_metadata(endpoint_url: str, model_name: str, model
     return int(tensor_shape['dim'][1]['size']), int(tensor_shape['dim'][2]['size'])
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def get_number_of_classes_for_segmentation_model(endpoint_url: str, model_name: str, model_version: Union[str, int]) \
         -> int:
     model_metadata = get_model_metadata(endpoint_url, model_name, model_version)

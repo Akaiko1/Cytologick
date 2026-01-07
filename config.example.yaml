@@ -61,6 +61,15 @@ neural_network:
   # Mixup alpha for Beta(alpha, alpha). 0 disables mixup.
   pt_mixup_alpha: 0.2
 
+  # Validation split
+  # - 'cyclic' = rotating/rolling holdout (validation set changes every epoch)
+  # - 'static' = a single random holdout split for all epochs
+  pt_val_strategy: cyclic
+  # Fraction of samples used for validation (0..1). 0.2 -> 80/20.
+  pt_val_fraction: 0.2
+  # Seed for deterministic split permutation.
+  pt_val_seed: 42
+
   # DataLoader multiprocessing
   # -1 = auto, 0 = single-process, >0 = worker processes
   pt_num_workers: -1

@@ -27,7 +27,7 @@ from tfs_connector.parallelism_mode import ParallelismMode
 from tfs_connector.resize_options import ResizeOptions
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def apply_segmentation_model_parallel(images: List[np.ndarray],
                                       model_name: str,
                                       endpoint_url: str,
@@ -62,7 +62,7 @@ def apply_segmentation_model_parallel(images: List[np.ndarray],
 
     start_time = datetime.datetime.utcnow()
 
-    main_logger = logging.getLogger('irym_tfs_connector.main')
+    main_logger = logging.getLogger('tfs_connector.main')
 
     if parallelism_mode not in ParallelismMode.ALLOWED_PARALLELISM_MODES:
         raise ValueError(f'Parameter parallelism_mode={parallelism_mode} has value that is not '
@@ -138,7 +138,7 @@ def __log_stats(main_logger, end_time, start_time, images, thread_count):
 
 
 @save_and_restore_kmp_duplicate_lib_ok
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def apply_segmentation_model(images: List[np.ndarray],
                              endpoint_url: str,
                              model_name: str,
@@ -165,8 +165,8 @@ def apply_segmentation_model(images: List[np.ndarray],
     if images is None or len(images) == 0:
         return []
 
-    pulse_logger = logging.getLogger('irym_tfs_connector.pulse')
-    flow_logger = logging.getLogger('irym_tfs_connector.flow')
+    pulse_logger = logging.getLogger('tfs_connector.pulse')
+    flow_logger = logging.getLogger('tfs_connector.flow')
 
     if resize_options is None:
         resize_options = ResizeOptions.default()
@@ -259,7 +259,7 @@ def __get_bounds_of_batches_by_size(input_list: List, batch_size: int) -> List[T
     return result
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __apply_segmentation_model_to_batch(all_images: List[np.ndarray],
                                         batch_bounds: Tuple[int, int],
                                         model_predict_url: str,
@@ -318,7 +318,7 @@ def __calculate_mask_patches_for_tfs_predictions(predictions: list, chunk_size: 
     return linear_tfserving_response
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __create_tfs_input_for_batch(all_images: List[np.ndarray], batch_bounds: Tuple[int, int],
                                  chunk_size: Tuple[int, int],
                                  model_input_size: Tuple[int, int],
@@ -358,7 +358,7 @@ def __create_mask_default(prediction: list) -> np.ndarray:
     return squeezed
 
 
-@log_metrics('irym_tfs_connector.metrics')
+@log_metrics('tfs_connector.metrics')
 def __combine_masks_into_pathology_maps(linear_mask: List[np.ndarray],
                                         batch_thickness: int,
                                         original_image_size: Tuple[int, int],
