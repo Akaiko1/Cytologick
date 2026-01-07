@@ -360,12 +360,12 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
 
         if missing:
             missing_total += len(missing)
-            print(f"[config] В '{path}' отсутствуют ключи секции '{section}'; используются дефолты:")
+            print(f"[config] Missing keys in '{path}' section '{section}'; using defaults:")
             for full_key, default_value in missing:
                 print(f"  - {full_key}: {default_value!r}")
 
     if missing_total == 0:
-        print(f"[config] Все поддерживаемые ключи найдены в '{path}'.")
+        print(f"[config] All supported keys are present in '{path}'.")
 
 
 def load_config(config_file: Optional[str] = None) -> Config:
