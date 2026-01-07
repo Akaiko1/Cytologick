@@ -2,8 +2,9 @@
 
 import os
 
-
-project_root = os.path.abspath(os.path.dirname(__file__))
+# PyInstaller executes .spec as Python code and provides SPECPATH global that
+# points to the directory containing the spec file.
+project_root = os.path.abspath(globals().get('SPECPATH') or os.path.dirname(__file__))
 
 
 # We intentionally do NOT bundle config/models here.
@@ -11,11 +12,10 @@ project_root = os.path.abspath(os.path.dirname(__file__))
 # OpenSlide binaries are placed next to the executable.
 datas = []
 
-
 a = Analysis(
     ['run.py'],
     pathex=[project_root],
-    binaries=[],
+    binaries=openslide_binaries,
     datas=datas,
     # Some imports are dynamic (openslide inside a function; remote connector optional)
     hiddenimports=['openslide', 'tfs_connector'],
@@ -40,7 +40,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
