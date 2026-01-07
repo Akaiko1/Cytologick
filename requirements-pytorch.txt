@@ -1,31 +1,40 @@
-# Cytologick - PyTorch Framework Requirements
+# Cytologick - PyTorch Installation (Recommended)
+# =================================================
 # Install with: pip install -r requirements-pytorch.txt
+#
+# IMPORTANT: GPU/CUDA Support
+# ---------------------------
+# This file installs CPU-only PyTorch by default.
+# For GPU acceleration, install PyTorch separately using the official command builder:
+#
+#   https://pytorch.org/get-started/locally/
+#
+# Example commands for CUDA:
+#   CUDA 12.4: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+#   CUDA 12.1: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   CUDA 11.8: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+#
+# Then install the rest: pip install -r requirements-pytorch.txt
+# (PyTorch will be skipped if already installed)
 
-# Core dependencies
-matplotlib==3.6.2
-opencv-python==4.6.0.66
-openslide-python==1.2.0
-pandas==1.5.2
-PyQt5==5.15.10
-qt-material==2.14
-qdarkstyle>=3.1
-scipy==1.13.0
-tqdm==4.66.2
-multiprocess==0.70.16
-orjson==3.10.0
-Flask==3.0.3
-scikit-image>=0.23.0
-numpy>=1.26.0,<2.0.0
-pillow>=9.0.0
-h5py>=3.0.0
-PyYAML>=6.0
+# ---------------------------------
+# Base dependencies
+# ---------------------------------
+-r requirements.txt
 
-# PyTorch framework
+# ---------------------------------
+# PyTorch (CPU version - see above for GPU)
+# ---------------------------------
 torch>=2.0.0
 torchvision>=0.15.0
 torchaudio>=2.0.0
-segmentation-models-pytorch>=0.3.0
-albumentations>=1.3.0
-efficientnet-pytorch==0.7.1
-pretrainedmodels==0.7.4
-timm==0.9.2
+
+# ---------------------------------
+# Segmentation & Augmentation
+# ---------------------------------
+# segmentation-models-pytorch 0.3.4+ vendors encoders (no need for efficientnet-pytorch, pretrainedmodels)
+segmentation-models-pytorch>=0.3.4
+albumentations>=1.4.0
+
+# timm is used by smp for additional encoders
+timm>=0.9.0

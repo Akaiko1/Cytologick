@@ -33,31 +33,67 @@ Cytologick is a Python application for analyzing Pap smear slides using deep lea
 **Prerequisites:**
 
 - Python 3.10+ (tested with Python 3.12)
-- Conda (recommended for managing dependencies)
+- Conda (recommended) or pip
 
 #### Step A: Install OpenSlide binaries
 
 **Crucial Step**: The Python library `openslide-python` is just a wrapper. You MUST install the OpenSlide binaries separately for it to work.
 
-- **Windows**: Download the binary zip from [openslide.org/download](https://openslide.org/download/). Extract it (e.g., to `C:/openslide/bin`) and add this path to your `config.yaml` or system PATH.
-- **macOS**: `brew install openslide`
-- **Linux**: `apt-get install libopenslide0`
+| Platform | Command |
+|----------|---------|
+| **Windows** | Download from [openslide.org/download](https://openslide.org/download/), extract to `C:/openslide/bin`, add path to `config.yaml` |
+| **macOS** | `brew install openslide` |
+| **Linux** | `apt-get install libopenslide0` (Debian/Ubuntu) or `dnf install openslide` (Fedora) |
 
 #### Step B: Install Python environment
+
+**Option 1: CPU-only (simplest)**
 
 ```bash
 # Create environment
 conda create -n cyto python=3.12
 conda activate cyto
 
-# Install dependencies
+# Install all dependencies (CPU PyTorch)
 pip install -r requirements-pytorch.txt
 
-# Install Python bindings for OpenSlide
-conda install openslide-python
+# Install OpenSlide Python bindings
+conda install -c conda-forge openslide-python
 ```
 
-*Note: Using conda for `openslide-python` often helps resolve binary path issues automatically.*
+**Option 2: GPU/CUDA (recommended for training)**
+
+For GPU acceleration, install PyTorch with CUDA support first using the [official PyTorch installer](https://pytorch.org/get-started/locally/):
+
+```bash
+# Create environment
+conda create -n cyto python=3.12
+conda activate cyto
+
+# Install PyTorch with CUDA (choose your CUDA version)
+# CUDA 12.4:
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# CUDA 12.1:
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# CUDA 11.8:
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Then install remaining dependencies (PyTorch will be skipped)
+pip install -r requirements-pytorch.txt
+
+# Install OpenSlide Python bindings
+conda install -c conda-forge openslide-python
+```
+
+**Verify GPU installation:**
+
+```bash
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+*Note: Using conda for `openslide-python` helps resolve binary path issues automatically.*
 
 ### 2. Configure
 
