@@ -1,0 +1,75 @@
+#pragma once
+
+#include <QDialog>
+#include <QLabel>
+#include <QSlider>
+#include <QPushButton>
+#include <QPixmap>
+#include <opencv2/core.hpp>
+
+namespace cytologick {
+
+class MainWindow;
+
+/**
+ * Custom QLabel for preview display with overlay support
+ */
+class PreviewDisplayLabel : public QLabel {
+    Q_OBJECT
+
+public:
+    explicit PreviewDisplayLabel(QWidget* parent = nullptr);
+
+    void setImages(const QPixmap& original, const QPixmap& overlay = QPixmap());
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    QPixmap m_original;
+    QPixmap m_overlay;
+};
+
+/**
+ * Analysis preview window showing inference results
+ * Port of Python Preview class
+ */
+class PreviewWindow : public QDialog {
+    Q_OBJECT
+
+public:
+    /**
+     * Create preview window
+     * @param parent Parent MainWindow (provides model access)
+     * @param pixmap Image to display
+     * @param sourceImage OpenCV Mat of source for inference
+     */
+    PreviewWindow(MainWindow* parent, const QPixmap& pixmap, const cv::Mat& sourceImage);
+    ~PreviewWindow() override = default;
+
+private slots:
+    void onConfidenceChanged(int value);
+    void onAnalyzeClicked();
+
+private:
+    void setupUi();
+    void updateConfidenceLabel();
+
+    MainWindow* m_mainWindow;
+
+    // UI elements
+    PreviewDisplayLabel* m_displayLabel = nullptr;
+    QLabel* m_infoLabel = nullptr;
+    QLabel* m_confLabel = nullptr;
+    QSlider* m_confSlider = nullptr;
+    QPushButton* m_analyzeButton = nullptr;
+
+    // Images
+    QPixmap m_originalImage;
+    cv::Mat m_sourceImage;
+
+    // Settings
+    float m_confThreshold = 0.6f;
+};
+
+} // namespace cytologick

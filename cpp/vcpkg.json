@@ -1,0 +1,17 @@
+{
+  "name": "cytologick",
+  "version": "1.0.0",
+  "description": "Cytologick - AI-powered Pap smear analysis tool",
+  "dependencies": [
+    {
+      "name": "qt6",
+      "default-features": false,
+      "features": ["core", "gui", "widgets"]
+    },
+    "opencv4",
+    "onnxruntime-gpu",
+    "yaml-cpp"
+  ],
+  "builtin-baseline": "2024.01.12",
+  "overrides": []
+}

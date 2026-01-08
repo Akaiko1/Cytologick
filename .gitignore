@@ -33,3 +33,5 @@ config.yaml
 .claude/
 
 *.pth
+
+_main/model.onnx
