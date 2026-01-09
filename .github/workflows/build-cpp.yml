@@ -337,8 +337,19 @@ jobs:
           # Copy yaml-cpp DLL
           copy "$env:VCPKG_ROOT\installed\x64-windows\bin\yaml-cpp.dll" dist\
 
-          # Copy OpenCV dependencies (libwebp, libjpeg, libpng, zlib, etc.)
+          # Copy all runtime dependencies (Qt6, OpenCV, and their deps)
+          # windeployqt misses many DLLs, so we copy everything needed
           $deps = @(
+            # Qt6 dependencies (not deployed by windeployqt)
+            "harfbuzz.dll",
+            "freetype.dll",
+            "pcre2-16.dll",
+            "double-conversion.dll",
+            "bz2.dll",
+            "brotlidec.dll",
+            "brotlicommon.dll",
+            "zstd.dll",
+            # OpenCV image format dependencies
             "libwebp*.dll",
             "libsharpyuv*.dll",
             "jpeg*.dll",
@@ -347,12 +358,21 @@ jobs:
             "tiff*.dll",
             "lzma*.dll",
             "libzstd*.dll",
-            "openjp2*.dll"
+            "openjp2*.dll",
+            # Additional potential dependencies
+            "libexpat*.dll",
+            "icudt*.dll",
+            "icuin*.dll",
+            "icuuc*.dll"
           )
           foreach ($dep in $deps) {
             $files = Get-ChildItem "$env:VCPKG_ROOT\installed\x64-windows\bin\$dep" -ErrorAction SilentlyContinue
             if ($files) {
-              copy $files.FullName dist\
+              foreach ($f in $files) {
+                if (-not (Test-Path "dist\$($f.Name)")) {
+                  copy $f.FullName dist\
+                }
+              }
             }
           }
 
