@@ -301,6 +301,7 @@ jobs:
           cmake .. `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_MANIFEST_MODE=OFF `
             -DOPENSLIDE_INCLUDE_DIR="C:/openslide/openslide-win64-20231011/include" `
             -DOPENSLIDE_LIBRARY="C:/openslide/openslide-win64-20231011/lib/libopenslide.lib" `
             -Donnxruntime_INCLUDE_DIR="C:/onnxruntime/onnxruntime-win-x64-${{ env.ONNX_VERSION }}/include" `

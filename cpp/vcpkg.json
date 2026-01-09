@@ -6,7 +6,7 @@
     {
       "name": "qt6",
       "default-features": false,
-      "features": ["core", "gui", "widgets"]
+      "features": ["gui", "widgets"]
     },
     "opencv4",
     "onnxruntime-gpu",
