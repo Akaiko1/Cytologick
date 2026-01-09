@@ -150,6 +150,13 @@ void MainWindow::loadModel() {
 
 void MainWindow::showSlideMenu() {
     m_menuWindow = std::make_unique<MenuWindow>(this);
+
+    // Position menu window to the right edge of main window
+    QPoint mainPos = pos();
+    int menuX = mainPos.x() + width();
+    int menuY = mainPos.y();
+    m_menuWindow->move(menuX, menuY);
+
     m_menuWindow->show();
 }
 

@@ -56,7 +56,7 @@ PreviewWindow::PreviewWindow(MainWindow* parent, const QPixmap& pixmap, const cv
     , m_sourceImage(sourceImage.clone())
 {
     setupUi();
-    setMaximumSize(2000, 1200);
+    setMaximumSize(1600, 900);
     resize(m_originalImage.width() + 220, m_originalImage.height());
 }
 
