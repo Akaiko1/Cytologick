@@ -140,7 +140,9 @@ jobs:
           mkdir -p build && cd build
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="/opt/onnxruntime"
+            -DCMAKE_PREFIX_PATH="/opt/onnxruntime" \
+            -Donnxruntime_INCLUDE_DIR="/opt/onnxruntime/include" \
+            -Donnxruntime_LIB="/opt/onnxruntime/lib/libonnxruntime.so"
 
       - name: Build
         run: |
@@ -238,7 +240,7 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: 'c82f74667287d3dc386bce81e44964370c91a289'
+          # Use the action's default vcpkg checkout to avoid stale portfiles.
 
       - name: Install vcpkg dependencies
         run: |
