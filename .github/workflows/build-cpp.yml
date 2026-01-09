@@ -234,6 +234,8 @@ jobs:
 
   build-windows:
     runs-on: windows-2022
+    env:
+      VCPKG_PAT_TOKEN: ${{ secrets.VCPKG_PAT_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -241,7 +243,40 @@ jobs:
         uses: lukka/run-vcpkg@v11
         # Use the action's default vcpkg checkout to avoid stale portfiles.
 
-      - name: Install vcpkg dependencies
+      - name: Configure vcpkg binary cache (GitHub Packages)
+        if: env.VCPKG_PAT_TOKEN != ''
+        shell: pwsh
+        run: |
+          $nuget = & vcpkg fetch nuget | Select-Object -Last 1
+          & $nuget sources remove -Name vcpkg-gh -ConfigFile nuget.config 2>$null | Out-Null
+          & $nuget sources add -Name vcpkg-gh `
+            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
+            -Username "${{ github.repository_owner }}" `
+            -Password "${{ secrets.VCPKG_PAT_TOKEN }}" `
+            -StorePasswordInClearText `
+            -ConfigFile nuget.config
+
+      - name: Cache vcpkg artifacts
+        if: env.VCPKG_PAT_TOKEN == ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/installed
+            vcpkg/downloads
+            vcpkg/packages
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg-configuration.json') }}-${{ hashFiles('.github/workflows/build-cpp.yml') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install vcpkg dependencies (with binary cache)
+        if: env.VCPKG_PAT_TOKEN != ''
+        run: |
+          vcpkg install qtbase:x64-windows opencv4:x64-windows yaml-cpp:x64-windows
+        env:
+          VCPKG_BINARY_SOURCES: "clear;nugetconfig,${{ github.workspace }}\\nuget.config,readwrite"
+
+      - name: Install vcpkg dependencies (no binary cache)
+        if: env.VCPKG_PAT_TOKEN == ''
         run: |
           vcpkg install qtbase:x64-windows opencv4:x64-windows yaml-cpp:x64-windows
 
@@ -254,6 +289,9 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://github.com/openslide/openslide-winbuild/releases/download/v20231011/openslide-win64-20231011.zip" -OutFile openslide.zip
           Expand-Archive openslide.zip -DestinationPath C:\openslide
+      - name: Download VC++ Redistributable
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile vc_redist.x64.exe
 
       - name: Configure CMake
         run: |
@@ -279,6 +317,8 @@ jobs:
           mkdir dist
           mkdir dist\_main
           copy Release\Cytologick.exe dist\
+          # Bundle VC++ Redistributable installer
+          copy ..\..\vc_redist.x64.exe dist\
 
           # Copy OpenSlide DLLs
           copy C:\openslide\openslide-win64-20231011\bin\*.dll dist\
@@ -314,7 +354,9 @@ jobs:
           @"
           Cytologick C++ GUI - Windows (x64)
 
-          All dependencies are included.
+          Dependencies:
+            - VC++ Redistributable (vc_redist.x64.exe is included)
+            - All other dependencies are included.
 
           Usage:
             1. Place your model.onnx in _main\ folder

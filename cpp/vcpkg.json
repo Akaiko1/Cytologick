@@ -12,6 +12,6 @@
     "onnxruntime-gpu",
     "yaml-cpp"
   ],
-  "builtin-baseline": "2024.01.12",
+  "builtin-baseline": "84bab45d415d22042bd0b9081aea57f362da3f35",
   "overrides": []
 }
