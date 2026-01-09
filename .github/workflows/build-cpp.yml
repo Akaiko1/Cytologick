@@ -247,8 +247,16 @@ jobs:
         if: env.VCPKG_PAT_TOKEN != ''
         shell: pwsh
         run: |
+          # Create nuget.config first
+          @'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+            </packageSources>
+          </configuration>
+          '@ | Out-File -FilePath "nuget.config" -Encoding UTF8
+
           $nuget = & vcpkg fetch nuget | Select-Object -Last 1
-          & $nuget sources remove -Name vcpkg-gh -ConfigFile nuget.config 2>$null | Out-Null
           & $nuget sources add -Name vcpkg-gh `
             -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
             -Username "${{ github.repository_owner }}" `
