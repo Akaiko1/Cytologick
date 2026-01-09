@@ -10,8 +10,24 @@ set(CMAKE_AUTOUIC ON)
 # Find required packages
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 find_package(OpenCV REQUIRED)
-find_package(onnxruntime REQUIRED)
 find_package(yaml-cpp REQUIRED)
+
+# ONNX Runtime - try find_package first, fall back to manual paths
+find_package(onnxruntime QUIET)
+if(NOT onnxruntime_FOUND)
+    # Manual path configuration for Windows/CI builds
+    if(onnxruntime_INCLUDE_DIR AND onnxruntime_LIB)
+        message(STATUS "Using manual ONNX Runtime paths")
+        add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_LOCATION "${onnxruntime_LIB}"
+            IMPORTED_IMPLIB "${onnxruntime_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES "${onnxruntime_INCLUDE_DIR}"
+        )
+    else()
+        message(FATAL_ERROR "ONNX Runtime not found. Install via package manager or set onnxruntime_INCLUDE_DIR and onnxruntime_LIB.")
+    endif()
+endif()
 
 # OpenSlide - may need manual path on Windows
 find_path(OPENSLIDE_INCLUDE_DIR openslide/openslide.h

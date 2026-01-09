@@ -109,7 +109,7 @@ jobs:
           path: cpp/build/Cytologick-macos-arm64.tar.gz
 
   build-macos-intel:
-    runs-on: macos-13  # Intel
+    runs-on: macos-15-large  # Intel x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -334,7 +334,12 @@ jobs:
 
       - name: Install vcpkg dependencies
         run: |
-          vcpkg install qt6-base:x64-windows opencv4:x64-windows yaml-cpp:x64-windows onnxruntime:x64-windows
+          vcpkg install qtbase:x64-windows opencv4:x64-windows yaml-cpp:x64-windows
+
+      - name: Download ONNX Runtime
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v${{ env.ONNX_VERSION }}/onnxruntime-win-x64-${{ env.ONNX_VERSION }}.zip" -OutFile onnxruntime.zip
+          Expand-Archive onnxruntime.zip -DestinationPath C:\onnxruntime
 
       - name: Download OpenSlide
         run: |
@@ -350,7 +355,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DOPENSLIDE_INCLUDE_DIR="C:/openslide/openslide-win64-20231011/include" `
-            -DOPENSLIDE_LIBRARY="C:/openslide/openslide-win64-20231011/lib/libopenslide.lib"
+            -DOPENSLIDE_LIBRARY="C:/openslide/openslide-win64-20231011/lib/libopenslide.lib" `
+            -Donnxruntime_INCLUDE_DIR="C:/onnxruntime/onnxruntime-win-x64-${{ env.ONNX_VERSION }}/include" `
+            -Donnxruntime_LIB="C:/onnxruntime/onnxruntime-win-x64-${{ env.ONNX_VERSION }}/lib/onnxruntime.lib"
 
       - name: Build
         run: |
@@ -371,7 +378,7 @@ jobs:
           & "$env:VCPKG_ROOT\installed\x64-windows\tools\Qt6\bin\windeployqt.exe" dist\Cytologick.exe
 
           # Copy ONNX Runtime DLL
-          copy "$env:VCPKG_ROOT\installed\x64-windows\bin\onnxruntime*.dll" dist\
+          copy "C:\onnxruntime\onnxruntime-win-x64-${{ env.ONNX_VERSION }}\lib\onnxruntime.dll" dist\
 
           # Copy OpenCV DLLs
           copy "$env:VCPKG_ROOT\installed\x64-windows\bin\opencv*.dll" dist\
