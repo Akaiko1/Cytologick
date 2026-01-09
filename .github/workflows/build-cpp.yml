@@ -108,100 +108,6 @@ jobs:
           name: Cytologick-macos-arm64
           path: cpp/build/Cytologick-macos-arm64.tar.gz
 
-  build-macos-intel:
-    runs-on: macos-15-large  # Intel x86_64
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          brew install cmake qt@6 opencv openslide yaml-cpp onnxruntime
-
-      - name: Configure CMake
-        run: |
-          cd cpp
-          mkdir -p build && cd build
-          cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="/usr/local/opt/qt@6;/usr/local" \
-            -DOPENSLIDE_INCLUDE_DIR=/usr/local/include \
-            -DOPENSLIDE_LIBRARY=/usr/local/lib/libopenslide.dylib
-
-      - name: Build
-        run: |
-          cd cpp/build
-          cmake --build . -j$(sysctl -n hw.ncpu)
-
-      - name: Create distribution
-        run: |
-          cd cpp/build
-          mkdir -p dist/_main
-          cp Cytologick dist/
-
-          # Create default config
-          cat > dist/config.yaml << 'EOF'
-          general:
-            slide_dir: ./slides
-            hdd_slides: ""
-
-          neural_network:
-            image_shape: [128, 128]
-            classes: 3
-            batch_size: 16
-
-          gui:
-            default_threshold: 0.6
-          EOF
-
-          cat > dist/run.sh << 'EOF'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-
-          if ! command -v brew &> /dev/null; then
-              echo "Homebrew not found. Install from https://brew.sh"
-              exit 1
-          fi
-
-          MISSING=""
-          for pkg in qt@6 opencv openslide yaml-cpp onnxruntime; do
-              if ! brew list $pkg &> /dev/null; then
-                  MISSING="$MISSING $pkg"
-              fi
-          done
-
-          if [ -n "$MISSING" ]; then
-              echo "Missing dependencies:$MISSING"
-              echo "Install with: brew install$MISSING"
-              exit 1
-          fi
-
-          "$DIR/Cytologick"
-          EOF
-          chmod +x dist/run.sh
-
-          cat > dist/README.txt << 'EOF'
-          Cytologick C++ GUI - macOS (Intel)
-
-          Requirements:
-            brew install qt@6 opencv openslide yaml-cpp onnxruntime
-
-          Usage:
-            1. Place your model.onnx in _main/ folder
-            2. Edit config.yaml to set slide_dir path
-            3. Run: ./run.sh
-          EOF
-
-      - name: Package
-        run: |
-          cd cpp/build
-          tar -czvf Cytologick-macos-x64.tar.gz -C dist .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Cytologick-macos-x64
-          path: cpp/build/Cytologick-macos-x64.tar.gz
-
   build-linux:
     runs-on: ubuntu-22.04
     steps:
@@ -215,6 +121,8 @@ jobs:
             cmake \
             pkg-config \
             qt6-base-dev \
+            libgl1-mesa-dev \
+            libxkbcommon-dev \
             libopencv-dev \
             libopenslide-dev \
             libyaml-cpp-dev \
@@ -425,7 +333,7 @@ jobs:
           path: cpp/build/Cytologick-windows-x64.zip
 
   release:
-    needs: [build-macos, build-macos-intel, build-linux, build-windows]
+    needs: [build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -441,7 +349,6 @@ jobs:
         with:
           files: |
             artifacts/Cytologick-macos-arm64/Cytologick-macos-arm64.tar.gz
-            artifacts/Cytologick-macos-x64/Cytologick-macos-x64.tar.gz
             artifacts/Cytologick-linux-x64/Cytologick-linux-x64.tar.gz
             artifacts/Cytologick-windows-x64/Cytologick-windows-x64.zip
           draft: false
