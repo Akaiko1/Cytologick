@@ -1,0 +1,442 @@
+name: Build C++ GUI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  ONNX_VERSION: "1.16.3"
+
+jobs:
+  build-macos:
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cmake qt@6 opencv openslide yaml-cpp onnxruntime
+
+      - name: Configure CMake
+        run: |
+          cd cpp
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="/opt/homebrew/opt/qt@6;/opt/homebrew" \
+            -DOPENSLIDE_INCLUDE_DIR=/opt/homebrew/include \
+            -DOPENSLIDE_LIBRARY=/opt/homebrew/lib/libopenslide.dylib
+
+      - name: Build
+        run: |
+          cd cpp/build
+          cmake --build . -j$(sysctl -n hw.ncpu)
+
+      - name: Create distribution
+        run: |
+          cd cpp/build
+          mkdir -p dist/_main
+          cp Cytologick dist/
+
+          # Create default config
+          cat > dist/config.yaml << 'EOF'
+          general:
+            slide_dir: ./slides
+            hdd_slides: ""
+
+          neural_network:
+            image_shape: [128, 128]
+            classes: 3
+            batch_size: 16
+
+          gui:
+            default_threshold: 0.6
+          EOF
+
+          # Create run script
+          cat > dist/run.sh << 'EOF'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+
+          # Check dependencies
+          if ! command -v brew &> /dev/null; then
+              echo "Homebrew not found. Install from https://brew.sh"
+              exit 1
+          fi
+
+          MISSING=""
+          for pkg in qt@6 opencv openslide yaml-cpp onnxruntime; do
+              if ! brew list $pkg &> /dev/null; then
+                  MISSING="$MISSING $pkg"
+              fi
+          done
+
+          if [ -n "$MISSING" ]; then
+              echo "Missing dependencies:$MISSING"
+              echo "Install with: brew install$MISSING"
+              exit 1
+          fi
+
+          "$DIR/Cytologick"
+          EOF
+          chmod +x dist/run.sh
+
+          # Create README
+          cat > dist/README.txt << 'EOF'
+          Cytologick C++ GUI - macOS (Apple Silicon)
+
+          Requirements:
+            brew install qt@6 opencv openslide yaml-cpp onnxruntime
+
+          Usage:
+            1. Place your model.onnx in _main/ folder
+            2. Edit config.yaml to set slide_dir path
+            3. Run: ./run.sh
+               Or directly: ./Cytologick
+          EOF
+
+      - name: Package
+        run: |
+          cd cpp/build
+          tar -czvf Cytologick-macos-arm64.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cytologick-macos-arm64
+          path: cpp/build/Cytologick-macos-arm64.tar.gz
+
+  build-macos-intel:
+    runs-on: macos-13  # Intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cmake qt@6 opencv openslide yaml-cpp onnxruntime
+
+      - name: Configure CMake
+        run: |
+          cd cpp
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="/usr/local/opt/qt@6;/usr/local" \
+            -DOPENSLIDE_INCLUDE_DIR=/usr/local/include \
+            -DOPENSLIDE_LIBRARY=/usr/local/lib/libopenslide.dylib
+
+      - name: Build
+        run: |
+          cd cpp/build
+          cmake --build . -j$(sysctl -n hw.ncpu)
+
+      - name: Create distribution
+        run: |
+          cd cpp/build
+          mkdir -p dist/_main
+          cp Cytologick dist/
+
+          # Create default config
+          cat > dist/config.yaml << 'EOF'
+          general:
+            slide_dir: ./slides
+            hdd_slides: ""
+
+          neural_network:
+            image_shape: [128, 128]
+            classes: 3
+            batch_size: 16
+
+          gui:
+            default_threshold: 0.6
+          EOF
+
+          cat > dist/run.sh << 'EOF'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+
+          if ! command -v brew &> /dev/null; then
+              echo "Homebrew not found. Install from https://brew.sh"
+              exit 1
+          fi
+
+          MISSING=""
+          for pkg in qt@6 opencv openslide yaml-cpp onnxruntime; do
+              if ! brew list $pkg &> /dev/null; then
+                  MISSING="$MISSING $pkg"
+              fi
+          done
+
+          if [ -n "$MISSING" ]; then
+              echo "Missing dependencies:$MISSING"
+              echo "Install with: brew install$MISSING"
+              exit 1
+          fi
+
+          "$DIR/Cytologick"
+          EOF
+          chmod +x dist/run.sh
+
+          cat > dist/README.txt << 'EOF'
+          Cytologick C++ GUI - macOS (Intel)
+
+          Requirements:
+            brew install qt@6 opencv openslide yaml-cpp onnxruntime
+
+          Usage:
+            1. Place your model.onnx in _main/ folder
+            2. Edit config.yaml to set slide_dir path
+            3. Run: ./run.sh
+          EOF
+
+      - name: Package
+        run: |
+          cd cpp/build
+          tar -czvf Cytologick-macos-x64.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cytologick-macos-x64
+          path: cpp/build/Cytologick-macos-x64.tar.gz
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            qt6-base-dev \
+            libopencv-dev \
+            libopenslide-dev \
+            libyaml-cpp-dev \
+            patchelf
+
+      - name: Download ONNX Runtime
+        run: |
+          wget -q https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz
+          tar -xzf onnxruntime-linux-x64-${ONNX_VERSION}.tgz
+          sudo mv onnxruntime-linux-x64-${ONNX_VERSION} /opt/onnxruntime
+
+      - name: Configure CMake
+        run: |
+          cd cpp
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="/opt/onnxruntime"
+
+      - name: Build
+        run: |
+          cd cpp/build
+          cmake --build . -j$(nproc)
+
+      - name: Create distribution
+        run: |
+          cd cpp/build
+          mkdir -p dist/lib dist/_main
+          cp Cytologick dist/
+
+          # Copy ONNX Runtime library
+          cp /opt/onnxruntime/lib/libonnxruntime.so* dist/lib/
+
+          # Create default config
+          cat > dist/config.yaml << 'EOF'
+          general:
+            slide_dir: ./slides
+            hdd_slides: ""
+
+          neural_network:
+            image_shape: [128, 128]
+            classes: 3
+            batch_size: 16
+
+          gui:
+            default_threshold: 0.6
+          EOF
+
+          # Create run script with library path
+          cat > dist/run.sh << 'EOF'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
+
+          # Check system dependencies
+          MISSING=""
+
+          if ! ldconfig -p | grep -q libQt6Core; then
+              MISSING="$MISSING libqt6core6"
+          fi
+          if ! ldconfig -p | grep -q libopencv_core; then
+              MISSING="$MISSING libopencv-dev"
+          fi
+          if ! ldconfig -p | grep -q libopenslide; then
+              MISSING="$MISSING libopenslide0"
+          fi
+          if ! ldconfig -p | grep -q libyaml-cpp; then
+              MISSING="$MISSING libyaml-cpp0.8"
+          fi
+
+          if [ -n "$MISSING" ]; then
+              echo "Missing system libraries:$MISSING"
+              echo "Install with: sudo apt-get install$MISSING"
+              exit 1
+          fi
+
+          "$DIR/Cytologick"
+          EOF
+          chmod +x dist/run.sh
+
+          cat > dist/README.txt << 'EOF'
+          Cytologick C++ GUI - Linux (x64)
+
+          Requirements (Ubuntu 22.04+):
+            sudo apt-get install libqt6core6 libqt6gui6 libqt6widgets6 \
+              libopencv-core406 libopencv-imgproc406 libopencv-imgcodecs406 \
+              libopenslide0 libyaml-cpp0.8
+
+          ONNX Runtime is bundled in lib/ folder.
+
+          Usage:
+            1. Place your model.onnx in _main/ folder
+            2. Edit config.yaml to set slide_dir path
+            3. Run: ./run.sh
+          EOF
+
+      - name: Package
+        run: |
+          cd cpp/build
+          tar -czvf Cytologick-linux-x64.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cytologick-linux-x64
+          path: cpp/build/Cytologick-linux-x64.tar.gz
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'c82f74667287d3dc386bce81e44964370c91a289'
+
+      - name: Install vcpkg dependencies
+        run: |
+          vcpkg install qt6-base:x64-windows opencv4:x64-windows yaml-cpp:x64-windows onnxruntime:x64-windows
+
+      - name: Download OpenSlide
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/openslide/openslide-winbuild/releases/download/v20231011/openslide-win64-20231011.zip" -OutFile openslide.zip
+          Expand-Archive openslide.zip -DestinationPath C:\openslide
+
+      - name: Configure CMake
+        run: |
+          cd cpp
+          mkdir build
+          cd build
+          cmake .. `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DOPENSLIDE_INCLUDE_DIR="C:/openslide/openslide-win64-20231011/include" `
+            -DOPENSLIDE_LIBRARY="C:/openslide/openslide-win64-20231011/lib/libopenslide.lib"
+
+      - name: Build
+        run: |
+          cd cpp/build
+          cmake --build . --config Release
+
+      - name: Create distribution
+        run: |
+          cd cpp/build
+          mkdir dist
+          mkdir dist\_main
+          copy Release\Cytologick.exe dist\
+
+          # Copy OpenSlide DLLs
+          copy C:\openslide\openslide-win64-20231011\bin\*.dll dist\
+
+          # Deploy Qt DLLs
+          & "$env:VCPKG_ROOT\installed\x64-windows\tools\Qt6\bin\windeployqt.exe" dist\Cytologick.exe
+
+          # Copy ONNX Runtime DLL
+          copy "$env:VCPKG_ROOT\installed\x64-windows\bin\onnxruntime*.dll" dist\
+
+          # Copy OpenCV DLLs
+          copy "$env:VCPKG_ROOT\installed\x64-windows\bin\opencv*.dll" dist\
+
+          # Copy yaml-cpp DLL
+          copy "$env:VCPKG_ROOT\installed\x64-windows\bin\yaml-cpp.dll" dist\
+
+          # Create default config
+          @"
+          general:
+            slide_dir: ./slides
+            hdd_slides: ""
+
+          neural_network:
+            image_shape: [128, 128]
+            classes: 3
+            batch_size: 16
+
+          gui:
+            default_threshold: 0.6
+          "@ | Out-File -FilePath dist\config.yaml -Encoding utf8
+
+          # Create README
+          @"
+          Cytologick C++ GUI - Windows (x64)
+
+          All dependencies are included.
+
+          Usage:
+            1. Place your model.onnx in _main\ folder
+            2. Edit config.yaml to set slide_dir path
+            3. Run: Cytologick.exe
+          "@ | Out-File -FilePath dist\README.txt -Encoding utf8
+
+      - name: Package
+        run: |
+          cd cpp/build
+          Compress-Archive -Path dist\* -DestinationPath Cytologick-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cytologick-windows-x64
+          path: cpp/build/Cytologick-windows-x64.zip
+
+  release:
+    needs: [build-macos, build-macos-intel, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/Cytologick-macos-arm64/Cytologick-macos-arm64.tar.gz
+            artifacts/Cytologick-macos-x64/Cytologick-macos-x64.tar.gz
+            artifacts/Cytologick-linux-x64/Cytologick-linux-x64.tar.gz
+            artifacts/Cytologick-windows-x64/Cytologick-windows-x64.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
