@@ -41,16 +41,6 @@ brew install qt@6 opencv openslide yaml-cpp onnxruntime
 ./Cytologick
 ```
 
-### macOS (Intel)
-
-```bash
-# Install runtime dependencies via Homebrew
-brew install qt@6 opencv openslide yaml-cpp onnxruntime
-
-# Run the application
-./Cytologick
-```
-
 ### Linux (Ubuntu 22.04+)
 
 ```bash
@@ -59,7 +49,7 @@ sudo apt-get install -y \
     libqt6core6 libqt6gui6 libqt6widgets6 \
     libopencv-core406 libopencv-imgproc406 libopencv-imgcodecs406 \
     libopenslide0 \
-    libyaml-cpp0.7
+    libyaml-cpp0.8
 
 # ONNX Runtime - download and install manually
 ONNX_VERSION=1.16.3
@@ -251,7 +241,8 @@ mkdir -p build && cd build
 
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -Donnxruntime_DIR=/opt/onnxruntime
+    -Donnxruntime_INCLUDE_DIR=/opt/onnxruntime/include \
+    -Donnxruntime_LIB=/opt/onnxruntime/lib/libonnxruntime.so
 
 cmake --build . -j$(nproc)
 
@@ -315,13 +306,10 @@ cd C:\vcpkg
 .\vcpkg integrate install
 
 # Install dependencies (this takes a while)
-.\vcpkg install qt6:x64-windows opencv4:x64-windows yaml-cpp:x64-windows
+.\vcpkg install qtbase:x64-windows opencv4:x64-windows yaml-cpp:x64-windows
 
-# For GPU support:
-.\vcpkg install onnxruntime-gpu:x64-windows
-
-# For CPU only:
-.\vcpkg install onnxruntime:x64-windows
+# ONNX Runtime - download manually (not available in vcpkg for CPU-only)
+# See next section
 ```
 
 4. **OpenSlide** - Download Windows binaries
@@ -332,6 +320,15 @@ Invoke-WebRequest -Uri "https://github.com/openslide/openslide-winbuild/releases
 Expand-Archive openslide.zip -DestinationPath C:\openslide
 ```
 
+1. **ONNX Runtime** - Download pre-built binaries
+
+```powershell
+# Download ONNX Runtime (CPU)
+$ONNX_VERSION = "1.16.3"
+Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v$ONNX_VERSION/onnxruntime-win-x64-$ONNX_VERSION.zip" -OutFile onnxruntime.zip
+Expand-Archive onnxruntime.zip -DestinationPath C:\onnxruntime
+```
+
 #### Build
 
 ```powershell
@@ -340,10 +337,14 @@ mkdir build
 cd build
 
 # Configure with CMake
+$ONNX_VERSION = "1.16.3"
 cmake .. `
     -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake `
+    -DVCPKG_MANIFEST_MODE=OFF `
     -DOPENSLIDE_INCLUDE_DIR=C:\openslide\openslide-win64-20231011\include `
-    -DOPENSLIDE_LIBRARY=C:\openslide\openslide-win64-20231011\lib\libopenslide.lib
+    -DOPENSLIDE_LIBRARY=C:\openslide\openslide-win64-20231011\lib\libopenslide.lib `
+    -Donnxruntime_INCLUDE_DIR=C:\onnxruntime\onnxruntime-win-x64-$ONNX_VERSION\include `
+    -Donnxruntime_LIB=C:\onnxruntime\onnxruntime-win-x64-$ONNX_VERSION\lib\onnxruntime.lib
 
 # Build Release
 cmake --build . --config Release
@@ -365,7 +366,8 @@ copy C:\openslide\openslide-win64-20231011\bin\*.dll dist\
 C:\vcpkg\installed\x64-windows\tools\Qt6\bin\windeployqt.exe dist\Cytologick.exe
 
 # Copy ONNX Runtime DLL
-copy C:\vcpkg\installed\x64-windows\bin\onnxruntime*.dll dist\
+$ONNX_VERSION = "1.16.3"
+copy C:\onnxruntime\onnxruntime-win-x64-$ONNX_VERSION\lib\onnxruntime.dll dist\
 
 # Copy model
 mkdir dist\_main
@@ -522,11 +524,15 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
 ### CMake can't find ONNX Runtime
 
 ```bash
-# Linux - set onnxruntime_DIR
-cmake .. -Donnxruntime_DIR=/opt/onnxruntime
+# Linux - set include and lib paths explicitly
+cmake .. \
+    -Donnxruntime_INCLUDE_DIR=/opt/onnxruntime/include \
+    -Donnxruntime_LIB=/opt/onnxruntime/lib/libonnxruntime.so
 
-# Or add to CMAKE_PREFIX_PATH
-cmake .. -DCMAKE_PREFIX_PATH="/opt/onnxruntime;..."
+# Windows - same approach
+cmake .. `
+    -Donnxruntime_INCLUDE_DIR=C:\onnxruntime\onnxruntime-win-x64-1.16.3\include `
+    -Donnxruntime_LIB=C:\onnxruntime\onnxruntime-win-x64-1.16.3\lib\onnxruntime.lib
 ```
 
 ### Linker errors on macOS

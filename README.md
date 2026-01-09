@@ -18,11 +18,32 @@ Cytologick is a Python application for analyzing Pap smear slides using deep lea
 
 ## Features
 
-- **Slide Viewing**: Load and navigate MRXS whole-slide images
+- **Slide Viewing**: Load and navigate whole-slide images (MRXS, SVS, TIFF, NDPI, etc.)
 - **AI Inference**: U-Net segmentation for detecting LSIL, HSIL, ASCUS, ASCH
 - **Desktop GUI**: PyQt5-based interface with region selection and analysis
 - **Web Interface**: Flask-based deep zoom viewer with overlay annotations
 - **Training Pipeline**: Train custom models with Mixup augmentation and Lovasz loss
+- **C++ Desktop App**: Standalone native application with ONNX Runtime inference
+
+---
+
+## C++ Version (Standalone)
+
+A standalone C++ version is available for users who prefer native performance without Python dependencies.
+
+**Download pre-built binaries:** [GitHub Releases](https://github.com/Akaiko1/Cytologick/releases)
+
+**Features:**
+
+- Native Qt6 desktop application
+- ONNX Runtime inference (CPU/GPU)
+- No Python installation required
+
+**Current limitations:**
+
+- Only MRXS slide format is supported (SVS and other formats coming soon)
+
+For build instructions and documentation, see [cpp/README.md](cpp/README.md).
 
 ---
 
@@ -41,7 +62,7 @@ Cytologick is a Python application for analyzing Pap smear slides using deep lea
 
 | Platform | Command |
 |----------|---------|
-| **Windows** | Download from [openslide.org/download](https://openslide.org/download/), extract to `C:/openslide/bin`, add path to `config.yaml` |
+| **Windows** | Download from [GitHub releases](https://github.com/openslide/openslide-winbuild/releases), extract to `C:/openslide`, add bin path to `config.yaml` |
 | **macOS** | `brew install openslide` |
 | **Linux** | `apt-get install libopenslide0` (Debian/Ubuntu) or `dnf install openslide` (Fedora) |
 
@@ -142,17 +163,9 @@ For end-user runs (and for packaged builds), keep runtime files next to the app:
 
 ### Web UI Smoke Test
 
-1. Start the server:
-
-```bash
-python run_web.py
-```
-
-1. Open the main menu:
-
-- `http://127.0.0.1:5001`
-
-1. Click a slide in the menu.
+1. Start the server: `python run_web.py`
+2. Open the main menu: `http://127.0.0.1:5001`
+3. Click a slide in the menu.
 
 Each opened slide spawns its own viewer on port `5002 + index` (e.g. `5002`, `5003`, ...).
 The viewer URL uses `web.ip_exposed` from `config.yaml`.
@@ -181,7 +194,7 @@ Cytologick/
 │   └── __get_slide_roi.py   # ROI extraction
 │
 ├── _main/                   # Model storage
-│   └── new_best.pth         # Best trained model
+│   └── _new_best.pth        # Best trained model
 │
 ├── dataset/                 # Training data (generated)
 │   ├── rois/                # Training images
