@@ -247,22 +247,21 @@ jobs:
         if: env.VCPKG_PAT_TOKEN != ''
         shell: pwsh
         run: |
-          # Create nuget.config first
-          @'
+          # Create nuget.config with GitHub Packages source
+          @"
           <?xml version="1.0" encoding="utf-8"?>
           <configuration>
             <packageSources>
+              <add key="vcpkg-gh" value="https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" />
             </packageSources>
+            <packageSourceCredentials>
+              <vcpkg-gh>
+                <add key="Username" value="${{ github.repository_owner }}" />
+                <add key="ClearTextPassword" value="${{ secrets.VCPKG_PAT_TOKEN }}" />
+              </vcpkg-gh>
+            </packageSourceCredentials>
           </configuration>
-          '@ | Out-File -FilePath "nuget.config" -Encoding UTF8
-
-          $nuget = & vcpkg fetch nuget | Select-Object -Last 1
-          & $nuget sources add -Name vcpkg-gh `
-            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
-            -Username "${{ github.repository_owner }}" `
-            -Password "${{ secrets.VCPKG_PAT_TOKEN }}" `
-            -StorePasswordInClearText `
-            -ConfigFile nuget.config
+          "@ | Out-File -FilePath "nuget.config" -Encoding UTF8
 
       - name: Cache vcpkg artifacts
         if: env.VCPKG_PAT_TOKEN == ''
