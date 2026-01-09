@@ -247,21 +247,15 @@ jobs:
         if: env.VCPKG_PAT_TOKEN != ''
         shell: pwsh
         run: |
-          # Create nuget.config with GitHub Packages source
-          @"
-          <?xml version="1.0" encoding="utf-8"?>
-          <configuration>
-            <packageSources>
-              <add key="vcpkg-gh" value="https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" />
-            </packageSources>
-            <packageSourceCredentials>
-              <vcpkg-gh>
-                <add key="Username" value="${{ github.repository_owner }}" />
-                <add key="ClearTextPassword" value="${{ secrets.VCPKG_PAT_TOKEN }}" />
-              </vcpkg-gh>
-            </packageSourceCredentials>
-          </configuration>
-          "@ | Out-File -FilePath "nuget.config" -Encoding UTF8
+          $nuget = $(vcpkg fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "${{ github.repository_owner }}" `
+            -Password "${{ secrets.VCPKG_PAT_TOKEN }}"
+          & $nuget setapikey "${{ secrets.VCPKG_PAT_TOKEN }}" `
+            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
 
       - name: Cache vcpkg artifacts
         if: env.VCPKG_PAT_TOKEN == ''
@@ -280,7 +274,7 @@ jobs:
         run: |
           vcpkg install qtbase:x64-windows opencv4:x64-windows yaml-cpp:x64-windows
         env:
-          VCPKG_BINARY_SOURCES: "clear;nugetconfig,${{ github.workspace }}\\nuget.config,readwrite"
+          VCPKG_BINARY_SOURCES: "clear;nuget,GitHubPackages,readwrite"
 
       - name: Install vcpkg dependencies (no binary cache)
         if: env.VCPKG_PAT_TOKEN == ''
