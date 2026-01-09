@@ -344,6 +344,25 @@ jobs:
           # Copy yaml-cpp DLL
           copy "$env:VCPKG_ROOT\installed\x64-windows\bin\yaml-cpp.dll" dist\
 
+          # Copy OpenCV dependencies (libwebp, libjpeg, libpng, zlib, etc.)
+          $deps = @(
+            "libwebp*.dll",
+            "libsharpyuv*.dll",
+            "jpeg*.dll",
+            "libpng*.dll",
+            "zlib*.dll",
+            "tiff*.dll",
+            "lzma*.dll",
+            "libzstd*.dll",
+            "openjp2*.dll"
+          )
+          foreach ($dep in $deps) {
+            $files = Get-ChildItem "$env:VCPKG_ROOT\installed\x64-windows\bin\$dep" -ErrorAction SilentlyContinue
+            if ($files) {
+              copy $files.FullName dist\
+            }
+          }
+
           # Create default config
           @"
           general:
