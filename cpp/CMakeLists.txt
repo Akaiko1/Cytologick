@@ -12,6 +12,16 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
+# Normalize yaml-cpp target name across distros.
+if(TARGET yaml-cpp::yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp)
+else()
+    # Fallback for module mode; use library variable if no target was exported.
+    set(YAML_CPP_TARGET ${YAML_CPP_LIBRARIES})
+endif()
+
 # ONNX Runtime - try find_package first, fall back to manual paths
 find_package(onnxruntime QUIET)
 if(NOT onnxruntime_FOUND)
@@ -95,7 +105,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     ${OpenCV_LIBS}
     onnxruntime::onnxruntime
-    yaml-cpp::yaml-cpp
+    ${YAML_CPP_TARGET}
     ${OPENSLIDE_LIBRARY}
 )
 
