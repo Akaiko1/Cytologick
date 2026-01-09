@@ -255,14 +255,14 @@ By default, `model_train.py` continues from the latest checkpoint (`_new_last.pt
 Copy your trained model to the `_main/` folder:
 
 ```bash
-cp _new_best.pth _main/new_best.pth
+cp _new_best.pth _main/_new_best.pth
 ```
 
 The GUIs automatically look for models in this order:
 
-1. `_main/new_best.pth` (Primary)
-2. `_main/new_final.pth`
-3. `_main/new_last.pth`
+1. `_main/_new_best.pth` (Primary)
+2. `_main/_new_final.pth`
+3. `_main/_new_last.pth`
 4. `_main/model.pth` (Legacy)
 5. Any `.pth` file in `_main/`
 

@@ -6,7 +6,7 @@ Standalone C++ version of the Cytologick desktop application for AI-powered Pap 
 
 - Qt6-based desktop GUI
 - ONNX Runtime for model inference (CPU/GPU)
-- OpenSlide for whole-slide image reading (MRXS, SVS, etc.)
+- OpenSlide for whole-slide image reading (MRXS only, more formats coming soon)
 - Direct inference mode with sliding window
 - Confidence threshold adjustment
 - Detection visualization with overlays
@@ -29,7 +29,37 @@ python scripts/export_onnx.py
 
 ## Running Pre-built Binary
 
-If you have a pre-built `Cytologick` binary, you still need to install runtime dependencies.
+Download the latest release from [GitHub Releases](https://github.com/Akaiko1/Cytologick/releases).
+
+Each release includes:
+
+- `Cytologick` executable (or `Cytologick.exe` on Windows)
+- `model.onnx` — pre-trained ONNX model (separate download)
+- `config.yaml` — default configuration
+- Required DLLs (Windows only)
+
+### Setup
+
+1. Extract the archive to any folder
+2. Create `_main` folder and place the model inside:
+
+   ```text
+   Cytologick/
+   ├── Cytologick.exe
+   ├── config.yaml
+   └── _main/
+       └── model.onnx    <-- place model here
+   ```
+
+3. Edit `config.yaml` to set your slide directory:
+
+   ```yaml
+   general:
+     slide_dir: /path/to/your/slides    # Folder with .mrxs files
+     hdd_slides: /path/to/more/slides   # Optional: additional slides folder
+   ```
+
+4. Install runtime dependencies (macOS/Linux only — Windows has all DLLs bundled)
 
 ### macOS (Apple Silicon)
 
@@ -94,11 +124,14 @@ yay -S onnxruntime
 
 ### Windows
 
-Place the following DLLs in the same folder as `Cytologick.exe`:
+Download the release archive from [GitHub Releases](https://github.com/Akaiko1/Cytologick/releases) — all required DLLs are already included.
 
-- OpenSlide DLLs (from openslide-win64 release)
-- Qt6 DLLs (use `windeployqt.exe`)
-- `onnxruntime.dll`
+```powershell
+# Extract and run
+Expand-Archive Cytologick-windows-x64.zip -DestinationPath Cytologick
+cd Cytologick
+.\Cytologick.exe
+```
 
 ---
 
@@ -320,7 +353,7 @@ Invoke-WebRequest -Uri "https://github.com/openslide/openslide-winbuild/releases
 Expand-Archive openslide.zip -DestinationPath C:\openslide
 ```
 
-1. **ONNX Runtime** - Download pre-built binaries
+5. **ONNX Runtime** - Download pre-built binaries
 
 ```powershell
 # Download ONNX Runtime (CPU)
@@ -371,7 +404,7 @@ copy C:\onnxruntime\onnxruntime-win-x64-$ONNX_VERSION\lib\onnxruntime.dll dist\
 
 # Copy model
 mkdir dist\_main
-copy ..\..\main\model.onnx dist\_main\
+copy ..\..\_main\model.onnx dist\_main\
 ```
 
 ---
@@ -464,7 +497,7 @@ model:
 
 ## Project Structure
 
-```
+```text
 cpp/
 ├── CMakeLists.txt          # Build configuration
 ├── vcpkg.json              # vcpkg dependencies (Windows)
@@ -506,7 +539,7 @@ The application automatically falls back to CPU inference. For GPU support:
 
 - Verify OpenSlide is installed: `brew info openslide` / `apt show libopenslide0`
 - **Windows:** Ensure OpenSlide DLLs are in PATH or same folder as exe
-- Check slide format is supported: MRXS, SVS, TIFF, NDPI, etc.
+- Check slide format is supported (currently MRXS only)
 
 ### CMake can't find Qt6
 
