@@ -278,12 +278,8 @@ def __extract_rect_regions(
 
     if centered_crop:
         # Use pathology-centered cropping (avoids truncating pathologies)
-        # base_zoom is the middle value from zoom_levels, or first if only one
-        base_zoom = zoom_levels[len(zoom_levels) // 2] if zoom_levels else 256
-        min_zoom = min(zoom_levels) if zoom_levels else 128
-        max_zoom = max(zoom_levels) if zoom_levels else 512
-        __crop_dataset_centered(rect_name, base_zoom, rectangle, masks, roi_path, masks_path,
-                                min_zoom=min_zoom, max_zoom=max_zoom)
+        # Tile size is determined by object bbox + padding, not by zoom_levels
+        __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path)
     elif debug:
         __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''), overlap=overlap)
     else:
@@ -379,6 +375,38 @@ def _get_pathology_objects(masks):
     return labeled, objects
 
 
+def _get_normal_objects(masks):
+    """
+    Find all normal cell objects in mask and return their properties.
+
+    Returns:
+        tuple: (labeled_array, list of object dicts with id, cx, cy, bbox)
+    """
+    from scipy import ndimage
+
+    normal = (masks == MASK_VALUE_NORMAL).astype(np.uint8)
+    labeled, num_objects = ndimage.label(normal)
+
+    objects = []
+    for obj_id in range(1, num_objects + 1):
+        obj_mask = (labeled == obj_id)
+        ys, xs = np.where(obj_mask)
+        if len(ys) == 0:
+            continue
+        objects.append({
+            'id': obj_id,
+            'cy': int(np.mean(ys)),
+            'cx': int(np.mean(xs)),
+            'y1': int(ys.min()),
+            'y2': int(ys.max()),
+            'x1': int(xs.min()),
+            'x2': int(xs.max()),
+            'area': len(ys),
+        })
+
+    return labeled, objects
+
+
 def _bbox_intersects_tile(obj, y1, x1, y2, x2):
     """Check if object bbox intersects with tile bounds."""
     return not (obj['x2'] < x1 or obj['x1'] > x2 or obj['y2'] < y1 or obj['y1'] > y2)
@@ -421,259 +449,678 @@ def _has_truncated_objects(tile_coords, labeled, margin=3):
     return False
 
 
-def _try_greedy_tile(center_obj, all_objects, labeled, masks_shape,
-                     base_zoom, min_zoom, max_zoom, margin=10):
+def _compute_tile_for_objects(objects, h, w, padding=30):
     """
-    Try to fit center object + neighbors into one tile.
+    Compute square tile coordinates that fits all objects with padding.
 
     Returns:
-        tuple: (y1, x1, y2, x2, set of included object ids) or None
+        tuple: (y1, x1, y2, x2) or None if objects don't fit
     """
-    h, w = masks_shape[:2]
-    half = base_zoom // 2
-
-    cy, cx = center_obj['cy'], center_obj['cx']
-    y1, y2 = cy - half, cy + half
-    x1, x2 = cx - half, cx + half
-
-    # Find intersecting objects
-    intersecting = [obj for obj in all_objects if _bbox_intersects_tile(obj, y1, x1, y2, x2)]
-
-    # Single object case
-    if len(intersecting) == 1:
-        if y1 >= 0 and x1 >= 0 and y2 <= h and x2 <= w:
-            if not _has_truncated_objects((y1, x1, y2, x2), labeled):
-                return (y1, x1, y2, x2, {center_obj['id']})
+    if not objects:
         return None
 
-    # Try to fit all intersecting objects by expanding tile
-    combined_y1 = min(obj['y1'] for obj in intersecting) - margin
-    combined_y2 = max(obj['y2'] for obj in intersecting) + margin
-    combined_x1 = min(obj['x1'] for obj in intersecting) - margin
-    combined_x2 = max(obj['x2'] for obj in intersecting) + margin
+    # Combined bbox of all objects
+    min_y1 = min(obj['y1'] for obj in objects)
+    max_y2 = max(obj['y2'] for obj in objects)
+    min_x1 = min(obj['x1'] for obj in objects)
+    max_x2 = max(obj['x2'] for obj in objects)
 
-    needed_h = combined_y2 - combined_y1
-    needed_w = combined_x2 - combined_x1
-    tile_size = max(needed_h, needed_w)
+    obj_h = max_y2 - min_y1
+    obj_w = max_x2 - min_x1
+    tile_size = max(obj_h, obj_w) + 2 * padding
 
-    if tile_size <= max_zoom:
-        # Can fit all — center tile on combined bbox
-        center_y = (combined_y1 + combined_y2) // 2
-        center_x = (combined_x1 + combined_x2) // 2
-        half_tile = tile_size // 2
+    # Center tile on combined bbox center
+    cy = (min_y1 + max_y2) // 2
+    cx = (min_x1 + max_x2) // 2
+    half = tile_size // 2
 
-        new_y1 = max(0, min(center_y - half_tile, h - tile_size))
-        new_x1 = max(0, min(center_x - half_tile, w - tile_size))
-        new_y2 = new_y1 + tile_size
-        new_x2 = new_x1 + tile_size
+    y1 = cy - half
+    x1 = cx - half
+    y2 = y1 + tile_size
+    x2 = x1 + tile_size
 
-        if new_y2 <= h and new_x2 <= w:
-            if not _has_truncated_objects((new_y1, new_x1, new_y2, new_x2), labeled):
-                included = {obj['id'] for obj in intersecting}
-                return (new_y1, new_x1, new_y2, new_x2, included)
+    # Clamp to image bounds
+    if y1 < 0:
+        y2 -= y1
+        y1 = 0
+    if x1 < 0:
+        x2 -= x1
+        x1 = 0
+    if y2 > h:
+        y1 -= (y2 - h)
+        y2 = h
+    if x2 > w:
+        x1 -= (x2 - w)
+        x2 = w
 
-    # Try shifting to exclude distant neighbors
-    for dy in [0, -30, 30, -60, 60]:
-        for dx in [0, -30, 30, -60, 60]:
-            shifted_y1 = max(0, cy - half + dy)
-            shifted_x1 = max(0, cx - half + dx)
-            shifted_y2 = min(h, shifted_y1 + base_zoom)
-            shifted_x2 = min(w, shifted_x1 + base_zoom)
+    # Final bounds check
+    if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+        return None
 
-            # Ensure correct size
-            if shifted_y2 - shifted_y1 != base_zoom or shifted_x2 - shifted_x1 != base_zoom:
-                continue
-
-            if not _has_truncated_objects((shifted_y1, shifted_x1, shifted_y2, shifted_x2), labeled):
-                included = {obj['id'] for obj in all_objects
-                           if _bbox_fully_inside(obj, shifted_y1, shifted_x1, shifted_y2, shifted_x2)}
-                if center_obj['id'] in included:
-                    return (shifted_y1, shifted_x1, shifted_y2, shifted_x2, included)
-
-    return None
+    return (y1, x1, y2, x2)
 
 
-def _fit_single_object(obj, labeled, masks_shape, base_zoom, min_zoom, max_zoom, margin=15):
+def _tile_truncates_pathology(y1, x1, y2, x2, labeled, edge_margin=3):
     """
-    Find optimal tile for a single object by varying size and position.
+    Check if any pathology object is truncated (cut by tile edge).
+
+    Args:
+        y1, x1, y2, x2: tile bounds
+        labeled: labeled array from scipy.ndimage.label
+        edge_margin: pixels from edge to check
 
     Returns:
-        tuple: (y1, x1, y2, x2) or None
+        True if any pathology touches tile edge (would be truncated)
     """
-    h, w = masks_shape[:2]
+    tile_labeled = labeled[y1:y2, x1:x2]
+    objects_in_tile = set(np.unique(tile_labeled)) - {0}
 
-    obj_h = obj['y2'] - obj['y1'] + 2 * margin
-    obj_w = obj['x2'] - obj['x1'] + 2 * margin
-    min_size = max(min_zoom, obj_h, obj_w)
+    for obj_id in objects_in_tile:
+        obj_pixels = (tile_labeled == obj_id)
 
-    # Try sizes from minimum to base_zoom
-    for zoom in range(min_size, min(base_zoom + 1, max_zoom + 1), 16):
-        # Try different positions within valid range
-        max_dy = zoom - obj_h
-        max_dx = zoom - obj_w
+        # Check if object touches any edge
+        if (np.any(obj_pixels[:edge_margin, :]) or      # top
+            np.any(obj_pixels[-edge_margin:, :]) or     # bottom
+            np.any(obj_pixels[:, :edge_margin]) or      # left
+            np.any(obj_pixels[:, -edge_margin:])):      # right
+            return True
 
-        for dy in range(0, max(1, max_dy), max(1, max_dy // 5)):
-            for dx in range(0, max(1, max_dx), max(1, max_dx // 5)):
-                y1 = obj['y1'] - margin - dy
-                x1 = obj['x1'] - margin - dx
-                y2 = y1 + zoom
-                x2 = x1 + zoom
+    return False
 
-                # Check bounds
-                if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
-                    continue
 
-                if not _has_truncated_objects((y1, x1, y2, x2), labeled):
-                    return (y1, x1, y2, x2)
+def _find_nearby_pathologies(center_obj, all_objects, max_distance=100):
+    """
+    Find pathology objects close to center object.
+
+    Returns:
+        list of objects within max_distance of center object's bbox
+    """
+    nearby = [center_obj]
+    cx, cy = center_obj['cx'], center_obj['cy']
+
+    for obj in all_objects:
+        if obj['id'] == center_obj['id']:
+            continue
+
+        # Distance from center object's center to other object's center
+        dist = math.hypot(obj['cx'] - cx, obj['cy'] - cy)
+        if dist <= max_distance:
+            nearby.append(obj)
+
+    return nearby
+
+
+def _try_fit_tile_without_truncation(objects, labeled, h, w, padding=30, max_expand=100):
+    """
+    Try to fit objects into a tile without truncating any pathology.
+
+    Starts with tight bbox + padding, expands if needed to avoid truncation.
+
+    Returns:
+        tuple: (y1, x1, y2, x2) or None if cannot fit without truncation
+    """
+    # Start with combined bbox
+    min_y1 = min(obj['y1'] for obj in objects)
+    max_y2 = max(obj['y2'] for obj in objects)
+    min_x1 = min(obj['x1'] for obj in objects)
+    max_x2 = max(obj['x2'] for obj in objects)
+
+    obj_h = max_y2 - min_y1
+    obj_w = max_x2 - min_x1
+    base_size = max(obj_h, obj_w) + 2 * padding
+
+    cy = (min_y1 + max_y2) // 2
+    cx = (min_x1 + max_x2) // 2
+
+    # Try increasing sizes until no truncation
+    for extra in range(0, max_expand + 1, 10):
+        tile_size = base_size + extra
+        half = tile_size // 2
+
+        y1 = cy - half
+        x1 = cx - half
+        y2 = y1 + tile_size
+        x2 = x1 + tile_size
+
+        # Clamp to bounds
+        if y1 < 0:
+            y2 -= y1
+            y1 = 0
+        if x1 < 0:
+            x2 -= x1
+            x1 = 0
+        if y2 > h:
+            y1 -= (y2 - h)
+            y2 = h
+        if x2 > w:
+            x1 -= (x2 - w)
+            x2 = w
+
+        # Check bounds
+        if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+            continue
+
+        # Check no truncation
+        if not _tile_truncates_pathology(y1, x1, y2, x2, labeled):
+            return (y1, x1, y2, x2)
 
     return None
 
 
-def __crop_dataset_centered(rect_name, base_zoom, rectangle, masks, roi_path, masks_path,
-                            min_zoom=128, max_zoom=512, margin=15):
+def _find_intruding_pathologies(y1, x1, y2, x2, target_obj, all_pathology_objects):
+    """
+    Find other pathologies that intrude into the tile.
+
+    Returns:
+        list of (obj, relative_position) where relative_position is
+        ('top', 'bottom', 'left', 'right') indicating where the intruder is
+    """
+    intruders = []
+    tile_cy = (y1 + y2) // 2
+    tile_cx = (x1 + x2) // 2
+
+    for other_obj in all_pathology_objects:
+        if other_obj['id'] == target_obj['id']:
+            continue
+
+        # Check if other object's bbox intersects tile
+        if not (other_obj['x2'] >= x1 and other_obj['x1'] <= x2 and
+                other_obj['y2'] >= y1 and other_obj['y1'] <= y2):
+            continue
+
+        # Determine relative position of intruder
+        dy = other_obj['cy'] - tile_cy
+        dx = other_obj['cx'] - tile_cx
+
+        if abs(dy) > abs(dx):
+            position = 'bottom' if dy > 0 else 'top'
+        else:
+            position = 'right' if dx > 0 else 'left'
+
+        intruders.append((other_obj, position))
+
+    return intruders
+
+
+def _compute_shift_away_from_intruders(intruders, step=10):
+    """
+    Compute shift direction to move away from intruding pathologies.
+
+    Returns:
+        (dy, dx) shift to apply
+    """
+    dy, dx = 0, 0
+
+    for intruder, position in intruders:
+        if position == 'top':
+            dy += step  # Move down (away from top intruder)
+        elif position == 'bottom':
+            dy -= step  # Move up (away from bottom intruder)
+        elif position == 'left':
+            dx += step  # Move right (away from left intruder)
+        elif position == 'right':
+            dx -= step  # Move left (away from right intruder)
+
+    return dy, dx
+
+
+def _try_fit_single_pathology_isolated(obj, all_pathology_objects, labeled, h, w, padding=30, max_iterations=20):
+    """
+    Try to fit a single pathology into a tile WITHOUT other pathologies.
+
+    Uses smart shifting: analyzes where intruding pathologies are located
+    and shifts tile in the opposite direction.
+
+    Returns:
+        tuple: (y1, x1, y2, x2) or None if cannot isolate
+    """
+    obj_h = obj['y2'] - obj['y1']
+    obj_w = obj['x2'] - obj['x1']
+    tile_size = max(obj_h, obj_w) + 2 * padding
+
+    cy, cx = obj['cy'], obj['cx']
+    half = tile_size // 2
+
+    # Start with centered tile
+    total_dy, total_dx = 0, 0
+
+    for iteration in range(max_iterations):
+        y1 = cy - half + total_dy
+        x1 = cx - half + total_dx
+        y2 = y1 + tile_size
+        x2 = x1 + tile_size
+
+        # Clamp to bounds
+        if y1 < 0:
+            y2 -= y1
+            y1 = 0
+        if x1 < 0:
+            x2 -= x1
+            x1 = 0
+        if y2 > h:
+            y1 -= (y2 - h)
+            y2 = h
+        if x2 > w:
+            x1 -= (x2 - w)
+            x2 = w
+
+        # Check bounds
+        if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+            break
+
+        # Check target object is fully inside
+        if not (obj['y1'] >= y1 and obj['y2'] <= y2 and
+                obj['x1'] >= x1 and obj['x2'] <= x2):
+            break  # Shifted too far, target object out of frame
+
+        # Check our object doesn't touch edges
+        tile_labeled = labeled[y1:y2, x1:x2]
+        if np.any(tile_labeled == obj['id']):
+            our_pixels = (tile_labeled == obj['id'])
+            if (np.any(our_pixels[:3, :]) or np.any(our_pixels[-3:, :]) or
+                np.any(our_pixels[:, :3]) or np.any(our_pixels[:, -3:])):
+                break  # Our object would be truncated
+
+        # Find intruding pathologies
+        intruders = _find_intruding_pathologies(y1, x1, y2, x2, obj, all_pathology_objects)
+
+        if not intruders:
+            # Success! No other pathologies in tile
+            return (y1, x1, y2, x2)
+
+        # Calculate shift based on where intruders are
+        # Shift step proportional to intruder size for efficiency
+        max_intruder_size = max(
+            max(intr['y2'] - intr['y1'], intr['x2'] - intr['x1'])
+            for intr, _ in intruders
+        )
+        step = max(10, min(max_intruder_size // 2, 30))
+
+        shift_dy, shift_dx = _compute_shift_away_from_intruders(intruders, step)
+
+        if shift_dy == 0 and shift_dx == 0:
+            break  # No clear direction to shift
+
+        total_dy += shift_dy
+        total_dx += shift_dx
+
+        # Safety: don't shift too far from original center
+        max_total_shift = tile_size // 2
+        if abs(total_dy) > max_total_shift or abs(total_dx) > max_total_shift:
+            break
+
+    return None
+
+
+def _try_shift_tile_away_from_pathology(obj, masks, h, w, padding=30, max_iterations=15):
+    """
+    Try to shift a normal cell tile to avoid pathology.
+
+    Uses smart shifting: analyzes where pathology pixels are located
+    and shifts tile in the opposite direction.
+
+    Returns:
+        tuple: (y1, x1, y2, x2) or None if cannot avoid pathology
+    """
+    obj_h = obj['y2'] - obj['y1']
+    obj_w = obj['x2'] - obj['x1']
+    tile_size = max(obj_h, obj_w) + 2 * padding
+
+    cy, cx = obj['cy'], obj['cx']
+    half = tile_size // 2
+
+    total_dy, total_dx = 0, 0
+
+    for iteration in range(max_iterations):
+        y1 = cy - half + total_dy
+        x1 = cx - half + total_dx
+        y2 = y1 + tile_size
+        x2 = x1 + tile_size
+
+        # Clamp to bounds
+        if y1 < 0:
+            y2 -= y1
+            y1 = 0
+        if x1 < 0:
+            x2 -= x1
+            x1 = 0
+        if y2 > h:
+            y1 -= (y2 - h)
+            y2 = h
+        if x2 > w:
+            x1 -= (x2 - w)
+            x2 = w
+
+        # Check bounds
+        if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+            break
+
+        tile_mask = masks[y1:y2, x1:x2]
+        pathology_pixels = (tile_mask == MASK_VALUE_ABNORMAL)
+
+        if not np.any(pathology_pixels):
+            # Success! No pathology in tile
+            return (y1, x1, y2, x2)
+
+        # Find where pathology is located in the tile
+        path_ys, path_xs = np.where(pathology_pixels)
+        if len(path_ys) == 0:
+            return (y1, x1, y2, x2)
+
+        # Calculate centroid of pathology pixels relative to tile center
+        tile_h, tile_w = tile_mask.shape[:2]
+        path_center_y = np.mean(path_ys) - tile_h // 2
+        path_center_x = np.mean(path_xs) - tile_w // 2
+
+        # Calculate shift step based on pathology extent
+        path_extent_y = path_ys.max() - path_ys.min() + 1
+        path_extent_x = path_xs.max() - path_xs.min() + 1
+        step = max(10, min(max(path_extent_y, path_extent_x), 40))
+
+        # Shift away from pathology
+        shift_dy = -int(np.sign(path_center_y) * step) if abs(path_center_y) > 5 else 0
+        shift_dx = -int(np.sign(path_center_x) * step) if abs(path_center_x) > 5 else 0
+
+        if shift_dy == 0 and shift_dx == 0:
+            # Pathology is centered, try all directions
+            if iteration == 0:
+                shift_dy, shift_dx = step, 0
+            elif iteration == 1:
+                shift_dy, shift_dx = -step, 0
+            elif iteration == 2:
+                shift_dy, shift_dx = 0, step
+            elif iteration == 3:
+                shift_dy, shift_dx = 0, -step
+            else:
+                break
+
+        total_dy += shift_dy
+        total_dx += shift_dx
+
+        # Safety: don't shift too far
+        max_total_shift = tile_size
+        if abs(total_dy) > max_total_shift or abs(total_dx) > max_total_shift:
+            break
+
+    return None
+
+
+class CropStats:
+    """Statistics collector for centered crop dataset generation."""
+
+    def __init__(self):
+        self.total_pathologies = 0
+        self.total_normals = 0
+
+        # Greedy phase
+        self.greedy_saved = 0
+        self.greedy_failed_truncation = 0
+        self.greedy_failed_duplicate = 0
+
+        # Individual phase
+        self.ind_saved = 0
+        self.ind_isolated = 0  # Successfully isolated from neighbors
+        self.ind_fallback = 0  # Used fallback (not isolated)
+        self.ind_failed_truncation = 0
+        self.ind_failed_duplicate = 0
+
+        # Normal phase
+        self.norm_saved = 0
+        self.norm_shifted = 0  # Required shifting
+        self.norm_failed_pathology = 0  # Could not avoid pathology
+        self.norm_failed_duplicate = 0
+        self.norm_skipped_limit = 0  # Skipped due to target limit
+
+    def print_summary(self):
+        """Print final statistics summary."""
+        print("\n" + "=" * 60)
+        print("DATASET GENERATION SUMMARY")
+        print("=" * 60)
+
+        print(f"\nInput objects:")
+        print(f"  Pathologies detected:  {self.total_pathologies}")
+        print(f"  Normal cells detected: {self.total_normals}")
+
+        print(f"\nGreedy tiles (groups):")
+        print(f"  Saved:                 {self.greedy_saved}")
+        print(f"  Failed (truncation):   {self.greedy_failed_truncation}")
+        print(f"  Failed (duplicate):    {self.greedy_failed_duplicate}")
+
+        print(f"\nIndividual tiles (pathology):")
+        print(f"  Saved:                 {self.ind_saved}")
+        print(f"    - Isolated:          {self.ind_isolated}")
+        print(f"    - Fallback:          {self.ind_fallback}")
+        print(f"  Failed (truncation):   {self.ind_failed_truncation}")
+        print(f"  Failed (duplicate):    {self.ind_failed_duplicate}")
+
+        print(f"\nNormal tiles:")
+        print(f"  Saved:                 {self.norm_saved}")
+        print(f"    - Direct:            {self.norm_saved - self.norm_shifted}")
+        print(f"    - After shift:       {self.norm_shifted}")
+        print(f"  Failed (pathology):    {self.norm_failed_pathology}")
+        print(f"  Failed (duplicate):    {self.norm_failed_duplicate}")
+        print(f"  Skipped (limit):       {self.norm_skipped_limit}")
+
+        total_saved = self.greedy_saved + self.ind_saved + self.norm_saved
+        total_failed = (self.greedy_failed_truncation + self.greedy_failed_duplicate +
+                        self.ind_failed_truncation + self.ind_failed_duplicate +
+                        self.norm_failed_pathology + self.norm_failed_duplicate)
+
+        print(f"\nTOTAL:")
+        print(f"  Tiles saved:           {total_saved}")
+        print(f"  Tiles failed:          {total_failed}")
+        if total_saved + total_failed > 0:
+            success_rate = total_saved / (total_saved + total_failed) * 100
+            print(f"  Success rate:          {success_rate:.1f}%")
+        print("=" * 60 + "\n")
+
+
+# Global stats collector (reset per extract_all_slides call)
+_crop_stats: CropStats | None = None
+
+
+def _get_crop_stats() -> CropStats:
+    global _crop_stats
+    if _crop_stats is None:
+        _crop_stats = CropStats()
+    return _crop_stats
+
+
+def _reset_crop_stats():
+    global _crop_stats
+    _crop_stats = CropStats()
+
+
+def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, padding=30):
     """
     Crop dataset by centering tiles on pathology objects.
 
-    Generates two types of tiles:
-    1. Greedy tiles — fit multiple nearby pathologies into one tile (context)
-    2. Individual tiles — one pathology per tile with optimal bbox (detail)
+    Three-phase approach:
+    1. Greedy: fit nearby pathologies together (context with multiple objects)
+    2. Individual: each pathology separately, isolated from neighbors
+    3. Normal: normal cells, shifted away from any pathology
+
+    Ensures no pathology is truncated at tile edges.
 
     Args:
         rect_name: Name prefix for saved files
-        base_zoom: Target tile size
         rectangle: RGBA image from OpenSlide
         masks: Mask array
         roi_path: Output path for ROI images
         masks_path: Output path for mask images
-        min_zoom: Minimum tile size
-        max_zoom: Maximum tile size
-        margin: Margin around pathology objects
+        padding: Padding around object bbox in pixels
     """
-    labeled, objects = _get_pathology_objects(masks)
+    stats = _get_crop_stats()
 
-    if not objects:
-        return
+    labeled_path, pathology_objects = _get_pathology_objects(masks)
+    labeled_normal, normal_objects = _get_normal_objects(masks)
+
+    stats.total_pathologies += len(pathology_objects)
+    stats.total_normals += len(normal_objects)
 
     h, w = masks.shape[:2]
-    saved_tiles = set()  # Track saved tiles to avoid duplicates
+    saved_tiles = set()
 
-    # Phase 1: Greedy tiles — group nearby pathologies
-    used_in_greedy = set()
+    # Phase 1: Greedy tiles — group nearby pathologies (context)
     greedy_count = 0
+    used_in_greedy = set()
 
-    for obj in objects:
+    for obj in pathology_objects:
         if obj['id'] in used_in_greedy:
             continue
 
-        tile = _try_greedy_tile(obj, objects, labeled, masks.shape,
-                                base_zoom, min_zoom, max_zoom, margin)
+        # Find nearby pathologies
+        nearby = _find_nearby_pathologies(obj, pathology_objects, max_distance=150)
 
-        if tile is not None:
-            y1, x1, y2, x2, included_ids = tile
-            tile_key = (y1, x1, y2, x2)
+        if len(nearby) > 1:
+            # Try to fit all nearby together
+            tile = _try_fit_tile_without_truncation(nearby, labeled_path, h, w, padding)
 
-            if tile_key not in saved_tiles:
-                roi = rectangle[y1:y2, x1:x2]
-                mask = masks[y1:y2, x1:x2]
+            if tile is None:
+                stats.greedy_failed_truncation += 1
+                continue
 
-                zoom = y2 - y1
-                try:
-                    cv2.imwrite(
-                        os.path.join(roi_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{zoom}.bmp'),
-                        cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
-                    )
-                    cv2.imwrite(
-                        os.path.join(masks_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{zoom}.bmp'),
-                        mask
-                    )
-                    saved_tiles.add(tile_key)
-                    greedy_count += 1
-                except cv2.error:
-                    print(f'ROI empty: {y1}, {x1}')
-
-            used_in_greedy.update(included_ids)
-
-    # Phase 2: Individual tiles — each pathology separately
-    individual_count = 0
-
-    for obj in objects:
-        tile = _fit_single_object(obj, labeled, masks.shape,
-                                  base_zoom, min_zoom, max_zoom, margin)
-
-        if tile is not None:
             y1, x1, y2, x2 = tile
             tile_key = (y1, x1, y2, x2)
 
-            if tile_key not in saved_tiles:
-                roi = rectangle[y1:y2, x1:x2]
-                mask = masks[y1:y2, x1:x2]
+            if tile_key in saved_tiles:
+                stats.greedy_failed_duplicate += 1
+                # Still mark as used
+                for nearby_obj in nearby:
+                    used_in_greedy.add(nearby_obj['id'])
+                continue
 
-                zoom = y2 - y1
-                try:
-                    cv2.imwrite(
-                        os.path.join(roi_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{zoom}.bmp'),
-                        cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
-                    )
-                    cv2.imwrite(
-                        os.path.join(masks_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{zoom}.bmp'),
-                        mask
-                    )
-                    saved_tiles.add(tile_key)
-                    individual_count += 1
-                except cv2.error:
-                    print(f'ROI empty: {y1}, {x1}')
+            roi = rectangle[y1:y2, x1:x2]
+            mask = masks[y1:y2, x1:x2]
+            tile_size = y2 - y1
 
-    # Phase 3: Negative tiles — regions without pathology (normal cells + background)
-    negative_count = 0
-    num_pathology_tiles = greedy_count + individual_count
-    # Generate roughly equal number of negative samples
-    target_negatives = max(num_pathology_tiles, 5)
-    max_attempts = target_negatives * 20
+            try:
+                cv2.imwrite(
+                    os.path.join(roi_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                    cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
+                )
+                cv2.imwrite(
+                    os.path.join(masks_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                    mask
+                )
+                saved_tiles.add(tile_key)
+                greedy_count += 1
+                stats.greedy_saved += 1
 
-    for attempt in range(max_attempts):
-        if negative_count >= target_negatives:
-            break
+                # Mark all nearby as used in greedy (but still process individually!)
+                for nearby_obj in nearby:
+                    used_in_greedy.add(nearby_obj['id'])
+            except cv2.error:
+                print(f'ROI empty: {y1}, {x1}')
 
-        # Random position
-        zoom = base_zoom
-        if h <= zoom or w <= zoom:
-            break
+    # Phase 2: Individual tiles — EVERY pathology gets its own isolated tile
+    # Even those in greedy groups get individual tiles for focused learning
+    individual_count = 0
+    for obj in pathology_objects:
+        # Try to isolate this pathology from neighbors
+        tile = _try_fit_single_pathology_isolated(
+            obj, pathology_objects, labeled_path, h, w, padding
+        )
 
-        y1 = np.random.randint(0, h - zoom)
-        x1 = np.random.randint(0, w - zoom)
-        y2 = y1 + zoom
-        x2 = x1 + zoom
+        isolated = tile is not None
 
+        if tile is None:
+            # Fallback: fit without isolation check
+            tile = _try_fit_tile_without_truncation([obj], labeled_path, h, w, padding)
+
+        if tile is None:
+            stats.ind_failed_truncation += 1
+            continue
+
+        y1, x1, y2, x2 = tile
         tile_key = (y1, x1, y2, x2)
+
         if tile_key in saved_tiles:
-            continue
-
-        # Check no pathology in this tile
-        tile_mask = masks[y1:y2, x1:x2]
-        if np.any(tile_mask == MASK_VALUE_ABNORMAL):
-            continue
-
-        # Require at least some normal cells (not just empty background)
-        normal_ratio = np.sum(tile_mask == MASK_VALUE_NORMAL) / tile_mask.size
-        if normal_ratio < 0.01:  # At least 1% normal cells
+            stats.ind_failed_duplicate += 1
             continue
 
         roi = rectangle[y1:y2, x1:x2]
+        mask = masks[y1:y2, x1:x2]
+        tile_size = y2 - y1
+
         try:
             cv2.imwrite(
-                os.path.join(roi_path, f'{rect_name}_neg_{negative_count}_coords_{y1}_{x1}_{zoom}.bmp'),
+                os.path.join(roi_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
                 cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
             )
             cv2.imwrite(
-                os.path.join(masks_path, f'{rect_name}_neg_{negative_count}_coords_{y1}_{x1}_{zoom}.bmp'),
-                tile_mask
+                os.path.join(masks_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                mask
             )
             saved_tiles.add(tile_key)
-            negative_count += 1
+            individual_count += 1
+            stats.ind_saved += 1
+            if isolated:
+                stats.ind_isolated += 1
+            else:
+                stats.ind_fallback += 1
         except cv2.error:
             print(f'ROI empty: {y1}, {x1}')
 
-    print(f'  {rect_name}: {greedy_count} group, {individual_count} individual, {negative_count} negative tiles')
+    # Phase 3: Normal cell tiles (for class balance)
+    # Try to shift tiles away from pathology instead of just skipping
+    normal_count = 0
+    target_normals = max(greedy_count + individual_count, 5)
+
+    for obj in normal_objects:
+        if normal_count >= target_normals:
+            stats.norm_skipped_limit += 1
+            continue
+
+        tile = _compute_tile_for_objects([obj], h, w, padding)
+        if tile is None:
+            continue
+
+        y1, x1, y2, x2 = tile
+        tile_key = (y1, x1, y2, x2)
+
+        if tile_key in saved_tiles:
+            stats.norm_failed_duplicate += 1
+            continue
+
+        # Check if tile contains pathology
+        tile_mask = masks[y1:y2, x1:x2]
+        shifted = False
+        if np.any(tile_mask == MASK_VALUE_ABNORMAL):
+            # Try to shift tile away from pathology
+            shifted_tile = _try_shift_tile_away_from_pathology(obj, masks, h, w, padding)
+            if shifted_tile is None:
+                stats.norm_failed_pathology += 1
+                continue
+            y1, x1, y2, x2 = shifted_tile
+            tile_key = (y1, x1, y2, x2)
+            if tile_key in saved_tiles:
+                stats.norm_failed_duplicate += 1
+                continue
+            tile_mask = masks[y1:y2, x1:x2]
+            shifted = True
+
+        roi = rectangle[y1:y2, x1:x2]
+        tile_size = y2 - y1
+
+        try:
+            cv2.imwrite(
+                os.path.join(roi_path, f'{rect_name}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
+            )
+            cv2.imwrite(
+                os.path.join(masks_path, f'{rect_name}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                tile_mask
+            )
+            saved_tiles.add(tile_key)
+            normal_count += 1
+            stats.norm_saved += 1
+            if shifted:
+                stats.norm_shifted += 1
+        except cv2.error:
+            print(f'ROI empty: {y1}, {x1}')
+
+    print(f'  {rect_name}: {greedy_count} grp, {individual_count} ind, {normal_count} norm')
 
 
 def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, overlap: float = 0.0):
