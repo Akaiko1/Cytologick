@@ -216,7 +216,7 @@ def get_train_transforms(cfg: Config):
                 translate_percent=0.35,
                 scale=(0.8, 1.2),
                 rotate=(-360, 360),
-                mode=cv2.BORDER_REFLECT_101,
+                border_mode=cv2.BORDER_REFLECT_101,
                 p=0.5
             ),
         ], p=0.7),
@@ -258,13 +258,10 @@ def get_train_transforms(cfg: Config):
 
         # Coarse dropout / cutout (occlusion robustness)
         A.CoarseDropout(
-            max_holes=8,
-            max_height=int(h * 0.1),
-            max_width=int(w * 0.1),
-            min_holes=1,
-            min_height=int(h * 0.05),
-            min_width=int(w * 0.05),
-            fill_value=0,
+            num_holes_range=(1, 8),
+            hole_height_range=(int(h * 0.05), int(h * 0.1)),
+            hole_width_range=(int(w * 0.05), int(w * 0.1)),
+            fill=0,
             p=0.3
         ),
 
