@@ -125,13 +125,14 @@ std::pair<cv::Mat, DetectionStats> processDensePathologyMap(
 
 void drawDetections(cv::Mat& overlay, const std::vector<Detection>& detections, bool showLabels) {
     // Draw atypical detections (red)
+    // Note: OpenCV uses BGRA order for cv::Scalar on 4-channel images
     for (const auto& det : detections) {
         if (det.classIndex == 2) {
-            // Red fill with transparency
+            // Red fill with transparency (BGRA: B=0, G=0, R=255, A=127)
             std::vector<std::vector<cv::Point>> contours = {det.contour};
-            cv::drawContours(overlay, contours, 0, cv::Scalar(255, 0, 0, 127), cv::FILLED);
+            cv::drawContours(overlay, contours, 0, cv::Scalar(0, 0, 255, 127), cv::FILLED);
 
-            // Magenta outline
+            // Magenta outline (BGRA: B=255, G=0, R=255, A=200)
             cv::drawContours(overlay, contours, 0, cv::Scalar(255, 0, 255, 200), 2);
 
             // Draw probability label
@@ -160,11 +161,14 @@ void drawDetections(cv::Mat& overlay, const std::vector<Detection>& detections, 
         }
     }
 
-    // Draw normal detections (green outline only)
+    // Draw normal detections (green)
+    // Note: OpenCV uses BGRA order for cv::Scalar on 4-channel images
     for (const auto& det : detections) {
         if (det.classIndex == 1) {
             std::vector<std::vector<cv::Point>> contours = {det.contour};
+            // Green fill (BGRA: B=0, G=255, R=0, A=64)
             cv::drawContours(overlay, contours, 0, cv::Scalar(0, 255, 0, 64), cv::FILLED);
+            // Green outline (BGRA: B=0, G=200, R=0, A=150)
             cv::drawContours(overlay, contours, 0, cv::Scalar(0, 200, 0, 150), 1);
         }
     }

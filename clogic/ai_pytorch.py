@@ -120,22 +120,44 @@ class CytologyDataset(Dataset):
         image_path = os.path.join(self.images_path, self.images[idx])
         image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
+
         # Load mask
         mask_path = os.path.join(self.masks_path, self.masks[idx])
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        
+
+        # Convert visible mask values (0, 127, 255) back to class indices (0, 1, 2)
+        # This allows masks to be viewed in image viewers while still training correctly
+        mask = self._convert_mask_to_labels(mask)
+
         # Apply transforms
         if self.transform:
             transformed = self.transform(image=image, mask=mask)
             image = transformed['image']
             mask = transformed['mask']
-        
+
         # Ensure mask is long type for loss computation
         if isinstance(mask, torch.Tensor):
             mask = mask.long()
-        
+
         return image, mask
+
+    @staticmethod
+    def _convert_mask_to_labels(mask: np.ndarray) -> np.ndarray:
+        """
+        Convert visible mask values to class indices.
+
+        Mask values saved for visibility:
+            0   -> class 0 (background)
+            127 -> class 1 (normal cells)
+            255 -> class 2 (abnormal cells)
+
+        Returns:
+            Mask with values 0, 1, 2
+        """
+        labels = np.zeros_like(mask, dtype=np.uint8)
+        labels[mask == 127] = 1
+        labels[mask == 255] = 2
+        return labels
 
 
 def _build_gauss_noise():
@@ -166,8 +188,15 @@ def _build_gauss_noise():
 
 def get_train_transforms(cfg: Config):
     """
-    Get training transforms that match TensorFlow augmentations.
-    
+    Get training transforms optimized for cytology/pathology images.
+
+    Includes:
+    - Geometric: rotation, flips, affine, elastic deformation
+    - Color/Stain: HSV shifts, RGB shifts, brightness/contrast (critical for stain variability)
+    - Blur/Sharpness: handles focus variation across slides
+    - Dropout: occlusion robustness
+    - Noise: sensor noise simulation
+
     Returns:
         Albumentations transform pipeline for training
     """
@@ -176,19 +205,70 @@ def get_train_transforms(cfg: Config):
 
     return A.Compose([
         A.Resize(h, w),
+
+        # Geometric augmentations (cells have no fixed orientation)
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomRotate90(p=0.5),
         A.OneOf([
-            A.Rotate(limit=360, p=0.5),
+            A.Rotate(limit=360, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
             A.Affine(
                 translate_percent=0.35,
                 scale=(0.8, 1.2),
                 rotate=(-360, 360),
+                mode=cv2.BORDER_REFLECT_101,
                 p=0.5
             ),
-        ], p=0.8),
+        ], p=0.7),
+
+        # Elastic/grid distortion (cells deform naturally)
         A.OneOf([
-            noise_tf,
+            A.ElasticTransform(
+                alpha=120,
+                sigma=120 * 0.05,
+                border_mode=cv2.BORDER_REFLECT_101,
+                p=0.5
+            ),
+            A.GridDistortion(num_steps=5, distort_limit=0.3, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+        ], p=0.3),
+
+        # Color/Stain augmentation (critical for pathology - stain variability between labs)
+        A.OneOf([
+            A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.5),
+            A.RGBShift(r_shift_limit=20, g_shift_limit=20, b_shift_limit=20, p=0.5),
+            A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
+        ], p=0.7),
+
+        # Brightness/Contrast + CLAHE (lighting and contrast variation)
+        A.OneOf([
             A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.25, p=0.5),
+            A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=0.5),
+            A.RandomGamma(gamma_limit=(80, 120), p=0.5),
         ], p=0.5),
+
+        # Blur/Sharpness (focus varies across slides)
+        A.OneOf([
+            A.GaussianBlur(blur_limit=(3, 7), p=0.5),
+            A.MotionBlur(blur_limit=5, p=0.5),
+            A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=0.5),
+        ], p=0.3),
+
+        # Noise
+        noise_tf,
+
+        # Coarse dropout / cutout (occlusion robustness)
+        A.CoarseDropout(
+            max_holes=8,
+            max_height=int(h * 0.1),
+            max_width=int(w * 0.1),
+            min_holes=1,
+            min_height=int(h * 0.05),
+            min_width=int(w * 0.05),
+            fill_value=0,
+            p=0.3
+        ),
+
+        # Preprocessing (encoder-specific normalization)
         A.Lambda(
             image=partial(
                 _preprocess_image,

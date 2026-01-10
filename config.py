@@ -125,6 +125,9 @@ class Config:
     # ---------------------------------------------------------------------
     EXCLUDE_DUPLICATES: bool = False
     BROADEN_INDIVIDUAL_RECT: int = 1000
+    # Tile overlap ratio (0.0 = no overlap, 0.5 = 50% overlap). Higher values
+    # capture more cells at tile boundaries but increase dataset size.
+    TILE_OVERLAP: float = 0.25
 
     # ---------------------------------------------------------------------
     # Web

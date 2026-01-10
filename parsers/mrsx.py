@@ -46,8 +46,9 @@ def extract_atlas(slidepath, jsonpath, openslide_path):
         crop = slide.read_region((min_x, min_y), 0, (max_x - min_x, max_y - min_y))
         crop = np.asarray(crop)
 
+        # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
         # TODO randomize name if file exists
-        cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'),cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+        cv2.imwrite(os.path.join(folder_name, f'{idx}_{name}_coords_{min_x}_{min_y}.bmp'), cv2.cvtColor(crop, cv2.COLOR_RGBA2BGR))
 
 
 def extract_all_cells(
@@ -146,7 +147,8 @@ def extract_all_cells(
             if debug and np.min(mask[:, :, 1]) > 0: # Check in green channel if all the image filled with green color
                 continue
 
-            cv2.imwrite(os.path.join(roi_path, f'{name}_coords_{max_x}_{max_y}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+            # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
+            cv2.imwrite(os.path.join(roi_path, f'{name}_coords_{max_x}_{max_y}.bmp'), cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR))
             cv2.imwrite(os.path.join(masks_path, f'{name}_coords_{max_x}_{max_y}.bmp'), mask)
 
 
@@ -159,13 +161,18 @@ def extract_all_slides(
     debug: bool = False,
     cfg: Config | None = None,
     exclude_duplicates: bool | None = None,
+    overlap: float | None = None,
 ):
     cfg = _resolve_cfg(cfg)
     if exclude_duplicates is None:
         exclude_duplicates = bool(getattr(cfg, 'EXCLUDE_DUPLICATES', False))
+    if overlap is None:
+        overlap = float(getattr(cfg, 'TILE_OVERLAP', 0.0))
 
     slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
     print('Total slides: ', len(slides_list))
+    if overlap > 0:
+        print(f'Using tile overlap: {overlap:.0%}')
 
     json_list = glob.glob(os.path.join(json_folder, '**', '*.json'), recursive=True)
 
@@ -178,21 +185,21 @@ def extract_all_slides(
         if not json_path:
             print(f'JSON for {slide} not found, skipping')
             continue
-        
+
         with open(json_path[0], 'r') as f:
             rois = json.load(f)
-        
+
         rects = __extract_rects(rois)
         print(f'Parsing {slide}: {len(rects)} rectangles total')
 
         for rect in rects:
-            rect_name, rect_coords= next(iter(rect.items()))
+            rect_name, rect_coords = next(iter(rect.items()))
 
             top, bot = rect_coords
             if bot[0] - top[0] > 8000:
                 print(f'{rect_name} larger than 8000px - skipping')
                 continue
-            
+
             __extract_rect_regions(
                 rect_coords,
                 slide,
@@ -203,6 +210,7 @@ def extract_all_slides(
                 rect_name=rect_name,
                 debug=debug,
                 exclude_duplicates=exclude_duplicates,
+                overlap=overlap,
             )
 
 
@@ -216,13 +224,14 @@ def __extract_rect_regions(
     classes={},
     debug: bool = False,
     exclude_duplicates: bool = False,
+    overlap: float = 0.0,
 ):
     if hasattr(os, 'add_dll_directory'):
         with os.add_dll_directory(openslide_path):
             import openslide
     else:
         import openslide
-    
+
     slide = openslide.OpenSlide(slidepath)
 
     with open(jsonpath, 'r') as f:
@@ -247,13 +256,14 @@ def __extract_rect_regions(
 
     if debug:
         __debug_draw_contours(classes, regions, rectangle)
-        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", cv2.cvtColor(rectangle, cv2.COLOR_BGR2RGB))
+        # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
+        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", cv2.cvtColor(rectangle, cv2.COLOR_RGBA2BGR))
         cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
 
     if debug:
-        __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''))
+        __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''), overlap=overlap)
     else:
-        __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path)
+        __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, overlap=overlap)
 
 
 def __make_dirs(roi_path, masks_path):
@@ -267,6 +277,13 @@ def __make_dirs(roi_path, masks_path):
         os.mkdir(masks_path)
 
 
+# Mask values for saving (visible in image viewers)
+# These get converted back to class indices (0, 1, 2) when loading for training
+MASK_VALUE_BACKGROUND = 0      # Class 0: background (black)
+MASK_VALUE_NORMAL = 127        # Class 1: normal cells (gray)
+MASK_VALUE_ABNORMAL = 255      # Class 2: abnormal cells (white)
+
+
 def __draw_masks(classes, debug, regions, masks):
     top_layer = []  # TODO priority should vary by level value
     for region in regions:
@@ -276,16 +293,16 @@ def __draw_masks(classes, debug, regions, masks):
         if name in classes.keys():
             top_layer.append(region)
             continue
-        
-        # print(f'Normal: {name}')
-        cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else 1, -1)  # 1 class background info
-    
+
+        # Normal cells -> class 1 (saved as 127 for visibility)
+        cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else MASK_VALUE_NORMAL, -1)
+
     # double pass for class priority
     for region in top_layer:
         name, points, _, _, _, _ = region
         name = name.strip('?) ')
-        # print(f'Atypical: {name}')
-        cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else int(classes[name]), -1)
+        # Abnormal cells -> class 2 (saved as 255 for visibility)
+        cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else MASK_VALUE_ABNORMAL, -1)
 
 
 def __debug_draw_contours(classes, regions, image):
@@ -306,10 +323,20 @@ def __debug_draw_contours(classes, regions, image):
         cv2.drawContours(image, [points], 0, (255, 0, 0), 3)
 
 
-def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path):
+def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, overlap: float = 0.0):
+    """
+    Crop dataset with optional overlap.
+
+    Args:
+        rectangle: RGBA image from OpenSlide
+        overlap: Overlap ratio (0.0 = no overlap, 0.5 = 50% overlap)
+    """
     for zoom in zoom_levels:
-        for x in range(0, rectangle.shape[0], zoom):
-            for y in range(0, rectangle.shape[1], zoom):
+        # Calculate stride based on overlap
+        stride = max(1, int(zoom * (1.0 - overlap)))
+
+        for x in range(0, rectangle.shape[0], stride):
+            for y in range(0, rectangle.shape[1], stride):
                 roi = rectangle[x: x + zoom, y: y + zoom]
                 mask = masks[x: x + zoom, y: y + zoom]
 
@@ -317,16 +344,27 @@ def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_pat
                     continue
 
                 try:
-                    cv2.imwrite(os.path.join(roi_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+                    # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
+                    cv2.imwrite(os.path.join(roi_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR))
                     cv2.imwrite(os.path.join(masks_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
                 except cv2.error:
                     print('ROI empty: ', x, y)
 
 
-def __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, slide_name):
+def __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, slide_name, overlap: float = 0.0):
+    """
+    Crop dataset with optional overlap (debug mode with slide subdirectories).
+
+    Args:
+        rectangle: RGBA image from OpenSlide
+        overlap: Overlap ratio (0.0 = no overlap, 0.5 = 50% overlap)
+    """
     for zoom in zoom_levels:
-        for x in range(0, rectangle.shape[0], zoom):
-            for y in range(0, rectangle.shape[1], zoom):
+        # Calculate stride based on overlap
+        stride = max(1, int(zoom * (1.0 - overlap)))
+
+        for x in range(0, rectangle.shape[0], stride):
+            for y in range(0, rectangle.shape[1], stride):
                 roi = rectangle[x: x + zoom, y: y + zoom]
                 mask = masks[x: x + zoom, y: y + zoom]
 
@@ -337,7 +375,8 @@ def __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, mas
                     os.makedirs(os.path.join(roi_path, slide_name), exist_ok=True)
                     os.makedirs(os.path.join(masks_path, slide_name), exist_ok=True)
 
-                    cv2.imwrite(os.path.join(roi_path, slide_name, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+                    # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
+                    cv2.imwrite(os.path.join(roi_path, slide_name, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR))
                     cv2.imwrite(os.path.join(masks_path, slide_name, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
                 except cv2.error:
                     print('ROI empty: ', x, y)
