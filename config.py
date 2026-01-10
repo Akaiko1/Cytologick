@@ -128,6 +128,10 @@ class Config:
     # Tile overlap ratio (0.0 = no overlap, 0.5 = 50% overlap). Higher values
     # capture more cells at tile boundaries but increase dataset size.
     TILE_OVERLAP: float = 0.25
+    # Use pathology-centered cropping instead of grid-based. Centers tiles on
+    # pathology objects and adjusts size/position to avoid truncating them.
+    # Generates both group tiles (multiple pathologies) and individual tiles.
+    CENTERED_CROP: bool = True
 
     # ---------------------------------------------------------------------
     # Web
@@ -239,6 +243,10 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.EXCLUDE_DUPLICATES = _to_bool(dataset['exclude_duplicates'])
     if 'broaden_individual_rect' in dataset:
         cfg.BROADEN_INDIVIDUAL_RECT = _to_int(dataset['broaden_individual_rect'])
+    if 'tile_overlap' in dataset:
+        cfg.TILE_OVERLAP = float(dataset['tile_overlap'])
+    if 'centered_crop' in dataset:
+        cfg.CENTERED_CROP = _to_bool(dataset['centered_crop'])
 
     web = data.get('web', {}) or {}
     if 'ip_exposed' in web:
@@ -333,6 +341,8 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
         'dataset': {
             'exclude_duplicates': 'EXCLUDE_DUPLICATES',
             'broaden_individual_rect': 'BROADEN_INDIVIDUAL_RECT',
+            'tile_overlap': 'TILE_OVERLAP',
+            'centered_crop': 'CENTERED_CROP',
         },
         'web': {
             'ip_exposed': 'IP_EXPOSED',

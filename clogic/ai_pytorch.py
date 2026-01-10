@@ -58,6 +58,128 @@ def _identity_mask(x, **kwargs):
     return x
 
 
+# Mask class indices (after conversion from visible values)
+_MASK_CLASS_BACKGROUND = 0
+_MASK_CLASS_NORMAL = 1
+_MASK_CLASS_PATHOLOGY = 2
+
+
+class SafeGeometricTransform(A.DualTransform):
+    """
+    Wrapper for geometric transforms that protects pathology from being truncated.
+
+    If a geometric transform would reduce pathology area below a threshold,
+    the transform is rejected and original image/mask returned.
+    """
+
+    def __init__(
+        self,
+        transform: A.BasicTransform,
+        min_pathology_ratio: float = 0.4,
+        pathology_class: int = _MASK_CLASS_PATHOLOGY,
+        always_apply: bool = False,
+        p: float = 1.0,
+    ):
+        """
+        Args:
+            transform: The geometric transform to wrap
+            min_pathology_ratio: Minimum ratio of pathology area to preserve (0.4 = 40%)
+            pathology_class: Class index for pathology in mask
+        """
+        super().__init__(always_apply=always_apply, p=p)
+        self.transform = transform
+        self.min_pathology_ratio = min_pathology_ratio
+        self.pathology_class = pathology_class
+        self._original_image = None
+        self._original_mask = None
+        self._original_pathology_area = 0
+
+    def apply(self, img, **params):
+        # Store original for potential rollback
+        self._original_image = img.copy()
+        return self.transform.apply(img, **params)
+
+    def apply_to_mask(self, mask, **params):
+        self._original_mask = mask.copy()
+        self._original_pathology_area = np.sum(mask == self.pathology_class)
+        return self.transform.apply_to_mask(mask, **params)
+
+    def get_params(self):
+        return self.transform.get_params() if hasattr(self.transform, 'get_params') else {}
+
+    def get_params_dependent_on_data(self, params, data):
+        if hasattr(self.transform, 'get_params_dependent_on_data'):
+            return self.transform.get_params_dependent_on_data(params, data)
+        return {}
+
+    def get_transform_init_args_names(self):
+        return ('min_pathology_ratio', 'pathology_class')
+
+    @property
+    def targets_as_params(self):
+        if hasattr(self.transform, 'targets_as_params'):
+            return self.transform.targets_as_params
+        return []
+
+
+def _check_pathology_preserved(
+    original_mask: np.ndarray,
+    transformed_mask: np.ndarray,
+    min_ratio: float = 0.4,
+    pathology_class: int = _MASK_CLASS_PATHOLOGY,
+) -> bool:
+    """
+    Check if pathology area is preserved after transformation.
+
+    Args:
+        original_mask: Mask before transformation
+        transformed_mask: Mask after transformation
+        min_ratio: Minimum ratio of pathology to preserve
+        pathology_class: Class index for pathology
+
+    Returns:
+        True if pathology is sufficiently preserved
+    """
+    original_area = np.sum(original_mask == pathology_class)
+    if original_area == 0:
+        return True  # No pathology to protect
+
+    transformed_area = np.sum(transformed_mask == pathology_class)
+    ratio = transformed_area / original_area
+
+    return ratio >= min_ratio
+
+
+def _safe_geometric_augmentation(
+    image: np.ndarray,
+    mask: np.ndarray,
+    transform: A.Compose,
+    max_attempts: int = 3,
+    min_pathology_ratio: float = 0.4,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Apply geometric augmentation with pathology protection.
+
+    Retries transform if pathology is truncated too much.
+    Falls back to original if all attempts fail.
+    """
+    original_mask = mask.copy()
+    has_pathology = np.any(mask == _MASK_CLASS_PATHOLOGY)
+
+    if not has_pathology:
+        # No pathology — apply transform freely
+        result = transform(image=image, mask=mask)
+        return result['image'], result['mask']
+
+    for attempt in range(max_attempts):
+        result = transform(image=image, mask=mask)
+        if _check_pathology_preserved(original_mask, result['mask'], min_pathology_ratio):
+            return result['image'], result['mask']
+
+    # All attempts failed — return original (only resize applied)
+    return image, mask
+
+
 def _preprocess_image(
     img,
     *,
@@ -88,26 +210,37 @@ def set_seed(seed: int = 42):
 class CytologyDataset(Dataset):
     """
     PyTorch Dataset for cytology image segmentation.
-    
+
     Loads image-mask pairs and applies transformations.
+    Automatically selects conservative or aggressive augmentation based on
+    whether the tile contains pathology.
     """
-    
-    def __init__(self, images_path: str, masks_path: str, transform=None):
+
+    def __init__(
+        self,
+        images_path: str,
+        masks_path: str,
+        transform=None,
+        transform_aggressive=None,
+    ):
         """
         Initialize the dataset.
-        
+
         Args:
             images_path: Path to directory containing training images
             masks_path: Path to directory containing corresponding masks
-            transform: Albumentations transform pipeline
+            transform: Albumentations transform pipeline (conservative, for pathology)
+            transform_aggressive: Albumentations transform pipeline (aggressive, for normal tiles)
+                                  If None, uses same transform for all tiles.
         """
         self.images_path = images_path
         self.masks_path = masks_path
         self.transform = transform
-        
+        self.transform_aggressive = transform_aggressive
+
         self.images = [f for f in os.listdir(images_path) if f.endswith('.bmp')]
         self.masks = [f for f in os.listdir(masks_path) if f.endswith('.bmp')]
-        
+
         # Ensure images and masks are aligned
         self.images.sort()
         self.masks.sort()
@@ -129,11 +262,61 @@ class CytologyDataset(Dataset):
         # This allows masks to be viewed in image viewers while still training correctly
         mask = self._convert_mask_to_labels(mask)
 
-        # Apply transforms
+        # Apply transforms with pathology protection
         if self.transform:
-            transformed = self.transform(image=image, mask=mask)
-            image = transformed['image']
-            mask = transformed['mask']
+            original_pathology_area = np.sum(mask == _MASK_CLASS_PATHOLOGY)
+            has_pathology = original_pathology_area > 0
+
+            if has_pathology:
+                # Use conservative transform with retry for pathology tiles
+                max_attempts = 3
+                min_ratio = 0.4  # Keep at least 40% of pathology
+
+                # Store original for fallback (before any transform)
+                original_image = image.copy()
+                original_mask = mask.copy()
+
+                for attempt in range(max_attempts):
+                    # Always start from original to get fresh random params
+                    transformed = self.transform(image=original_image, mask=original_mask)
+                    new_mask = transformed['mask']
+
+                    # Check pathology preservation
+                    if isinstance(new_mask, torch.Tensor):
+                        new_pathology_area = (new_mask == _MASK_CLASS_PATHOLOGY).sum().item()
+                    else:
+                        new_pathology_area = np.sum(new_mask == _MASK_CLASS_PATHOLOGY)
+
+                    ratio = new_pathology_area / original_pathology_area if original_pathology_area > 0 else 1.0
+
+                    if ratio >= min_ratio:
+                        image = transformed['image']
+                        mask = new_mask
+                        break
+                else:
+                    # All attempts failed - use original without augmentation
+                    # Apply only resize and preprocessing (no geometric transforms)
+                    # This matches validation transforms behavior
+                    h, w = self.transform.transforms[0].height, self.transform.transforms[0].width
+                    image = cv2.resize(original_image, (w, h))
+                    mask = cv2.resize(original_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+                    # Apply encoder preprocessing (same as in transform pipeline)
+                    # Find the Lambda transform in the pipeline and apply its image function
+                    for t in self.transform.transforms:
+                        if isinstance(t, A.Lambda) and hasattr(t, 'image'):
+                            image = t.image(image)
+                            break
+
+                    # Convert to tensor format
+                    image = torch.from_numpy(image.transpose(2, 0, 1)).float()
+                    mask = torch.from_numpy(mask)
+            else:
+                # No pathology - use aggressive transform if available
+                transform_to_use = self.transform_aggressive or self.transform
+                transformed = transform_to_use(image=image, mask=mask)
+                image = transformed['image']
+                mask = transformed['mask']
 
         # Ensure mask is long type for loss computation
         if isinstance(mask, torch.Tensor):
@@ -186,52 +369,9 @@ def _build_gauss_noise():
     return A.NoOp(p=0.0)
 
 
-def get_train_transforms(cfg: Config):
-    """
-    Get training transforms optimized for cytology/pathology images.
-
-    Includes:
-    - Geometric: rotation, flips, affine, elastic deformation
-    - Color/Stain: HSV shifts, RGB shifts, brightness/contrast (critical for stain variability)
-    - Blur/Sharpness: handles focus variation across slides
-    - Dropout: occlusion robustness
-    - Noise: sensor noise simulation
-
-    Returns:
-        Albumentations transform pipeline for training
-    """
-    noise_tf = _build_gauss_noise()
-    h, w = int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1])
-
-    return A.Compose([
-        A.Resize(h, w),
-
-        # Geometric augmentations (cells have no fixed orientation)
-        A.HorizontalFlip(p=0.5),
-        A.VerticalFlip(p=0.5),
-        A.RandomRotate90(p=0.5),
-        A.OneOf([
-            A.Rotate(limit=360, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
-            A.Affine(
-                translate_percent=0.35,
-                scale=(0.8, 1.2),
-                rotate=(-360, 360),
-                border_mode=cv2.BORDER_REFLECT_101,
-                p=0.5
-            ),
-        ], p=0.7),
-
-        # Elastic/grid distortion (cells deform naturally)
-        A.OneOf([
-            A.ElasticTransform(
-                alpha=120,
-                sigma=120 * 0.05,
-                border_mode=cv2.BORDER_REFLECT_101,
-                p=0.5
-            ),
-            A.GridDistortion(num_steps=5, distort_limit=0.3, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
-        ], p=0.3),
-
+def _get_color_augmentations(noise_tf):
+    """Common color/stain augmentations for both pathology and normal tiles."""
+    return [
         # Color/Stain augmentation (critical for pathology - stain variability between labs)
         A.OneOf([
             A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.5),
@@ -255,14 +395,140 @@ def get_train_transforms(cfg: Config):
 
         # Noise
         noise_tf,
+    ]
 
-        # Coarse dropout / cutout (occlusion robustness)
+
+def get_train_transforms_aggressive(cfg: Config):
+    """
+    Get aggressive training transforms for normal/background tiles (no pathology).
+
+    These tiles don't need protection - can use full augmentation range.
+    """
+    noise_tf = _build_gauss_noise()
+    h, w = int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1])
+
+    return A.Compose([
+        A.Resize(h, w),
+
+        # Aggressive geometric augmentations
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomRotate90(p=0.5),
+        A.OneOf([
+            A.Rotate(limit=360, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+            A.Affine(
+                translate_percent=0.35,  # Full range - OK for normal tiles
+                scale=(0.8, 1.2),
+                rotate=(-360, 360),
+                border_mode=cv2.BORDER_REFLECT_101,
+                p=0.5
+            ),
+        ], p=0.7),
+
+        # Elastic/grid distortion
+        A.OneOf([
+            A.ElasticTransform(
+                alpha=120,
+                sigma=120 * 0.05,
+                border_mode=cv2.BORDER_REFLECT_101,
+                p=0.5
+            ),
+            A.GridDistortion(num_steps=5, distort_limit=0.3, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+        ], p=0.3),
+
+        # Color augmentations (same as conservative)
+        *_get_color_augmentations(noise_tf),
+
+        # Aggressive coarse dropout (OK for normal tiles)
         A.CoarseDropout(
             num_holes_range=(1, 8),
-            hole_height_range=(int(h * 0.05), int(h * 0.1)),
-            hole_width_range=(int(w * 0.05), int(w * 0.1)),
+            hole_height_range=(int(h * 0.05), int(h * 0.15)),
+            hole_width_range=(int(w * 0.05), int(w * 0.15)),
             fill=0,
-            p=0.3
+            p=0.4
+        ),
+
+        # Preprocessing
+        A.Lambda(
+            image=partial(
+                _preprocess_image,
+                use_encoder_preprocessing=bool(cfg.PT_USE_ENCODER_PREPROCESSING),
+                encoder_name=str(cfg.PT_ENCODER_NAME),
+                encoder_weights=cfg.PT_ENCODER_WEIGHTS,
+            ),
+            mask=_identity_mask,
+        ),
+        ToTensorV2(),
+    ])
+
+
+def get_train_transforms(cfg: Config):
+    """
+    Get conservative training transforms for pathology tiles.
+
+    Uses conservative geometric params to avoid truncating pathology.
+    For normal tiles, use get_train_transforms_aggressive() instead.
+
+    Returns:
+        Albumentations transform pipeline for training
+    """
+    noise_tf = _build_gauss_noise()
+    h, w = int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1])
+
+    # Geometric transforms - split into safe (rotation/flip) and risky (translate/scale)
+    # Rotation and flips are safe - they don't remove content
+    safe_geometric = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.RandomRotate90(p=0.5),
+        A.Rotate(limit=360, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+    ])
+
+    # Affine with conservative translate (max 15% instead of 35%)
+    # Small translations are OK - they simulate slight positioning variation
+    risky_geometric = A.OneOf([
+        A.Affine(
+            translate_percent=(-0.15, 0.15),  # Conservative: max 15% shift
+            scale=(0.9, 1.1),  # Conservative: max 10% scale change
+            rotate=(-15, 15),  # Small additional rotation
+            border_mode=cv2.BORDER_REFLECT_101,
+            p=0.5
+        ),
+        # Elastic/grid distortion (cells deform naturally) - generally safe
+        A.ElasticTransform(
+            alpha=80,  # Reduced from 120
+            sigma=80 * 0.05,
+            border_mode=cv2.BORDER_REFLECT_101,
+            p=0.5
+        ),
+        A.GridDistortion(
+            num_steps=5,
+            distort_limit=0.2,  # Reduced from 0.3
+            border_mode=cv2.BORDER_REFLECT_101,
+            p=0.5
+        ),
+    ], p=0.5)
+
+    return A.Compose([
+        A.Resize(h, w),
+
+        # Safe geometric augmentations (don't remove content)
+        safe_geometric,
+
+        # Risky geometric (conservative params to avoid truncating pathology)
+        risky_geometric,
+
+        # Color augmentations
+        *_get_color_augmentations(noise_tf),
+
+        # Coarse dropout / cutout (occlusion robustness)
+        # Small holes only - won't remove significant pathology
+        A.CoarseDropout(
+            num_holes_range=(1, 4),  # Reduced from (1, 8)
+            hole_height_range=(int(h * 0.03), int(h * 0.08)),  # Smaller holes
+            hole_width_range=(int(w * 0.03), int(w * 0.08)),
+            fill=0,
+            p=0.2  # Reduced probability
         ),
 
         # Preprocessing (encoder-specific normalization)
@@ -507,7 +773,13 @@ def get_datasets(
         train_indices = [i for i in window if i not in val_set]
 
     # Create datasets with transforms
-    train_dataset = CytologyDataset(images_path, masks_path, transform=get_train_transforms(cfg))
+    # Train dataset gets both conservative (for pathology) and aggressive (for normal) transforms
+    train_dataset = CytologyDataset(
+        images_path,
+        masks_path,
+        transform=get_train_transforms(cfg),
+        transform_aggressive=get_train_transforms_aggressive(cfg),
+    )
     val_dataset = CytologyDataset(images_path, masks_path, transform=get_val_transforms(cfg))
 
     # Create subset datasets

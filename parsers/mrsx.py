@@ -162,16 +162,30 @@ def extract_all_slides(
     cfg: Config | None = None,
     exclude_duplicates: bool | None = None,
     overlap: float | None = None,
+    centered_crop: bool | None = None,
 ):
+    """
+    Extract training tiles from all slides.
+
+    Args:
+        centered_crop: If True, use pathology-centered cropping that avoids
+            truncating pathology objects at tile edges. Generates both group tiles
+            (multiple pathologies) and individual tiles (one pathology each).
+            If None, reads from cfg.CENTERED_CROP (default False).
+    """
     cfg = _resolve_cfg(cfg)
     if exclude_duplicates is None:
         exclude_duplicates = bool(getattr(cfg, 'EXCLUDE_DUPLICATES', False))
     if overlap is None:
         overlap = float(getattr(cfg, 'TILE_OVERLAP', 0.0))
+    if centered_crop is None:
+        centered_crop = bool(getattr(cfg, 'CENTERED_CROP', False))
 
     slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
     print('Total slides: ', len(slides_list))
-    if overlap > 0:
+    if centered_crop:
+        print('Using pathology-centered cropping')
+    elif overlap > 0:
         print(f'Using tile overlap: {overlap:.0%}')
 
     json_list = glob.glob(os.path.join(json_folder, '**', '*.json'), recursive=True)
@@ -211,6 +225,7 @@ def extract_all_slides(
                 debug=debug,
                 exclude_duplicates=exclude_duplicates,
                 overlap=overlap,
+                centered_crop=centered_crop,
             )
 
 
@@ -225,6 +240,7 @@ def __extract_rect_regions(
     debug: bool = False,
     exclude_duplicates: bool = False,
     overlap: float = 0.0,
+    centered_crop: bool = False,
 ):
     if hasattr(os, 'add_dll_directory'):
         with os.add_dll_directory(openslide_path):
@@ -260,7 +276,15 @@ def __extract_rect_regions(
         cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", cv2.cvtColor(rectangle, cv2.COLOR_RGBA2BGR))
         cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
 
-    if debug:
+    if centered_crop:
+        # Use pathology-centered cropping (avoids truncating pathologies)
+        # base_zoom is the middle value from zoom_levels, or first if only one
+        base_zoom = zoom_levels[len(zoom_levels) // 2] if zoom_levels else 256
+        min_zoom = min(zoom_levels) if zoom_levels else 128
+        max_zoom = max(zoom_levels) if zoom_levels else 512
+        __crop_dataset_centered(rect_name, base_zoom, rectangle, masks, roi_path, masks_path,
+                                min_zoom=min_zoom, max_zoom=max_zoom)
+    elif debug:
         __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''), overlap=overlap)
     else:
         __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, overlap=overlap)
@@ -321,6 +345,335 @@ def __debug_draw_contours(classes, regions, image):
         name, points, _, _, _, _ = region
         name = name.strip('?) ')
         cv2.drawContours(image, [points], 0, (255, 0, 0), 3)
+
+
+def _get_pathology_objects(masks):
+    """
+    Find all pathology objects in mask and return their properties.
+
+    Returns:
+        tuple: (labeled_array, list of object dicts with id, cx, cy, bbox)
+    """
+    from scipy import ndimage
+
+    pathology = (masks == MASK_VALUE_ABNORMAL).astype(np.uint8)
+    labeled, num_objects = ndimage.label(pathology)
+
+    objects = []
+    for obj_id in range(1, num_objects + 1):
+        obj_mask = (labeled == obj_id)
+        ys, xs = np.where(obj_mask)
+        if len(ys) == 0:
+            continue
+        objects.append({
+            'id': obj_id,
+            'cy': int(np.mean(ys)),
+            'cx': int(np.mean(xs)),
+            'y1': int(ys.min()),
+            'y2': int(ys.max()),
+            'x1': int(xs.min()),
+            'x2': int(xs.max()),
+            'area': len(ys),
+        })
+
+    return labeled, objects
+
+
+def _bbox_intersects_tile(obj, y1, x1, y2, x2):
+    """Check if object bbox intersects with tile bounds."""
+    return not (obj['x2'] < x1 or obj['x1'] > x2 or obj['y2'] < y1 or obj['y1'] > y2)
+
+
+def _bbox_fully_inside(obj, y1, x1, y2, x2, margin=2):
+    """Check if object bbox is fully inside tile bounds."""
+    return (obj['y1'] >= y1 + margin and obj['y2'] <= y2 - margin and
+            obj['x1'] >= x1 + margin and obj['x2'] <= x2 - margin)
+
+
+def _has_truncated_objects(tile_coords, labeled, margin=3):
+    """
+    Check if any pathology objects are truncated (cut by tile edge).
+
+    Args:
+        tile_coords: (y1, x1, y2, x2) tile bounds
+        labeled: labeled array from scipy.ndimage.label
+        margin: edge margin in pixels
+
+    Returns:
+        True if any object touches tile edge
+    """
+    y1, x1, y2, x2 = tile_coords
+    h, w = y2 - y1, x2 - x1
+
+    tile_labeled = labeled[y1:y2, x1:x2]
+    objects_in_tile = set(np.unique(tile_labeled)) - {0}
+
+    for obj_id in objects_in_tile:
+        obj_pixels = (tile_labeled == obj_id)
+
+        # Check if object touches any edge
+        if (np.any(obj_pixels[:margin, :]) or      # top
+            np.any(obj_pixels[-margin:, :]) or     # bottom
+            np.any(obj_pixels[:, :margin]) or      # left
+            np.any(obj_pixels[:, -margin:])):      # right
+            return True
+
+    return False
+
+
+def _try_greedy_tile(center_obj, all_objects, labeled, masks_shape,
+                     base_zoom, min_zoom, max_zoom, margin=10):
+    """
+    Try to fit center object + neighbors into one tile.
+
+    Returns:
+        tuple: (y1, x1, y2, x2, set of included object ids) or None
+    """
+    h, w = masks_shape[:2]
+    half = base_zoom // 2
+
+    cy, cx = center_obj['cy'], center_obj['cx']
+    y1, y2 = cy - half, cy + half
+    x1, x2 = cx - half, cx + half
+
+    # Find intersecting objects
+    intersecting = [obj for obj in all_objects if _bbox_intersects_tile(obj, y1, x1, y2, x2)]
+
+    # Single object case
+    if len(intersecting) == 1:
+        if y1 >= 0 and x1 >= 0 and y2 <= h and x2 <= w:
+            if not _has_truncated_objects((y1, x1, y2, x2), labeled):
+                return (y1, x1, y2, x2, {center_obj['id']})
+        return None
+
+    # Try to fit all intersecting objects by expanding tile
+    combined_y1 = min(obj['y1'] for obj in intersecting) - margin
+    combined_y2 = max(obj['y2'] for obj in intersecting) + margin
+    combined_x1 = min(obj['x1'] for obj in intersecting) - margin
+    combined_x2 = max(obj['x2'] for obj in intersecting) + margin
+
+    needed_h = combined_y2 - combined_y1
+    needed_w = combined_x2 - combined_x1
+    tile_size = max(needed_h, needed_w)
+
+    if tile_size <= max_zoom:
+        # Can fit all — center tile on combined bbox
+        center_y = (combined_y1 + combined_y2) // 2
+        center_x = (combined_x1 + combined_x2) // 2
+        half_tile = tile_size // 2
+
+        new_y1 = max(0, min(center_y - half_tile, h - tile_size))
+        new_x1 = max(0, min(center_x - half_tile, w - tile_size))
+        new_y2 = new_y1 + tile_size
+        new_x2 = new_x1 + tile_size
+
+        if new_y2 <= h and new_x2 <= w:
+            if not _has_truncated_objects((new_y1, new_x1, new_y2, new_x2), labeled):
+                included = {obj['id'] for obj in intersecting}
+                return (new_y1, new_x1, new_y2, new_x2, included)
+
+    # Try shifting to exclude distant neighbors
+    for dy in [0, -30, 30, -60, 60]:
+        for dx in [0, -30, 30, -60, 60]:
+            shifted_y1 = max(0, cy - half + dy)
+            shifted_x1 = max(0, cx - half + dx)
+            shifted_y2 = min(h, shifted_y1 + base_zoom)
+            shifted_x2 = min(w, shifted_x1 + base_zoom)
+
+            # Ensure correct size
+            if shifted_y2 - shifted_y1 != base_zoom or shifted_x2 - shifted_x1 != base_zoom:
+                continue
+
+            if not _has_truncated_objects((shifted_y1, shifted_x1, shifted_y2, shifted_x2), labeled):
+                included = {obj['id'] for obj in all_objects
+                           if _bbox_fully_inside(obj, shifted_y1, shifted_x1, shifted_y2, shifted_x2)}
+                if center_obj['id'] in included:
+                    return (shifted_y1, shifted_x1, shifted_y2, shifted_x2, included)
+
+    return None
+
+
+def _fit_single_object(obj, labeled, masks_shape, base_zoom, min_zoom, max_zoom, margin=15):
+    """
+    Find optimal tile for a single object by varying size and position.
+
+    Returns:
+        tuple: (y1, x1, y2, x2) or None
+    """
+    h, w = masks_shape[:2]
+
+    obj_h = obj['y2'] - obj['y1'] + 2 * margin
+    obj_w = obj['x2'] - obj['x1'] + 2 * margin
+    min_size = max(min_zoom, obj_h, obj_w)
+
+    # Try sizes from minimum to base_zoom
+    for zoom in range(min_size, min(base_zoom + 1, max_zoom + 1), 16):
+        # Try different positions within valid range
+        max_dy = zoom - obj_h
+        max_dx = zoom - obj_w
+
+        for dy in range(0, max(1, max_dy), max(1, max_dy // 5)):
+            for dx in range(0, max(1, max_dx), max(1, max_dx // 5)):
+                y1 = obj['y1'] - margin - dy
+                x1 = obj['x1'] - margin - dx
+                y2 = y1 + zoom
+                x2 = x1 + zoom
+
+                # Check bounds
+                if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+                    continue
+
+                if not _has_truncated_objects((y1, x1, y2, x2), labeled):
+                    return (y1, x1, y2, x2)
+
+    return None
+
+
+def __crop_dataset_centered(rect_name, base_zoom, rectangle, masks, roi_path, masks_path,
+                            min_zoom=128, max_zoom=512, margin=15):
+    """
+    Crop dataset by centering tiles on pathology objects.
+
+    Generates two types of tiles:
+    1. Greedy tiles — fit multiple nearby pathologies into one tile (context)
+    2. Individual tiles — one pathology per tile with optimal bbox (detail)
+
+    Args:
+        rect_name: Name prefix for saved files
+        base_zoom: Target tile size
+        rectangle: RGBA image from OpenSlide
+        masks: Mask array
+        roi_path: Output path for ROI images
+        masks_path: Output path for mask images
+        min_zoom: Minimum tile size
+        max_zoom: Maximum tile size
+        margin: Margin around pathology objects
+    """
+    labeled, objects = _get_pathology_objects(masks)
+
+    if not objects:
+        return
+
+    h, w = masks.shape[:2]
+    saved_tiles = set()  # Track saved tiles to avoid duplicates
+
+    # Phase 1: Greedy tiles — group nearby pathologies
+    used_in_greedy = set()
+    greedy_count = 0
+
+    for obj in objects:
+        if obj['id'] in used_in_greedy:
+            continue
+
+        tile = _try_greedy_tile(obj, objects, labeled, masks.shape,
+                                base_zoom, min_zoom, max_zoom, margin)
+
+        if tile is not None:
+            y1, x1, y2, x2, included_ids = tile
+            tile_key = (y1, x1, y2, x2)
+
+            if tile_key not in saved_tiles:
+                roi = rectangle[y1:y2, x1:x2]
+                mask = masks[y1:y2, x1:x2]
+
+                zoom = y2 - y1
+                try:
+                    cv2.imwrite(
+                        os.path.join(roi_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{zoom}.bmp'),
+                        cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
+                    )
+                    cv2.imwrite(
+                        os.path.join(masks_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{zoom}.bmp'),
+                        mask
+                    )
+                    saved_tiles.add(tile_key)
+                    greedy_count += 1
+                except cv2.error:
+                    print(f'ROI empty: {y1}, {x1}')
+
+            used_in_greedy.update(included_ids)
+
+    # Phase 2: Individual tiles — each pathology separately
+    individual_count = 0
+
+    for obj in objects:
+        tile = _fit_single_object(obj, labeled, masks.shape,
+                                  base_zoom, min_zoom, max_zoom, margin)
+
+        if tile is not None:
+            y1, x1, y2, x2 = tile
+            tile_key = (y1, x1, y2, x2)
+
+            if tile_key not in saved_tiles:
+                roi = rectangle[y1:y2, x1:x2]
+                mask = masks[y1:y2, x1:x2]
+
+                zoom = y2 - y1
+                try:
+                    cv2.imwrite(
+                        os.path.join(roi_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{zoom}.bmp'),
+                        cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
+                    )
+                    cv2.imwrite(
+                        os.path.join(masks_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{zoom}.bmp'),
+                        mask
+                    )
+                    saved_tiles.add(tile_key)
+                    individual_count += 1
+                except cv2.error:
+                    print(f'ROI empty: {y1}, {x1}')
+
+    # Phase 3: Negative tiles — regions without pathology (normal cells + background)
+    negative_count = 0
+    num_pathology_tiles = greedy_count + individual_count
+    # Generate roughly equal number of negative samples
+    target_negatives = max(num_pathology_tiles, 5)
+    max_attempts = target_negatives * 20
+
+    for attempt in range(max_attempts):
+        if negative_count >= target_negatives:
+            break
+
+        # Random position
+        zoom = base_zoom
+        if h <= zoom or w <= zoom:
+            break
+
+        y1 = np.random.randint(0, h - zoom)
+        x1 = np.random.randint(0, w - zoom)
+        y2 = y1 + zoom
+        x2 = x1 + zoom
+
+        tile_key = (y1, x1, y2, x2)
+        if tile_key in saved_tiles:
+            continue
+
+        # Check no pathology in this tile
+        tile_mask = masks[y1:y2, x1:x2]
+        if np.any(tile_mask == MASK_VALUE_ABNORMAL):
+            continue
+
+        # Require at least some normal cells (not just empty background)
+        normal_ratio = np.sum(tile_mask == MASK_VALUE_NORMAL) / tile_mask.size
+        if normal_ratio < 0.01:  # At least 1% normal cells
+            continue
+
+        roi = rectangle[y1:y2, x1:x2]
+        try:
+            cv2.imwrite(
+                os.path.join(roi_path, f'{rect_name}_neg_{negative_count}_coords_{y1}_{x1}_{zoom}.bmp'),
+                cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
+            )
+            cv2.imwrite(
+                os.path.join(masks_path, f'{rect_name}_neg_{negative_count}_coords_{y1}_{x1}_{zoom}.bmp'),
+                tile_mask
+            )
+            saved_tiles.add(tile_key)
+            negative_count += 1
+        except cv2.error:
+            print(f'ROI empty: {y1}, {x1}')
+
+    print(f'  {rect_name}: {greedy_count} group, {individual_count} individual, {negative_count} negative tiles')
 
 
 def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, overlap: float = 0.0):
