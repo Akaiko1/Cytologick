@@ -83,6 +83,7 @@ def extract_all_cells(
     __make_dirs(roi_path, masks_path)
 
     for slidepath in slides_list:
+        slide_id = os.path.splitext(os.path.basename(slidepath))[0]
         # Derive expected JSON name robustly from slide filename
         base_name = os.path.splitext(os.path.basename(slidepath))[0]
         json_name = f"{base_name}.json"
@@ -148,8 +149,9 @@ def extract_all_cells(
                 continue
 
             # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
-            cv2.imwrite(os.path.join(roi_path, f'{name}_coords_{max_x}_{max_y}.bmp'), cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR))
-            cv2.imwrite(os.path.join(masks_path, f'{name}_coords_{max_x}_{max_y}.bmp'), mask)
+            prefix = f'{slide_id}__{name}'
+            cv2.imwrite(os.path.join(roi_path, f'{prefix}_coords_{max_x}_{max_y}.bmp'), cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR))
+            cv2.imwrite(os.path.join(masks_path, f'{prefix}_coords_{max_x}_{max_y}.bmp'), mask)
 
 
 def extract_all_slides(
@@ -185,12 +187,14 @@ def extract_all_slides(
     print('Total slides: ', len(slides_list))
     if centered_crop:
         print('Using pathology-centered cropping')
+        _reset_crop_stats()
     elif overlap > 0:
         print(f'Using tile overlap: {overlap:.0%}')
 
     json_list = glob.glob(os.path.join(json_folder, '**', '*.json'), recursive=True)
 
     for slide in slides_list:
+        slide_id = os.path.splitext(os.path.basename(slide))[0]
         # Derive expected JSON name robustly from slide filename
         base_name = os.path.splitext(os.path.basename(slide))[0]
         json_name = f"{base_name}.json"
@@ -222,11 +226,15 @@ def extract_all_slides(
                 classes=classes,
                 zoom_levels=zoom_levels,
                 rect_name=rect_name,
+                slide_id=slide_id,
                 debug=debug,
                 exclude_duplicates=exclude_duplicates,
                 overlap=overlap,
                 centered_crop=centered_crop,
             )
+
+    if centered_crop:
+        _get_crop_stats().print_summary()
 
 
 def __extract_rect_regions(
@@ -235,6 +243,7 @@ def __extract_rect_regions(
     jsonpath,
     openslide_path,
     rect_name='roi',
+    slide_id: str | None = None,
     zoom_levels=[128, 256, 512],
     classes={},
     debug: bool = False,
@@ -276,14 +285,15 @@ def __extract_rect_regions(
         cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", cv2.cvtColor(rectangle, cv2.COLOR_RGBA2BGR))
         cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
 
+    name_prefix = f'{slide_id}__{rect_name}' if slide_id else rect_name
     if centered_crop:
         # Use pathology-centered cropping (avoids truncating pathologies)
         # Tile size is determined by object bbox + padding, not by zoom_levels
-        __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path)
+        __crop_dataset_centered(name_prefix, rectangle, masks, roi_path, masks_path)
     elif debug:
-        __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''), overlap=overlap)
+        __crop_debug_dataset(name_prefix, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''), overlap=overlap)
     else:
-        __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, overlap=overlap)
+        __crop_dataset(name_prefix, zoom_levels, rectangle, masks, roi_path, masks_path, overlap=overlap)
 
 
 def __make_dirs(roi_path, masks_path):
@@ -550,7 +560,16 @@ def _find_nearby_pathologies(center_obj, all_objects, max_distance=100):
     return nearby
 
 
-def _try_fit_tile_without_truncation(objects, labeled, h, w, padding=30, max_expand=100):
+def _try_fit_tile_without_truncation(
+    objects,
+    labeled,
+    h,
+    w,
+    padding=30,
+    max_expand=200,
+    min_padding=10,
+    padding_step=5,
+):
     """
     Try to fit objects into a tile without truncating any pathology.
 
@@ -567,42 +586,48 @@ def _try_fit_tile_without_truncation(objects, labeled, h, w, padding=30, max_exp
 
     obj_h = max_y2 - min_y1
     obj_w = max_x2 - min_x1
-    base_size = max(obj_h, obj_w) + 2 * padding
 
     cy = (min_y1 + max_y2) // 2
     cx = (min_x1 + max_x2) // 2
 
-    # Try increasing sizes until no truncation
-    for extra in range(0, max_expand + 1, 10):
-        tile_size = base_size + extra
-        half = tile_size // 2
+    pad_start = max(int(padding), int(min_padding))
+    pad_end = max(int(min_padding), 0)
+    step = max(int(padding_step), 1)
 
-        y1 = cy - half
-        x1 = cx - half
-        y2 = y1 + tile_size
-        x2 = x1 + tile_size
+    for pad in range(pad_start, pad_end - 1, -step):
+        base_size = max(obj_h, obj_w) + 2 * pad
 
-        # Clamp to bounds
-        if y1 < 0:
-            y2 -= y1
-            y1 = 0
-        if x1 < 0:
-            x2 -= x1
-            x1 = 0
-        if y2 > h:
-            y1 -= (y2 - h)
-            y2 = h
-        if x2 > w:
-            x1 -= (x2 - w)
-            x2 = w
+        # Try increasing sizes until no truncation
+        for extra in range(0, max_expand + 1, 10):
+            tile_size = base_size + extra
+            half = tile_size // 2
 
-        # Check bounds
-        if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
-            continue
+            y1 = cy - half
+            x1 = cx - half
+            y2 = y1 + tile_size
+            x2 = x1 + tile_size
 
-        # Check no truncation
-        if not _tile_truncates_pathology(y1, x1, y2, x2, labeled):
-            return (y1, x1, y2, x2)
+            # Clamp to bounds
+            if y1 < 0:
+                y2 -= y1
+                y1 = 0
+            if x1 < 0:
+                x2 -= x1
+                x1 = 0
+            if y2 > h:
+                y1 -= (y2 - h)
+                y2 = h
+            if x2 > w:
+                x1 -= (x2 - w)
+                x2 = w
+
+            # Check bounds
+            if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+                continue
+
+            # Check no truncation
+            if not _tile_truncates_pathology(y1, x1, y2, x2, labeled):
+                return (y1, x1, y2, x2)
 
     return None
 
@@ -664,7 +689,17 @@ def _compute_shift_away_from_intruders(intruders, step=10):
     return dy, dx
 
 
-def _try_fit_single_pathology_isolated(obj, all_pathology_objects, labeled, h, w, padding=30, max_iterations=20):
+def _try_fit_single_pathology_isolated(
+    obj,
+    all_pathology_objects,
+    labeled,
+    h,
+    w,
+    padding=30,
+    max_iterations=40,
+    min_padding=10,
+    padding_step=5,
+):
     """
     Try to fit a single pathology into a tile WITHOUT other pathologies.
 
@@ -676,78 +711,83 @@ def _try_fit_single_pathology_isolated(obj, all_pathology_objects, labeled, h, w
     """
     obj_h = obj['y2'] - obj['y1']
     obj_w = obj['x2'] - obj['x1']
-    tile_size = max(obj_h, obj_w) + 2 * padding
-
     cy, cx = obj['cy'], obj['cx']
-    half = tile_size // 2
 
-    # Start with centered tile
-    total_dy, total_dx = 0, 0
+    pad_start = max(int(padding), int(min_padding))
+    pad_end = max(int(min_padding), 0)
+    step_pad = max(int(padding_step), 1)
 
-    for iteration in range(max_iterations):
-        y1 = cy - half + total_dy
-        x1 = cx - half + total_dx
-        y2 = y1 + tile_size
-        x2 = x1 + tile_size
+    for pad in range(pad_start, pad_end - 1, -step_pad):
+        tile_size = max(obj_h, obj_w) + 2 * pad
+        half = tile_size // 2
 
-        # Clamp to bounds
-        if y1 < 0:
-            y2 -= y1
-            y1 = 0
-        if x1 < 0:
-            x2 -= x1
-            x1 = 0
-        if y2 > h:
-            y1 -= (y2 - h)
-            y2 = h
-        if x2 > w:
-            x1 -= (x2 - w)
-            x2 = w
+        # Start with centered tile
+        total_dy, total_dx = 0, 0
 
-        # Check bounds
-        if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
-            break
+        for iteration in range(max_iterations):
+            y1 = cy - half + total_dy
+            x1 = cx - half + total_dx
+            y2 = y1 + tile_size
+            x2 = x1 + tile_size
 
-        # Check target object is fully inside
-        if not (obj['y1'] >= y1 and obj['y2'] <= y2 and
-                obj['x1'] >= x1 and obj['x2'] <= x2):
-            break  # Shifted too far, target object out of frame
+            # Clamp to bounds
+            if y1 < 0:
+                y2 -= y1
+                y1 = 0
+            if x1 < 0:
+                x2 -= x1
+                x1 = 0
+            if y2 > h:
+                y1 -= (y2 - h)
+                y2 = h
+            if x2 > w:
+                x1 -= (x2 - w)
+                x2 = w
 
-        # Check our object doesn't touch edges
-        tile_labeled = labeled[y1:y2, x1:x2]
-        if np.any(tile_labeled == obj['id']):
-            our_pixels = (tile_labeled == obj['id'])
-            if (np.any(our_pixels[:3, :]) or np.any(our_pixels[-3:, :]) or
-                np.any(our_pixels[:, :3]) or np.any(our_pixels[:, -3:])):
-                break  # Our object would be truncated
+            # Check bounds
+            if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+                break
 
-        # Find intruding pathologies
-        intruders = _find_intruding_pathologies(y1, x1, y2, x2, obj, all_pathology_objects)
+            # Check target object is fully inside
+            if not (obj['y1'] >= y1 and obj['y2'] <= y2 and
+                    obj['x1'] >= x1 and obj['x2'] <= x2):
+                break  # Shifted too far, target object out of frame
 
-        if not intruders:
-            # Success! No other pathologies in tile
-            return (y1, x1, y2, x2)
+            # Check our object doesn't touch edges
+            tile_labeled = labeled[y1:y2, x1:x2]
+            if np.any(tile_labeled == obj['id']):
+                our_pixels = (tile_labeled == obj['id'])
+                if (np.any(our_pixels[:3, :]) or np.any(our_pixels[-3:, :]) or
+                    np.any(our_pixels[:, :3]) or np.any(our_pixels[:, -3:])):
+                    break  # Our object would be truncated
 
-        # Calculate shift based on where intruders are
-        # Shift step proportional to intruder size for efficiency
-        max_intruder_size = max(
-            max(intr['y2'] - intr['y1'], intr['x2'] - intr['x1'])
-            for intr, _ in intruders
-        )
-        step = max(10, min(max_intruder_size // 2, 30))
+            # Find intruding pathologies
+            intruders = _find_intruding_pathologies(y1, x1, y2, x2, obj, all_pathology_objects)
 
-        shift_dy, shift_dx = _compute_shift_away_from_intruders(intruders, step)
+            if not intruders:
+                # Success! No other pathologies in tile
+                return (y1, x1, y2, x2)
 
-        if shift_dy == 0 and shift_dx == 0:
-            break  # No clear direction to shift
+            # Calculate shift based on where intruders are
+            # Shift step proportional to intruder size for efficiency
+            max_intruder_size = max(
+                max(intr['y2'] - intr['y1'], intr['x2'] - intr['x1'])
+                for intr, _ in intruders
+            )
+            step = max(10, min(max_intruder_size // 2, 30))
 
-        total_dy += shift_dy
-        total_dx += shift_dx
+            shift_dy, shift_dx = _compute_shift_away_from_intruders(intruders, step)
 
-        # Safety: don't shift too far from original center
-        max_total_shift = tile_size // 2
-        if abs(total_dy) > max_total_shift or abs(total_dx) > max_total_shift:
-            break
+            if shift_dy == 0 and shift_dx == 0:
+                break  # No clear direction to shift
+
+            total_dy += shift_dy
+            total_dx += shift_dx
+
+            # Safety: don't shift too far from original center
+            max_total_shift = tile_size
+            if abs(total_dy) > max_total_shift or abs(total_dx) > max_total_shift:
+                break
 
     return None
 

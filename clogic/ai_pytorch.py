@@ -222,6 +222,8 @@ class CytologyDataset(Dataset):
         masks_path: str,
         transform=None,
         transform_aggressive=None,
+        sanity_check: bool = True,
+        sanity_check_max_masks: int = 200,
     ):
         """
         Initialize the dataset.
@@ -244,6 +246,15 @@ class CytologyDataset(Dataset):
         # Ensure images and masks are aligned
         self.images.sort()
         self.masks.sort()
+
+        if sanity_check:
+            _sanity_check_dataset_pairs(
+                images_path,
+                masks_path,
+                self.images,
+                self.masks,
+                max_masks=sanity_check_max_masks,
+            )
         
     def __len__(self):
         return len(self.images)
@@ -341,6 +352,58 @@ class CytologyDataset(Dataset):
         labels[mask == 127] = 1
         labels[mask == 255] = 2
         return labels
+
+
+def _sanity_check_dataset_pairs(
+    images_path: str,
+    masks_path: str,
+    images: list[str],
+    masks: list[str],
+    *,
+    max_masks: int = 200,
+) -> None:
+    """Validate that image/mask pairs align and masks have expected values."""
+    if not images:
+        raise ValueError(f'No .bmp images found in: {images_path}')
+    if not masks:
+        raise ValueError(f'No .bmp masks found in: {masks_path}')
+
+    image_stems = [os.path.splitext(name)[0] for name in images]
+    mask_stems = [os.path.splitext(name)[0] for name in masks]
+
+    if len(image_stems) != len(mask_stems):
+        raise ValueError(
+            f'Mismatched dataset sizes: images={len(image_stems)}, masks={len(mask_stems)}. '
+            f'Check {images_path} and {masks_path} for extra/missing files.'
+        )
+
+    if image_stems != mask_stems:
+        image_set = set(image_stems)
+        mask_set = set(mask_stems)
+        missing_masks = sorted(image_set - mask_set)[:10]
+        missing_images = sorted(mask_set - image_set)[:10]
+        raise ValueError(
+            'Image/mask filename mismatch after sorting. '
+            f'Missing masks (examples): {missing_masks}. '
+            f'Missing images (examples): {missing_images}.'
+        )
+
+    # Spot-check mask values to ensure they are visible-coded (0, 127, 255).
+    allowed_values = {0, 127, 255}
+    to_check = masks if len(masks) <= max_masks else random.sample(masks, max_masks)
+    for name in to_check:
+        mask_path = os.path.join(masks_path, name)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(f'Failed to read mask: {mask_path}')
+        unique_vals = set(np.unique(mask).tolist())
+        unexpected = sorted(v for v in unique_vals if v not in allowed_values)
+        if unexpected:
+            raise ValueError(
+                f'Unexpected mask values in {mask_path}: {unexpected}. '
+                'Expected only {0, 127, 255}. '
+                'This usually means masks are RGB/debug or already label-indexed.'
+            )
 
 
 def _build_gauss_noise():
