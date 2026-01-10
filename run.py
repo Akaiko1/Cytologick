@@ -1,5 +1,9 @@
 import sys
 
+# IMPORTANT: On Windows, PyTorch must be imported BEFORE PyQt5
+# due to DLL loading order conflicts (fbgemm.dll / c10.dll)
+import torch  # noqa: F401 - must be first
+
 from PyQt5.QtWidgets import QApplication, QStyleFactory
 
 from config import load_config
