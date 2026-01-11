@@ -509,9 +509,15 @@ def _has_truncated_objects(tile_coords, labeled, margin=3):
     return False
 
 
-def _compute_tile_for_objects(objects, h, w, padding=30):
+def _compute_tile_for_objects(objects, h, w, padding=30, min_tile_size=0):
     """
     Compute square tile coordinates that fits all objects with padding.
+
+    Args:
+        objects: list of object dicts with y1, y2, x1, x2 keys
+        h, w: image dimensions
+        padding: pixels to add around objects
+        min_tile_size: minimum tile size (0 = no minimum)
 
     Returns:
         tuple: (y1, x1, y2, x2) or None if objects don't fit
@@ -528,6 +534,8 @@ def _compute_tile_for_objects(objects, h, w, padding=30):
     obj_h = max_y2 - min_y1
     obj_w = max_x2 - min_x1
     tile_size = max(obj_h, obj_w) + 2 * padding
+    if min_tile_size > 0:
+        tile_size = max(tile_size, min_tile_size)
 
     # Center tile on combined bbox center
     cy = (min_y1 + max_y2) // 2
@@ -620,6 +628,7 @@ def _try_fit_tile_without_truncation(
     min_padding=10,
     padding_step=5,
     edge_margin=3,
+    min_tile_size=60,
 ):
     """
     Try to fit objects into a tile without truncating any pathology.
@@ -647,6 +656,8 @@ def _try_fit_tile_without_truncation(
 
     for pad in range(pad_start, pad_end - 1, -step):
         base_size = max(obj_h, obj_w) + 2 * pad
+        if min_tile_size > 0:
+            base_size = max(base_size, min_tile_size)
 
         # Try increasing sizes until no truncation
         for extra in range(0, max_expand + 1, 10):
@@ -775,6 +786,7 @@ def _try_fit_single_pathology_heuristic(
     max_iterations=40,
     min_padding=10,
     padding_step=5,
+    min_tile_size=60,
 ):
     """
     Heuristic: shift a tile around the target pathology until no pathology
@@ -790,6 +802,8 @@ def _try_fit_single_pathology_heuristic(
 
     for pad in range(pad_start, pad_end - 1, -step_pad):
         tile_size = max(obj_h, obj_w) + 2 * pad
+        if min_tile_size > 0:
+            tile_size = max(tile_size, min_tile_size)
         half = tile_size // 2
 
         # Start with centered tile
@@ -866,6 +880,7 @@ def _try_fit_single_pathology_ring(
     edge_margin=3,
     min_padding=10,
     padding_step=5,
+    min_tile_size=60,
 ):
     """
     Ring-sum search: exhaustively find a tile where no pathology pixels
@@ -883,6 +898,8 @@ def _try_fit_single_pathology_ring(
 
     for pad in range(pad_start, pad_end - 1, -step_pad):
         tile_size = max(obj_h, obj_w) + 2 * pad
+        if min_tile_size > 0:
+            tile_size = max(tile_size, min_tile_size)
         if tile_size <= 0:
             continue
         if tile_size > h or tile_size > w:
@@ -920,7 +937,7 @@ def _try_fit_single_pathology_ring(
     return None
 
 
-def _try_shift_tile_away_from_pathology(obj, masks, h, w, padding=30, max_iterations=15):
+def _try_shift_tile_away_from_pathology(obj, masks, h, w, padding=30, max_iterations=15, min_tile_size=100):
     """
     Try to shift a normal cell tile to avoid pathology.
 
@@ -933,6 +950,8 @@ def _try_shift_tile_away_from_pathology(obj, masks, h, w, padding=30, max_iterat
     obj_h = obj['y2'] - obj['y1']
     obj_w = obj['x2'] - obj['x1']
     tile_size = max(obj_h, obj_w) + 2 * padding
+    if min_tile_size > 0:
+        tile_size = max(tile_size, min_tile_size)
 
     cy, cx = obj['cy'], obj['cx']
     half = tile_size // 2
@@ -1023,6 +1042,7 @@ def _try_fit_single_pathology_force(
     min_padding=10,
     padding_step=5,
     coarse_step=8,
+    min_tile_size=60,
 ):
     obj_h = obj['y2'] - obj['y1']
     obj_w = obj['x2'] - obj['x1']
@@ -1044,6 +1064,8 @@ def _try_fit_single_pathology_force(
 
     for pad in range(pad_start, pad_end - 1, -step_pad):
         tile_size = max(obj_h, obj_w) + 2 * pad
+        if min_tile_size > 0:
+            tile_size = max(tile_size, min_tile_size)
         if tile_size <= 0 or tile_size > h or tile_size > w:
             continue
 
@@ -1187,10 +1209,12 @@ def _apply_intruder_artifact(roi, mask, intruder_mask):
     mask[intruder_mask] = MASK_VALUE_BACKGROUND
 
 
-def _center_tile_for_object(obj, padding):
+def _center_tile_for_object(obj, padding, min_tile_size=60):
     obj_h = obj['y2'] - obj['y1']
     obj_w = obj['x2'] - obj['x1']
     tile_size = max(obj_h, obj_w) + 2 * int(padding)
+    if min_tile_size > 0:
+        tile_size = max(tile_size, min_tile_size)
     half = tile_size // 2
     cy, cx = int(obj['cy']), int(obj['cx'])
     y1 = cy - half
@@ -1712,9 +1736,16 @@ def __crop_dataset_centered(
     else:
         target_normals = max(base_normals, 5)
 
+    min_normal_tile_size = 100
+
     for obj in normal_objects:
         if normal_count >= target_normals:
             stats.norm_skipped_limit += 1
+            continue
+
+        # Skip small normal cells
+        obj_size = max(obj['y2'] - obj['y1'], obj['x2'] - obj['x1'])
+        if obj_size + 2 * padding < min_normal_tile_size:
             continue
 
         tile = _compute_tile_for_objects([obj], h, w, padding)
