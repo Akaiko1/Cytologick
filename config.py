@@ -142,6 +142,9 @@ class Config:
     DATASET_DEBUG: bool = False
     # Pad each rect with a white border (pixels) before cropping.
     RECT_BORDER_PADDING: int = 0
+    # Drop tiny pathology mask fragments (pixels) after rasterization.
+    # Set to 0 to disable.
+    MIN_PATHOLOGY_PIXELS: int = 10
     # Force extraction if individual crop fails by masking intruders.
     FORCE_EXTRACTION: bool = True
     # Normal tile limit for centered-crop:
@@ -273,6 +276,8 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.DATASET_DEBUG = _to_bool(dataset['debug'])
     if 'rect_border_padding' in dataset:
         cfg.RECT_BORDER_PADDING = _to_int(dataset['rect_border_padding'])
+    if 'min_pathology_pixels' in dataset:
+        cfg.MIN_PATHOLOGY_PIXELS = _to_int(dataset['min_pathology_pixels'])
     if 'force_extraction' in dataset:
         cfg.FORCE_EXTRACTION = _to_bool(dataset['force_extraction'])
     if 'normal_tiles_limit' in dataset:
@@ -379,6 +384,7 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'centered_crop_edge_margin': 'CENTERED_CROP_EDGE_MARGIN',
             'debug': 'DATASET_DEBUG',
             'rect_border_padding': 'RECT_BORDER_PADDING',
+            'min_pathology_pixels': 'MIN_PATHOLOGY_PIXELS',
             'force_extraction': 'FORCE_EXTRACTION',
             'normal_tiles_limit': 'NORMAL_TILES_LIMIT_MODE',
             'normal_tiles_multiplier': 'NORMAL_TILES_MULTIPLIER',

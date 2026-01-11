@@ -99,6 +99,8 @@ dataset:
   debug: false
   # Pad each rect with a white border (pixels) before cropping.
   rect_border_padding: 25
+  # Drop tiny pathology mask fragments (pixels) after rasterization.
+  min_pathology_pixels: 10
   # If individual crop fails, force extraction by masking intruders.
   force_extraction: true
   # Centered-crop algorithm:

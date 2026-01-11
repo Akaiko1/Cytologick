@@ -173,6 +173,7 @@ def extract_all_slides(
     dataset_debug = bool(getattr(cfg, 'DATASET_DEBUG', False))
     rect_border_padding = int(getattr(cfg, 'RECT_BORDER_PADDING', 0))
     force_extraction = bool(getattr(cfg, 'FORCE_EXTRACTION', True))
+    min_pathology_pixels = int(getattr(cfg, 'MIN_PATHOLOGY_PIXELS', 0))
     debug_root = os.path.abspath('debug_info') if dataset_debug else None
     stats_root = os.path.abspath('debug_info' if dataset_debug else '.')
     algo_label = centered_algo.strip().lower()
@@ -239,6 +240,7 @@ def extract_all_slides(
                 debug_root=debug_root,
                 rect_border_padding=rect_border_padding,
                 force_extraction=force_extraction,
+                min_pathology_pixels=min_pathology_pixels,
             )
 
     if centered_crop:
@@ -270,6 +272,7 @@ def __extract_rect_regions(
     debug_root: str | None = None,
     rect_border_padding: int = 0,
     force_extraction: bool = True,
+    min_pathology_pixels: int = 0,
 ):
     if hasattr(os, 'add_dll_directory'):
         with os.add_dll_directory(openslide_path):
@@ -332,6 +335,13 @@ def __extract_rect_regions(
             value=border_value,
         )
         masks = np.pad(masks, ((pad, pad), (pad, pad)), mode='constant', constant_values=0)
+    if min_pathology_pixels and min_pathology_pixels > 0:
+        _remove_tiny_pathology_components(masks, min_pathology_pixels)
+        pathology_records = _filter_pathology_records_by_mask(
+            pathology_records,
+            masks,
+            min_pathology_pixels,
+        )
     if centered_crop:
         # Use pathology-centered cropping (avoids truncating pathologies)
         # Tile size is determined by object bbox + padding, not by zoom_levels
@@ -401,6 +411,43 @@ def __draw_masks(classes, regions, masks):
         name = name.strip('?) ')
         # Abnormal cells -> class 2 (saved as 255 for visibility)
         cv2.drawContours(masks, [points], 0, MASK_VALUE_ABNORMAL, -1)
+
+
+def _remove_tiny_pathology_components(masks, min_pixels):
+    if min_pixels is None or min_pixels <= 0:
+        return 0
+    from scipy import ndimage
+
+    pathology = (masks == MASK_VALUE_ABNORMAL).astype(np.uint8)
+    labeled, num_objects = ndimage.label(pathology)
+    if num_objects == 0:
+        return 0
+    counts = np.bincount(labeled.ravel())
+    tiny_ids = [idx for idx in range(1, num_objects + 1) if counts[idx] <= min_pixels]
+    if not tiny_ids:
+        return 0
+    tiny_mask = np.isin(labeled, tiny_ids)
+    masks[tiny_mask] = MASK_VALUE_BACKGROUND
+    return len(tiny_ids)
+
+
+def _filter_pathology_records_by_mask(pathology_records, masks, min_pixels):
+    if not pathology_records:
+        return pathology_records
+    if min_pixels is None or min_pixels <= 0:
+        return pathology_records
+    kept = []
+    for rec in pathology_records:
+        y1, x1, y2, x2 = rec.get('bbox', (0, 0, 0, 0))
+        if y2 <= y1 or x2 <= x1:
+            continue
+        sub = masks[y1:y2, x1:x2]
+        if sub.size == 0:
+            continue
+        if int((sub == MASK_VALUE_ABNORMAL).sum()) <= min_pixels:
+            continue
+        kept.append(rec)
+    return kept
 
 
 def _get_pathology_objects(masks):
