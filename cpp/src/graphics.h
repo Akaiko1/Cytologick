@@ -43,6 +43,12 @@ std::pair<cv::Mat, DetectionStats> processDensePathologyMap(
 );
 
 /**
+ * Fast overlay rendering without detection stats (for slider updates)
+ * Skips contour detection and probability calculations
+ */
+cv::Mat renderOverlayFast(const cv::Mat& pathologyMap, float threshold);
+
+/**
  * Find contours in a binary mask
  *
  * @param mask Binary mask (CV_8UC1)
@@ -77,6 +83,34 @@ void drawDetections(
     cv::Mat& overlay,
     const std::vector<Detection>& detections,
     bool showLabels = true
+);
+
+/**
+ * Draw green (normal) detections, excluding areas in excludeMask
+ */
+void drawGreenDetections(
+    cv::Mat& overlay,
+    const std::vector<Detection>& detections,
+    const cv::Mat& excludeMask = cv::Mat()
+);
+
+/**
+ * Draw red/magenta outlines for atypical detections
+ */
+void drawRedOutlines(
+    cv::Mat& overlay,
+    const std::vector<Detection>& detections
+);
+
+/**
+ * Draw detection labels on overlay (called after all fills/masks)
+ *
+ * @param overlay Output RGBA image to draw on
+ * @param detections List of detections with labels to draw
+ */
+void drawDetectionLabels(
+    cv::Mat& overlay,
+    const std::vector<Detection>& detections
 );
 
 /**

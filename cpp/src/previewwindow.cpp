@@ -7,6 +7,7 @@
 #include <QPainter>
 #include <QMessageBox>
 #include <QApplication>
+#include <QtConcurrent>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <iostream>
@@ -23,9 +24,12 @@ PreviewDisplayLabel::PreviewDisplayLabel(QWidget* parent)
 }
 
 void PreviewDisplayLabel::setImages(const QPixmap& original, const QPixmap& overlay) {
+    bool sizeChanged = m_original.isNull() || m_original.size() != original.size();
     m_original = original;
     m_overlay = overlay;
-    resize(original.size());
+    if (sizeChanged) {
+        resize(original.size());
+    }
     update();
 }
 
@@ -85,12 +89,26 @@ void PreviewWindow::setupUi() {
         modelStatus->setStyleSheet("color: #e74c3c;");
     }
 
+    // Inference mode
+    m_directButton = new QRadioButton("Local: Fast", this);
+    m_smoothButton = new QRadioButton("Local: Comprehensive", this);
+    const auto& cfg = m_mainWindow->getConfig();
+    if (cfg.predMode == "smooth") {
+        m_useSmooth = true;
+        m_smoothButton->setChecked(true);
+    } else {
+        m_useSmooth = false;
+        m_directButton->setChecked(true);
+    }
+    connect(m_directButton, &QRadioButton::toggled, this, &PreviewWindow::onModeToggled);
+    connect(m_smoothButton, &QRadioButton::toggled, this, &PreviewWindow::onModeToggled);
+
     // Confidence threshold
     m_confLabel = new QLabel(this);
     updateConfidenceLabel();
 
     m_confSlider = new QSlider(Qt::Horizontal, this);
-    m_confSlider->setMinimum(0);
+    m_confSlider->setMinimum(30);
     m_confSlider->setMaximum(100);
     m_confSlider->setSingleStep(1);
     m_confSlider->setValue(static_cast<int>(m_confThreshold * 100));
@@ -108,6 +126,9 @@ void PreviewWindow::setupUi() {
     // Assemble control panel
     controlLayout->addWidget(modelStatus);
     controlLayout->addSpacing(10);
+    controlLayout->addWidget(m_directButton);
+    controlLayout->addWidget(m_smoothButton);
+    controlLayout->addSpacing(5);
     controlLayout->addWidget(m_confLabel);
     controlLayout->addWidget(m_confSlider);
     controlLayout->addSpacing(10);
@@ -127,6 +148,9 @@ void PreviewWindow::updateConfidenceLabel() {
 void PreviewWindow::onConfidenceChanged(int value) {
     m_confThreshold = static_cast<float>(value) / 100.0f;
     updateConfidenceLabel();
+    if (!m_cachedPathologyMap.empty()) {
+        scheduleRender();
+    }
 }
 
 void PreviewWindow::onAnalyzeClicked() {
@@ -146,7 +170,12 @@ void PreviewWindow::onAnalyzeClicked() {
     std::cout << "Running inference on image: " << m_sourceImage.cols << "x" << m_sourceImage.rows << std::endl;
 
     // Run inference
-    cv::Mat pathologyMap = inference.runInference(m_sourceImage, config);
+    cv::Mat pathologyMap;
+    if (m_useSmooth) {
+        pathologyMap = inference.runInferenceSmooth(m_sourceImage, config);
+    } else {
+        pathologyMap = inference.runInference(m_sourceImage, config);
+    }
 
     if (pathologyMap.empty()) {
         QApplication::restoreOverrideCursor();
@@ -163,14 +192,48 @@ void PreviewWindow::onAnalyzeClicked() {
     std::cout << "Pathology map size: " << pathologyMap.cols << "x" << pathologyMap.rows
               << " channels: " << pathologyMap.channels() << std::endl;
 
-    // Process results into visualization
-    auto [overlay, stats] = processDensePathologyMap(pathologyMap, m_confThreshold);
+    m_cachedPathologyMap = pathologyMap.clone();
+    renderOverlayFromCache(true);
 
-    std::cout << "Detections: " << stats.totalDetections << " (atypical: " << stats.atypicalCells
-              << ", normal: " << stats.normalCells << ")" << std::endl;
+    QApplication::restoreOverrideCursor();
+    m_analyzeButton->setEnabled(true);
+    m_analyzeButton->setText("Analyze");
+}
 
-    // Save overlay for debugging
-    cv::imwrite("gui_map.png", overlay);
+void PreviewWindow::onModeToggled(bool checked) {
+    if (!checked) {
+        return;
+    }
+    m_useSmooth = (sender() == m_smoothButton);
+    m_cachedPathologyMap.release();
+    m_displayLabel->setImages(m_originalImage);
+    m_infoLabel->setText("Analysis\nResults");
+}
+
+void PreviewWindow::renderOverlayFromCache(bool fullAnalysis) {
+    if (m_cachedPathologyMap.empty()) {
+        return;
+    }
+
+    cv::Mat overlay;
+    if (fullAnalysis) {
+        // Full analysis with stats (after Analyze button click)
+        auto [fullOverlay, stats] = processDensePathologyMap(m_cachedPathologyMap, m_confThreshold);
+        overlay = fullOverlay;
+
+        std::cout << "Detections: " << stats.totalDetections << " (atypical: " << stats.atypicalCells
+                  << ", normal: " << stats.normalCells << ")" << std::endl;
+
+        cv::imwrite("gui_map.png", overlay);
+        m_infoLabel->setText(QString::fromStdString(formatDetectionStats(stats)));
+    } else {
+        // Fast rendering for slider updates (no stats recalculation)
+        overlay = renderOverlayFast(m_cachedPathologyMap, m_confThreshold);
+    }
+
+    if (overlay.empty()) {
+        return;
+    }
 
     // Convert overlay to QPixmap
     // OpenCV uses BGRA, Qt expects RGBA for Format_RGBA8888
@@ -183,13 +246,57 @@ void PreviewWindow::onAnalyzeClicked() {
 
     // Update display with overlay
     m_displayLabel->setImages(m_originalImage, overlayPixmap);
+}
 
-    // Update info label
-    m_infoLabel->setText(QString::fromStdString(formatDetectionStats(stats)));
+void PreviewWindow::scheduleRender() {
+    // Store current threshold for async render
+    m_pendingThreshold = m_confThreshold;
 
-    QApplication::restoreOverrideCursor();
-    m_analyzeButton->setEnabled(true);
-    m_analyzeButton->setText("Analyze");
+    // If render is already in progress, mark as pending and return
+    if (m_renderWatcher && m_renderWatcher->isRunning()) {
+        m_renderPending = true;
+        return;
+    }
+
+    // Create watcher if needed
+    if (!m_renderWatcher) {
+        m_renderWatcher = new QFutureWatcher<cv::Mat>(this);
+        connect(m_renderWatcher, &QFutureWatcher<cv::Mat>::finished,
+                this, &PreviewWindow::onRenderFinished);
+    }
+
+    // Capture variables for lambda
+    cv::Mat pathologyMap = m_cachedPathologyMap.clone();
+    float threshold = m_pendingThreshold;
+
+    // Run rendering in background thread
+    QFuture<cv::Mat> future = QtConcurrent::run([pathologyMap, threshold]() {
+        return renderOverlayFast(pathologyMap, threshold);
+    });
+
+    m_renderWatcher->setFuture(future);
+}
+
+void PreviewWindow::onRenderFinished() {
+    cv::Mat overlay = m_renderWatcher->result();
+
+    if (!overlay.empty()) {
+        // Convert overlay to QPixmap
+        cv::Mat rgbaOverlay;
+        cv::cvtColor(overlay, rgbaOverlay, cv::COLOR_BGRA2RGBA);
+
+        QImage overlayImage(rgbaOverlay.data, rgbaOverlay.cols, rgbaOverlay.rows,
+                            rgbaOverlay.step, QImage::Format_RGBA8888);
+        QPixmap overlayPixmap = QPixmap::fromImage(overlayImage.copy());
+
+        m_displayLabel->setImages(m_originalImage, overlayPixmap);
+    }
+
+    // If there's a pending render with a different threshold, start it
+    if (m_renderPending) {
+        m_renderPending = false;
+        scheduleRender();
+    }
 }
 
 } // namespace cytologick

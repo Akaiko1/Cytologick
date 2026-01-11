@@ -8,7 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Find required packages
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Concurrent)
 find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
@@ -103,6 +103,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    Qt6::Concurrent
     ${OpenCV_LIBS}
     onnxruntime::onnxruntime
     ${YAML_CPP_TARGET}
@@ -121,6 +122,7 @@ if(WIN32)
             $<TARGET_FILE:Qt6::Core>
             $<TARGET_FILE:Qt6::Gui>
             $<TARGET_FILE:Qt6::Widgets>
+            $<TARGET_FILE:Qt6::Concurrent>
             $<TARGET_FILE_DIR:${PROJECT_NAME}>
     )
 endif()

@@ -19,7 +19,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QBrush, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QPushButton,
@@ -41,6 +41,27 @@ def _import_openslide(cfg: Config):
 
     import openslide  # type: ignore
     return openslide
+
+
+# =============================================================================
+# Async Overlay Rendering
+# =============================================================================
+
+class RenderWorker(QThread):
+    """Background worker for fast overlay rendering."""
+    finished = pyqtSignal(object)  # (markup,)
+
+    def __init__(self, pathology_map, threshold):
+        super().__init__()
+        self.pathology_map = pathology_map
+        self.threshold = threshold
+
+    def run(self):
+        markup = drawing.render_overlay_fast(
+            self.pathology_map,
+            threshold=self.threshold
+        )
+        self.finished.emit(markup)
 
 
 # =============================================================================
@@ -78,11 +99,17 @@ class Preview(QWidget):
         self.parent = parent
         self.image = pixmap
         self.map = None  # Overlay map (set after analysis)
+        self.cached_pathology_map = None
         self.conf_threshold = 0.6  # Default 60% confidence
+
+        # Async rendering state
+        self._render_worker = None
+        self._render_pending = False
+        self._pending_threshold = 0.0
         
         self.setWindowTitle("Preview")
         self._setup_layout()
-        self.setMaximumSize(2000, 1200)
+        self.setMaximumSize(1600, 900)
     
     def _setup_layout(self):
         """Configure the preview window layout with controls."""
@@ -115,7 +142,7 @@ class Preview(QWidget):
         self.conf_label = QLabel()
         self._update_conf_label()
         self.slider = QSlider(Qt.Horizontal)
-        self.slider.setMinimum(0)
+        self.slider.setMinimum(30)
         self.slider.setMaximum(100)
         self.slider.setSingleStep(1)
         self.slider.setValue(int(self.conf_threshold * 100))
@@ -177,11 +204,56 @@ class Preview(QWidget):
         """Handle confidence slider value change."""
         self.conf_threshold = float(value) / 100.0
         self._update_conf_label()
+        if self.cached_pathology_map is not None:
+            self._schedule_render()
     
     def _on_mode_selected(self):
         """Handle inference mode radio button selection."""
         radioButton = self.sender()
         self.parent.unet_pred_mode = radioButton.mode
+        # Invalidate cached predictions when mode changes
+        self.cached_pathology_map = None
+        self.map = None
+        self.display.repaint()
+
+    def _refresh_overlay_from_cache(self):
+        """Re-render overlay from cached predictions without re-running inference."""
+        markup, stats = inference_utils.process_pathology_map(
+            self.cached_pathology_map,
+            threshold=self.conf_threshold
+        )
+        cv2.imwrite('gui_map.png', markup)
+        self.map = QPixmap('gui_map.png')
+        self.info.setText(inference_utils.format_detection_stats(stats))
+        self.display.repaint()
+
+    def _schedule_render(self):
+        """Schedule async overlay rendering."""
+        self._pending_threshold = self.conf_threshold
+
+        # If render is already in progress, mark as pending and return
+        if self._render_worker is not None and self._render_worker.isRunning():
+            self._render_pending = True
+            return
+
+        # Start new render
+        self._render_worker = RenderWorker(
+            self.cached_pathology_map.copy(),
+            self._pending_threshold
+        )
+        self._render_worker.finished.connect(self._on_render_finished)
+        self._render_worker.start()
+
+    def _on_render_finished(self, markup):
+        """Handle async render completion."""
+        cv2.imwrite('gui_map.png', markup)
+        self.map = QPixmap('gui_map.png')
+        self.display.repaint()
+
+        # If there's a pending render with a different threshold, start it
+        if self._render_pending:
+            self._render_pending = False
+            self._schedule_render()
     
     def _run_analysis(self):
         """Execute model inference on the preview image."""
@@ -197,18 +269,10 @@ class Preview(QWidget):
             classes=int(self.parent.cfg.CLASSES),
             shapes=tuple(self.parent.cfg.IMAGE_SHAPE),
         )
+        self.cached_pathology_map = pathology_map
         
         # Process results into visualization
-        markup, stats = inference_utils.process_pathology_map(
-            pathology_map, 
-            threshold=self.conf_threshold
-        )
-        cv2.imwrite('gui_map.png', markup)
-        
-        # Update display
-        self.map = QPixmap('gui_map.png')
-        self.info.setText(inference_utils.format_detection_stats(stats))
-        self.display.repaint()
+        self._refresh_overlay_from_cache()
     
     def _paint_image(self, event):
         """Custom paint event to draw image with overlay."""

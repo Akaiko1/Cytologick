@@ -2,9 +2,12 @@
 
 #include <QDialog>
 #include <QLabel>
+#include <QRadioButton>
 #include <QSlider>
 #include <QPushButton>
 #include <QPixmap>
+#include <QFuture>
+#include <QFutureWatcher>
 #include <opencv2/core.hpp>
 
 namespace cytologick {
@@ -50,10 +53,14 @@ public:
 private slots:
     void onConfidenceChanged(int value);
     void onAnalyzeClicked();
+    void onModeToggled(bool checked);
+    void onRenderFinished();
 
 private:
     void setupUi();
     void updateConfidenceLabel();
+    void renderOverlayFromCache(bool fullAnalysis = false);
+    void scheduleRender();
 
     MainWindow* m_mainWindow;
 
@@ -61,15 +68,24 @@ private:
     PreviewDisplayLabel* m_displayLabel = nullptr;
     QLabel* m_infoLabel = nullptr;
     QLabel* m_confLabel = nullptr;
+    QRadioButton* m_directButton = nullptr;
+    QRadioButton* m_smoothButton = nullptr;
     QSlider* m_confSlider = nullptr;
     QPushButton* m_analyzeButton = nullptr;
 
     // Images
     QPixmap m_originalImage;
     cv::Mat m_sourceImage;
+    cv::Mat m_cachedPathologyMap;
+
+    // Async rendering
+    QFutureWatcher<cv::Mat>* m_renderWatcher = nullptr;
+    float m_pendingThreshold = 0.0f;
+    bool m_renderPending = false;
 
     // Settings
     float m_confThreshold = 0.6f;
+    bool m_useSmooth = false;
 };
 
 } // namespace cytologick

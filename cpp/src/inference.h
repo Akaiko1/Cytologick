@@ -44,6 +44,14 @@ public:
     cv::Mat runInference(const cv::Mat& image, const Config& config);
 
     /**
+     * Run inference using smooth windowing (overlapping tiles + spline blending).
+     * @param image Input RGB image (any size)
+     * @param config Configuration with tile size, classes, etc.
+     * @return Probability map (H x W x Classes) with softmax applied
+     */
+    cv::Mat runInferenceSmooth(const cv::Mat& image, const Config& config);
+
+    /**
      * Get number of output classes
      */
     int getNumClasses() const { return m_numClasses; }
@@ -117,6 +125,9 @@ private:
         const cv::Mat& image,
         const std::pair<int, int>& tileSize
     );
+
+    static cv::Mat padImageReflect(const cv::Mat& image, const std::pair<int, int>& tileSize, int subdivisions);
+    static cv::Mat createSplineWindow2D(int height, int width, int power = 2);
 };
 
 } // namespace cytologick

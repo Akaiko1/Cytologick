@@ -6,6 +6,63 @@
 
 namespace cytologick {
 
+namespace {
+std::vector<float> triangularWindow1D(int size) {
+    std::vector<float> w(size, 0.0f);
+    if (size <= 1) {
+        if (size == 1) {
+            w[0] = 1.0f;
+        }
+        return w;
+    }
+    const float center = (static_cast<float>(size) - 1.0f) / 2.0f;
+    const float denom = (static_cast<float>(size) + 1.0f) / 2.0f;
+    for (int i = 0; i < size; ++i) {
+        float val = 1.0f - std::abs((static_cast<float>(i) - center) / denom);
+        w[i] = std::max(0.0f, val);
+    }
+    return w;
+}
+
+std::vector<float> splineWindow1D(int size, int power) {
+    std::vector<float> wind(size, 0.0f);
+    if (size <= 0) {
+        return wind;
+    }
+    int intersection = size / 4;
+    auto tri = triangularWindow1D(size);
+
+    std::vector<float> wind_outer(size, 0.0f);
+    std::vector<float> wind_inner(size, 0.0f);
+
+    for (int i = 0; i < size; ++i) {
+        float outer = std::pow(std::abs(2.0f * tri[i]), power) / 2.0f;
+        float inner = 1.0f - (std::pow(std::abs(2.0f * (tri[i] - 1.0f)), power) / 2.0f);
+        wind_outer[i] = outer;
+        wind_inner[i] = inner;
+    }
+
+    for (int i = intersection; i < size - intersection; ++i) {
+        wind_outer[i] = 0.0f;
+    }
+    for (int i = 0; i < intersection; ++i) {
+        wind_inner[i] = 0.0f;
+        wind_inner[size - 1 - i] = 0.0f;
+    }
+
+    float sum = 0.0f;
+    for (int i = 0; i < size; ++i) {
+        wind[i] = wind_inner[i] + wind_outer[i];
+        sum += wind[i];
+    }
+    float mean = (sum == 0.0f) ? 1.0f : (sum / static_cast<float>(size));
+    for (int i = 0; i < size; ++i) {
+        wind[i] /= mean;
+    }
+    return wind;
+}
+} // namespace
+
 InferenceEngine::InferenceEngine() {
     m_env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "Cytologick");
     m_memoryInfo = std::make_unique<Ort::MemoryInfo>(
@@ -243,6 +300,35 @@ std::vector<std::pair<cv::Mat, cv::Point>> InferenceEngine::extractTiles(
     return tiles;
 }
 
+cv::Mat InferenceEngine::padImageReflect(const cv::Mat& image, const std::pair<int, int>& tileSize, int subdivisions) {
+    if (subdivisions <= 0) {
+        return image.clone();
+    }
+
+    int augH = static_cast<int>(std::round(tileSize.first * (1.0 - 1.0 / subdivisions)));
+    int augW = static_cast<int>(std::round(tileSize.second * (1.0 - 1.0 / subdivisions)));
+    if (augH <= 0 && augW <= 0) {
+        return image.clone();
+    }
+
+    cv::Mat padded;
+    cv::copyMakeBorder(image, padded, augH, augH, augW, augW, cv::BORDER_REFLECT_101);
+    return padded;
+}
+
+cv::Mat InferenceEngine::createSplineWindow2D(int height, int width, int power) {
+    auto windH = splineWindow1D(height, power);
+    auto windW = splineWindow1D(width, power);
+    cv::Mat window(height, width, CV_32F);
+    for (int y = 0; y < height; ++y) {
+        float* row = window.ptr<float>(y);
+        for (int x = 0; x < width; ++x) {
+            row[x] = windH[y] * windW[x];
+        }
+    }
+    return window;
+}
+
 cv::Mat InferenceEngine::runInference(const cv::Mat& image, const Config& config) {
     if (!m_session) {
         m_lastError = "No model loaded";
@@ -341,6 +427,150 @@ cv::Mat InferenceEngine::runInference(const cv::Mat& image, const Config& config
     // Crop to original size
     cv::Rect originalSize(0, 0, image.cols, image.rows);
     return output(originalSize).clone();
+}
+
+cv::Mat InferenceEngine::runInferenceSmooth(const cv::Mat& image, const Config& config) {
+    if (!m_session) {
+        m_lastError = "No model loaded";
+        return cv::Mat();
+    }
+
+    if (image.empty()) {
+        m_lastError = "Empty input image";
+        return cv::Mat();
+    }
+
+    // Ensure RGB format
+    cv::Mat rgb;
+    if (image.channels() == 4) {
+        cv::cvtColor(image, rgb, cv::COLOR_RGBA2RGB);
+    } else if (image.channels() == 1) {
+        cv::cvtColor(image, rgb, cv::COLOR_GRAY2RGB);
+    } else if (image.channels() == 3) {
+        rgb = image.clone();
+    } else {
+        m_lastError = "Unsupported image format";
+        return cv::Mat();
+    }
+
+    const int subdivisions = 2;
+    const int tileH = m_inputShape.first;
+    const int tileW = m_inputShape.second;
+    if (tileH <= 0 || tileW <= 0) {
+        m_lastError = "Invalid model input shape";
+        return cv::Mat();
+    }
+
+    const int stepH = tileH / subdivisions;
+    const int stepW = tileW / subdivisions;
+    if (stepH <= 0 || stepW <= 0) {
+        m_lastError = "Invalid smooth tiling step";
+        return cv::Mat();
+    }
+
+    // Pad image with reflection to reduce edge artifacts
+    cv::Mat padded = padImageReflect(rgb, m_inputShape, subdivisions);
+
+    // Precompute spline window
+    cv::Mat window = createSplineWindow2D(tileH, tileW, 2);
+
+    // Prepare accumulation buffers
+    cv::Mat accum = cv::Mat::zeros(padded.rows, padded.cols, CV_32FC(m_numClasses));
+    cv::Mat weightSum = cv::Mat::zeros(padded.rows, padded.cols, CV_32F);
+
+    // Collect tile positions
+    std::vector<cv::Point> positions;
+    positions.reserve(((padded.rows - tileH) / stepH + 1) * ((padded.cols - tileW) / stepW + 1));
+    for (int y = 0; y <= padded.rows - tileH; y += stepH) {
+        for (int x = 0; x <= padded.cols - tileW; x += stepW) {
+            positions.emplace_back(x, y);
+        }
+    }
+
+    int numTiles = static_cast<int>(positions.size());
+    int batchSize = std::max(1, config.batchSize);
+    int tileSize = 3 * tileH * tileW;
+    int outputTileSize = m_numClasses * tileH * tileW;
+
+    for (int start = 0; start < numTiles; start += batchSize) {
+        int end = std::min(start + batchSize, numTiles);
+        int currentBatch = end - start;
+
+        std::vector<float> batchData;
+        batchData.reserve(currentBatch * tileSize);
+
+        for (int i = start; i < end; ++i) {
+            cv::Point pos = positions[i];
+            cv::Rect roi(pos.x, pos.y, tileW, tileH);
+            cv::Mat tile = padded(roi);
+            auto tileData = preprocessTile(tile);
+            batchData.insert(batchData.end(), tileData.begin(), tileData.end());
+        }
+
+        auto batchOutput = runBatch(batchData, currentBatch);
+        if (batchOutput.empty()) {
+            return cv::Mat();
+        }
+
+        for (int i = 0; i < currentBatch; ++i) {
+            cv::Point pos = positions[start + i];
+
+            for (int h = 0; h < tileH; ++h) {
+                const float* winRow = window.ptr<float>(h);
+                float* weightRow = weightSum.ptr<float>(pos.y + h);
+                float* accumRow = accum.ptr<float>(pos.y + h);
+
+                for (int w = 0; w < tileW; ++w) {
+                    float weight = winRow[w];
+                    int outBase = (pos.x + w) * m_numClasses;
+                    weightRow[pos.x + w] += weight;
+
+                    for (int c = 0; c < m_numClasses; ++c) {
+                        int srcIdx = i * outputTileSize + c * tileH * tileW + h * tileW + w;
+                        accumRow[outBase + c] += batchOutput[srcIdx] * weight;
+                    }
+                }
+            }
+        }
+    }
+
+    // Normalize by accumulated weights
+    for (int y = 0; y < accum.rows; ++y) {
+        float* weightRow = weightSum.ptr<float>(y);
+        float* accumRow = accum.ptr<float>(y);
+        for (int x = 0; x < accum.cols; ++x) {
+            float w = weightRow[x];
+            if (w <= 0.0f) {
+                continue;
+            }
+            int base = x * m_numClasses;
+            for (int c = 0; c < m_numClasses; ++c) {
+                accumRow[base + c] /= w;
+            }
+        }
+    }
+
+    // Unpad and crop to original size
+    int augH = static_cast<int>(std::round(tileH * (1.0 - 1.0 / subdivisions)));
+    int augW = static_cast<int>(std::round(tileW * (1.0 - 1.0 / subdivisions)));
+    int roiX = std::max(0, augW);
+    int roiY = std::max(0, augH);
+    int roiW = accum.cols - 2 * augW;
+    int roiH = accum.rows - 2 * augH;
+    if (roiW <= 0 || roiH <= 0) {
+        roiX = 0;
+        roiY = 0;
+        roiW = accum.cols;
+        roiH = accum.rows;
+    }
+    cv::Rect roi(roiX, roiY, roiW, roiH);
+    cv::Mat unpadded = accum(roi).clone();
+
+    cv::Rect originalSize(0, 0, image.cols, image.rows);
+    if (unpadded.cols < image.cols || unpadded.rows < image.rows) {
+        return unpadded;
+    }
+    return unpadded(originalSize).clone();
 }
 
 } // namespace cytologick

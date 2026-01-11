@@ -40,16 +40,86 @@ def get_corrected_size(height, width, factor=256):
     return height - crop_h, width - crop_w
 
 
+def render_overlay_fast(pathology_map, threshold: float = 0.5):
+    """Fast overlay rendering without stats calculation (for slider updates)."""
+    if pathology_map.ndim != 3 or pathology_map.shape[2] < 3:
+        return np.zeros((*pathology_map.shape[:2], 4), dtype=np.uint8)
+
+    height, width = pathology_map.shape[:2]
+    overlay = np.zeros((height, width, 4), dtype=np.uint8)
+
+    atypical_prob = pathology_map[..., 2]
+    normal_prob = pathology_map[..., 1]
+
+    # class2_mask: where channel 2 is dominant
+    class2_mask = np.argmax(pathology_map, axis=2) == 2
+
+    # Red: above threshold
+    red_mask = atypical_prob >= threshold
+
+    # Yellow: between lowThreshold and threshold
+    low_threshold = 0.3
+    yellow_mask = class2_mask & (atypical_prob >= low_threshold) & (atypical_prob < threshold)
+
+    # Green from class2: below lowThreshold
+    green_class2 = class2_mask & (atypical_prob < low_threshold)
+
+    # Normal cells green (channel 1 >= 0.5), excluding red and yellow
+    normal_mask = (normal_prob >= 0.5) & ~red_mask & ~yellow_mask
+
+    # Apply colors (BGRA order for OpenCV compatibility)
+    # Green fills
+    overlay[green_class2] = [0, 255, 0, 40]
+    overlay[normal_mask] = [0, 255, 0, 64]
+
+    # Yellow on top
+    overlay[yellow_mask] = [0, 255, 255, 80]
+
+    # Red outlines + labels
+    red_binary = (red_mask * 255).astype(np.uint8)
+    contours = cv2.findContours(red_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+
+    for cnt in contours:
+        cv2.drawContours(overlay, [cnt], -1, (255, 0, 255, 200), 2)
+
+        # Calculate probability and draw label
+        mask = np.zeros(atypical_prob.shape, dtype=np.uint8)
+        cv2.drawContours(mask, [cnt], -1, 1, -1)
+        denom = max(1.0, float(np.sum(mask)))
+        prob = float(np.sum(np.where(mask > 0, atypical_prob, 0)) / denom)
+
+        M = cv2.moments(cnt)
+        if M["m00"] > 0:
+            cx, cy = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
+            cv2.putText(overlay, f'{int(prob * 100)}%',
+                (cx - 15, cy + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                (127, 0, 255, 255), 2, -1)
+
+    return overlay
+
+
 def process_dense_pathology_map(pathology_map, threshold: float = 0.5):
     markup = np.zeros((pathology_map[..., 0].shape + (4,)), dtype=np.uint8)
     red_marks = markup[..., 2].copy()
+    yellow_marks = markup[..., 1].copy()
     stats, texts_probs, texts_labels = {}, [], []
 
     atypical_probability_map = pathology_map[..., 2]
+    class2_mask = np.argmax(pathology_map, axis=2) == 2
     # Apply configurable threshold to detect lesions
     atypical_map = np.where(pathology_map[..., 2] >= float(threshold), 1, 0)
+    low_threshold = 0.3
+    atypical_low_map = np.where(
+        class2_mask
+        & (pathology_map[..., 2] >= low_threshold)
+        & (pathology_map[..., 2] < float(threshold)),
+        1,
+        0,
+    )
     
-    atypical_contours = __get_contours(atypical_map, threshold=500)
+    atypical_contours = __get_contours(atypical_map, threshold=0)
+    red_fill = atypical_map.astype(np.uint8)
 
     for idx, cnt in enumerate(atypical_contours):
         prob = __get_probability(atypical_probability_map, cnt)
@@ -66,6 +136,22 @@ def process_dense_pathology_map(pathology_map, threshold: float = 0.5):
     # Keep background/other channel visualization at 0.5 threshold
     markup[..., 1] = np.where(pathology_map[..., 1] >= 0.5, 255, 0)
     markup[..., 2] = red_marks
+
+    yellow_mask = (atypical_low_map > 0) & (red_fill == 0)
+    markup[..., 1] = np.where(yellow_mask, 255, markup[..., 1])
+    markup[..., 2] = np.where(yellow_mask, 255, markup[..., 2])
+
+    low_mask = (
+        class2_mask
+        & (pathology_map[..., 2] < low_threshold)
+        & (red_fill == 0)
+        & (yellow_mask == 0)
+    )
+    markup[..., 1] = np.where(low_mask, 255, markup[..., 1])
+
+    # Remove normal/green overlay only inside red areas
+    green_block = (red_fill > 0)
+    markup[..., 1] = np.where(green_block, 0, markup[..., 1])
     
     markup[:, :, 3] = np.where(markup[:, :, 1] > 0, 64, markup[:, :, 3])  # green alpha channel transparency
     markup[:, :, 3] = np.where(markup[:, :, 2] > 0, 127, markup[:, :, 3])  # red alpha channel transparency

@@ -39,6 +39,119 @@ float calculateContourProbability(const cv::Mat& probabilityChannel, const std::
     return static_cast<float>(mean[0]);
 }
 
+cv::Mat renderOverlayFast(const cv::Mat& pathologyMap, float threshold) {
+    if (pathologyMap.empty()) {
+        return cv::Mat();
+    }
+
+    int height = pathologyMap.rows;
+    int width = pathologyMap.cols;
+    int numClasses = pathologyMap.channels();
+
+    std::vector<cv::Mat> channels;
+    cv::split(pathologyMap, channels);
+
+    cv::Mat overlay = cv::Mat::zeros(height, width, CV_8UC4);
+
+    cv::Mat redMask;
+    cv::Mat yellowMask;
+
+    if (numClasses > 2) {
+        cv::Mat atypicalProb = channels[2];
+
+        // class2Mask: where channel 2 is dominant
+        cv::Mat class2Mask;
+        {
+            cv::Mat ge1, ge0;
+            cv::compare(atypicalProb, channels[1], ge1, cv::CMP_GE);
+            cv::compare(atypicalProb, channels[0], ge0, cv::CMP_GE);
+            cv::bitwise_and(ge1, ge0, class2Mask);
+        }
+
+        // Red: above threshold
+        cv::threshold(atypicalProb, redMask, threshold, 255, cv::THRESH_BINARY);
+        redMask.convertTo(redMask, CV_8UC1);
+
+        // Yellow: between lowThreshold and threshold
+        float lowThreshold = 0.3f;
+        if (lowThreshold < threshold) {
+            cv::Mat aboveLow, belowThresh;
+            cv::threshold(atypicalProb, aboveLow, lowThreshold, 255, cv::THRESH_BINARY);
+            cv::threshold(atypicalProb, belowThresh, threshold, 255, cv::THRESH_BINARY_INV);
+            aboveLow.convertTo(aboveLow, CV_8UC1);
+            belowThresh.convertTo(belowThresh, CV_8UC1);
+            cv::bitwise_and(aboveLow, belowThresh, yellowMask);
+            cv::bitwise_and(yellowMask, class2Mask, yellowMask);
+        }
+
+        // Green from class2: below lowThreshold
+        cv::Mat greenClass2;
+        cv::threshold(atypicalProb, greenClass2, lowThreshold, 255, cv::THRESH_BINARY_INV);
+        greenClass2.convertTo(greenClass2, CV_8UC1);
+        cv::bitwise_and(greenClass2, class2Mask, greenClass2);
+
+        // Apply class2 green
+        overlay.setTo(cv::Scalar(0, 255, 0, 40), greenClass2);
+    }
+
+    // Process normal cells (channel 1) - green detections
+    if (numClasses > 1) {
+        cv::Mat normalProb = channels[1];
+        cv::Mat normalMask;
+        cv::threshold(normalProb, normalMask, 0.5, 255, cv::THRESH_BINARY);
+        normalMask.convertTo(normalMask, CV_8UC1);
+
+        // Exclude red and yellow areas from green
+        if (!redMask.empty()) {
+            cv::bitwise_and(normalMask, ~redMask, normalMask);
+        }
+        if (!yellowMask.empty()) {
+            cv::bitwise_and(normalMask, ~yellowMask, normalMask);
+        }
+
+        // Green fill
+        overlay.setTo(cv::Scalar(0, 255, 0, 64), normalMask);
+
+        // Green outline
+        auto normalContours = findContours(normalMask, 500);
+        if (!normalContours.empty()) {
+            cv::drawContours(overlay, normalContours, -1, cv::Scalar(0, 200, 0, 150), 1);
+        }
+    }
+
+    // Apply yellow on top
+    if (!yellowMask.empty()) {
+        overlay.setTo(cv::Scalar(0, 255, 255, 80), yellowMask);
+    }
+
+    // Red outline using contours + labels
+    if (!redMask.empty() && numClasses > 2) {
+        cv::Mat atypicalProb = channels[2];
+        auto redContours = findContours(redMask, 0);
+        for (const auto& contour : redContours) {
+            std::vector<std::vector<cv::Point>> cnt = {contour};
+            cv::drawContours(overlay, cnt, 0, cv::Scalar(255, 0, 255, 200), 2);
+
+            // Calculate probability and draw label
+            float prob = calculateContourProbability(atypicalProb, contour);
+            cv::Rect bbox = cv::boundingRect(contour);
+
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(0) << (prob * 100) << "%";
+
+            cv::Point textPos(
+                bbox.x + bbox.width / 2 - 15,
+                bbox.y + bbox.height / 2 + 5
+            );
+
+            cv::putText(overlay, ss.str(), textPos,
+                cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(255, 0, 127, 255), 2);
+        }
+    }
+
+    return overlay;
+}
+
 std::pair<cv::Mat, DetectionStats> processDensePathologyMap(
     const cv::Mat& pathologyMap,
     float threshold,
@@ -62,17 +175,29 @@ std::pair<cv::Mat, DetectionStats> processDensePathologyMap(
     // Create RGBA overlay
     cv::Mat overlay = cv::Mat::zeros(height, width, CV_8UC4);
 
+    cv::Mat lowBinaryMask;
+    cv::Mat redFillMask;
+
     // Process atypical cells (channel 2) with threshold
     if (numClasses > 2) {
         cv::Mat atypicalProb = channels[2];
+        cv::Mat class2Mask;
+        {
+            cv::Mat ge1, ge0;
+            cv::compare(atypicalProb, channels[1], ge1, cv::CMP_GE);
+            cv::compare(atypicalProb, channels[0], ge0, cv::CMP_GE);
+            cv::bitwise_and(ge1, ge0, class2Mask);
+        }
 
         // Threshold to binary
         cv::Mat binary;
         cv::threshold(atypicalProb, binary, threshold, 255, cv::THRESH_BINARY);
         binary.convertTo(binary, CV_8UC1);
 
-        // Find contours
-        auto contours = findContours(binary, minArea);
+        // Find contours (no area filtering for smooth red/yellow transition)
+        auto contours = findContours(binary, 0);
+        cv::Mat redFill = binary.clone();
+        redFillMask = redFill;
 
         float totalProb = 0.0f;
         for (const auto& contour : contours) {
@@ -91,6 +216,39 @@ std::pair<cv::Mat, DetectionStats> processDensePathologyMap(
         if (!detections.empty()) {
             stats.avgConfidence = totalProb / detections.size();
         }
+
+        // Draw sub-threshold atypical areas in yellow
+        float lowThreshold = 0.3f;
+        // Areas below lowThreshold -> green background
+        cv::Mat lowProb;
+        cv::threshold(atypicalProb, lowProb, lowThreshold, 255, cv::THRESH_BINARY_INV);
+        lowProb.convertTo(lowProb, CV_8UC1);
+        cv::Mat lowGreen;
+        cv::bitwise_and(lowProb, class2Mask, lowGreen);
+        if (!redFill.empty()) {
+            cv::bitwise_and(lowGreen, ~redFill, lowGreen);
+        }
+        if (lowThreshold < threshold) {
+            cv::Mat lowBinary;
+            // Yellow zone: lowThreshold <= prob < threshold
+            // Use threshold operations instead of inRange to avoid boundary issues
+            cv::Mat aboveLow, belowThresh;
+            cv::threshold(atypicalProb, aboveLow, lowThreshold, 255, cv::THRESH_BINARY);
+            cv::threshold(atypicalProb, belowThresh, threshold, 255, cv::THRESH_BINARY_INV);
+            aboveLow.convertTo(aboveLow, CV_8UC1);
+            belowThresh.convertTo(belowThresh, CV_8UC1);
+            cv::bitwise_and(aboveLow, belowThresh, lowBinary);
+            cv::bitwise_and(lowBinary, class2Mask, lowBinary);
+            // Exclude red areas from yellow
+            if (!redFill.empty()) {
+                cv::bitwise_and(lowBinary, ~redFill, lowBinary);
+            }
+            // Exclude yellow from green
+            cv::bitwise_and(lowGreen, ~lowBinary, lowGreen);
+            lowBinaryMask = lowBinary;
+        }
+        // Green fill (BGRA: B=0, G=255, R=0, A=40)
+        overlay.setTo(cv::Scalar(0, 255, 0, 40), lowGreen);
     }
 
     // Process normal cells (channel 1) with fixed threshold
@@ -117,59 +275,100 @@ std::pair<cv::Mat, DetectionStats> processDensePathologyMap(
 
     stats.totalDetections = stats.atypicalCells + stats.normalCells;
 
-    // Draw detections on overlay
-    drawDetections(overlay, detections, true);
+    // Drawing order: green -> yellow -> red outline -> text
+
+    // Create combined exclude mask (red + yellow) for green
+    cv::Mat greenExcludeMask;
+    if (!redFillMask.empty() && !lowBinaryMask.empty()) {
+        cv::bitwise_or(redFillMask, lowBinaryMask, greenExcludeMask);
+    } else if (!redFillMask.empty()) {
+        greenExcludeMask = redFillMask;
+    } else if (!lowBinaryMask.empty()) {
+        greenExcludeMask = lowBinaryMask;
+    }
+
+    // 1. Draw green (normal) detections, excluding red and yellow areas
+    drawGreenDetections(overlay, detections, greenExcludeMask);
+
+    // 2. Apply yellow mask (already excludes red areas from earlier processing)
+    if (!lowBinaryMask.empty()) {
+        overlay.setTo(cv::Scalar(0, 255, 255, 80), lowBinaryMask);
+    }
+
+    // 3. Draw red outlines (atypical)
+    drawRedOutlines(overlay, detections);
+
+    // 4. Draw labels last so they appear on top of everything
+    drawDetectionLabels(overlay, detections);
 
     return {overlay, stats};
 }
 
-void drawDetections(cv::Mat& overlay, const std::vector<Detection>& detections, bool showLabels) {
-    // Draw atypical detections (red)
-    // Note: OpenCV uses BGRA order for cv::Scalar on 4-channel images
+void drawGreenDetections(cv::Mat& overlay, const std::vector<Detection>& detections, const cv::Mat& excludeMask) {
+    // Collect all green contours
+    std::vector<std::vector<cv::Point>> greenContours;
     for (const auto& det : detections) {
-        if (det.classIndex == 2) {
-            // Red fill with transparency (BGRA: B=0, G=0, R=255, A=127)
-            std::vector<std::vector<cv::Point>> contours = {det.contour};
-            cv::drawContours(overlay, contours, 0, cv::Scalar(0, 0, 255, 127), cv::FILLED);
-
-            // Magenta outline (BGRA: B=255, G=0, R=255, A=200)
-            cv::drawContours(overlay, contours, 0, cv::Scalar(255, 0, 255, 200), 2);
-
-            // Draw probability label
-            if (showLabels) {
-                std::ostringstream ss;
-                ss << std::fixed << std::setprecision(0) << (det.probability * 100) << "%";
-
-                cv::Point textPos(
-                    det.boundingBox.x + det.boundingBox.width / 2 - 15,
-                    det.boundingBox.y + det.boundingBox.height / 2 + 5
-                );
-
-                // Background for text
-                int baseline = 0;
-                cv::Size textSize = cv::getTextSize(ss.str(), cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
-                cv::rectangle(overlay,
-                    cv::Point(textPos.x - 2, textPos.y - textSize.height - 2),
-                    cv::Point(textPos.x + textSize.width + 2, textPos.y + baseline + 2),
-                    cv::Scalar(0, 0, 0, 180),
-                    cv::FILLED
-                );
-
-                cv::putText(overlay, ss.str(), textPos,
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255, 255), 1);
-            }
+        if (det.classIndex == 1) {
+            greenContours.push_back(det.contour);
         }
     }
 
-    // Draw normal detections (green)
+    if (greenContours.empty()) {
+        return;
+    }
+
+    // Create single fill mask for all green contours
+    cv::Mat fillMask = cv::Mat::zeros(overlay.size(), CV_8UC1);
+    cv::drawContours(fillMask, greenContours, -1, cv::Scalar(255), cv::FILLED);
+
+    // Create single outline mask
+    cv::Mat outlineMask = cv::Mat::zeros(overlay.size(), CV_8UC1);
+    cv::drawContours(outlineMask, greenContours, -1, cv::Scalar(255), 1);
+
+    // Exclude red areas
+    if (!excludeMask.empty()) {
+        cv::bitwise_and(fillMask, ~excludeMask, fillMask);
+        cv::bitwise_and(outlineMask, ~excludeMask, outlineMask);
+    }
+
+    // Apply colors
+    overlay.setTo(cv::Scalar(0, 255, 0, 64), fillMask);
+    overlay.setTo(cv::Scalar(0, 200, 0, 150), outlineMask);
+}
+
+void drawRedOutlines(cv::Mat& overlay, const std::vector<Detection>& detections) {
     // Note: OpenCV uses BGRA order for cv::Scalar on 4-channel images
     for (const auto& det : detections) {
-        if (det.classIndex == 1) {
+        if (det.classIndex == 2) {
             std::vector<std::vector<cv::Point>> contours = {det.contour};
-            // Green fill (BGRA: B=0, G=255, R=0, A=64)
-            cv::drawContours(overlay, contours, 0, cv::Scalar(0, 255, 0, 64), cv::FILLED);
-            // Green outline (BGRA: B=0, G=200, R=0, A=150)
-            cv::drawContours(overlay, contours, 0, cv::Scalar(0, 200, 0, 150), 1);
+            // Magenta outline (BGRA: B=255, G=0, R=255, A=200)
+            cv::drawContours(overlay, contours, 0, cv::Scalar(255, 0, 255, 200), 2);
+        }
+    }
+}
+
+void drawDetections(cv::Mat& overlay, const std::vector<Detection>& detections, bool showLabels) {
+    drawGreenDetections(overlay, detections, cv::Mat());
+    drawRedOutlines(overlay, detections);
+    if (showLabels) {
+        drawDetectionLabels(overlay, detections);
+    }
+}
+
+void drawDetectionLabels(cv::Mat& overlay, const std::vector<Detection>& detections) {
+    for (const auto& det : detections) {
+        if (det.classIndex == 2) {
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(0) << (det.probability * 100) << "%";
+
+            cv::Point textPos(
+                det.boundingBox.x + det.boundingBox.width / 2 - 15,
+                det.boundingBox.y + det.boundingBox.height / 2 + 5
+            );
+
+            // Magenta text matching Python style (BGRA: B=255, G=0, R=127, A=255)
+            cv::putText(overlay, ss.str(), textPos,
+                cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(255, 0, 127, 255), 2);
         }
     }
 }
