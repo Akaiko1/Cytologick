@@ -93,6 +93,26 @@ gui:
 dataset:
   exclude_duplicates: false
   broaden_individual_rect: 1000
+  centered_crop: true
+  tile_overlap: 0.25
+  # Write per-rect debug overlays to debug_info/ (large output).
+  debug: false
+  # Pad each rect with a white border (pixels) before cropping.
+  rect_border_padding: 25
+  # If individual crop fails, force extraction by masking intruders.
+  force_extraction: true
+  # Centered-crop algorithm:
+  # - heuristic: shift-based search (fast, may miss valid placements)
+  # - ring: exhaustive edge-band search (slower, guarantees if exists)
+  centered_crop_algo: heuristic
+  # Pixels of edge margin to keep pathology away from tile borders.
+  centered_crop_edge_margin: 3
+  # Normal tiles limit in centered-crop mode:
+  # - same: max(group+individual, 5)
+  # - all: no limit (use all normal objects)
+  # - multiplier: (group+individual) * normal_tiles_multiplier
+  normal_tiles_limit: same
+  normal_tiles_multiplier: 1.0
 
 web:
   ip_exposed: "127.0.0.1"

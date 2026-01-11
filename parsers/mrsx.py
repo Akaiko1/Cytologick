@@ -4,6 +4,7 @@ import glob
 import math
 import cv2
 import os
+import random
 
 import numpy as np
 
@@ -56,7 +57,6 @@ def extract_all_cells(
     json_folder,
     openslide_path,
     classes,
-    debug: bool = False,
     cfg: Config | None = None,
     broaden_individual_rect: int | None = None,
     exclude_duplicates: bool | None = None,
@@ -117,11 +117,10 @@ def extract_all_cells(
 
             crop = slide.read_region((w_min_x, w_min_y), 0, (w_max_x - w_min_x, w_max_y - w_min_y))
             roi = np.asarray(crop)
-            mask = np.zeros(roi.shape) if debug else np.zeros(roi.shape[:2], dtype=np.uint8)
+            mask = np.zeros(roi.shape[:2], dtype=np.uint8)
 
             __draw_masks(
                 classes,
-                debug,
                 __get_rect_regions(
                     rois,
                     (w_min_x, w_min_y),
@@ -130,23 +129,9 @@ def extract_all_cells(
                 ),
                 mask,
             )
-            if debug:
-                 __debug_draw_contours(
-                     classes,
-                     __get_rect_regions(
-                         rois,
-                         (w_min_x, w_min_y),
-                         (w_max_x, w_max_y),
-                         exclude_duplicates=exclude_duplicates,
-                     ),
-                     roi,
-                 )
 
             roi = roi[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
             mask = mask[span + 2:span + (max_y - min_y) - 2, span + 2: span + (max_x - min_x) - 2]
-
-            if debug and np.min(mask[:, :, 1]) > 0: # Check in green channel if all the image filled with green color
-                continue
 
             # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
             prefix = f'{slide_id}__{name}'
@@ -160,7 +145,6 @@ def extract_all_slides(
     openslide_path,
     classes,
     zoom_levels=[256],
-    debug: bool = False,
     cfg: Config | None = None,
     exclude_duplicates: bool | None = None,
     overlap: float | None = None,
@@ -182,11 +166,28 @@ def extract_all_slides(
         overlap = float(getattr(cfg, 'TILE_OVERLAP', 0.0))
     if centered_crop is None:
         centered_crop = bool(getattr(cfg, 'CENTERED_CROP', False))
+    centered_algo = str(getattr(cfg, 'CENTERED_CROP_ALGO', 'heuristic'))
+    edge_margin = int(getattr(cfg, 'CENTERED_CROP_EDGE_MARGIN', 3))
+    normal_limit_mode = str(getattr(cfg, 'NORMAL_TILES_LIMIT_MODE', 'same'))
+    normal_limit_multiplier = float(getattr(cfg, 'NORMAL_TILES_MULTIPLIER', 1.0))
+    dataset_debug = bool(getattr(cfg, 'DATASET_DEBUG', False))
+    rect_border_padding = int(getattr(cfg, 'RECT_BORDER_PADDING', 0))
+    force_extraction = bool(getattr(cfg, 'FORCE_EXTRACTION', True))
+    debug_root = os.path.abspath('debug_info') if dataset_debug else None
+    stats_root = os.path.abspath('debug_info' if dataset_debug else '.')
+    algo_label = centered_algo.strip().lower()
+    if algo_label not in {'heuristic', 'ring'}:
+        algo_label = 'heuristic'
 
     slides_list = glob.glob(os.path.join(slides_folder, '**', '*.mrxs'), recursive=True)
     print('Total slides: ', len(slides_list))
     if centered_crop:
+        edge_margin = max(int(edge_margin), 0)
         print('Using pathology-centered cropping')
+        if algo_label == 'ring':
+            print(f'Centered-crop algo: ring (edge margin {edge_margin}px; exhaustive, slower)')
+        else:
+            print(f'Centered-crop algo: heuristic (edge margin {edge_margin}px; fast, may miss)')
         _reset_crop_stats()
     elif overlap > 0:
         print(f'Using tile overlap: {overlap:.0%}')
@@ -227,14 +228,26 @@ def extract_all_slides(
                 zoom_levels=zoom_levels,
                 rect_name=rect_name,
                 slide_id=slide_id,
-                debug=debug,
                 exclude_duplicates=exclude_duplicates,
                 overlap=overlap,
                 centered_crop=centered_crop,
+                centered_algo=algo_label,
+                edge_margin=edge_margin,
+                normal_limit_mode=normal_limit_mode,
+                normal_limit_multiplier=normal_limit_multiplier,
+                dataset_debug=dataset_debug,
+                debug_root=debug_root,
+                rect_border_padding=rect_border_padding,
+                force_extraction=force_extraction,
             )
 
     if centered_crop:
-        _get_crop_stats().print_summary()
+        stats = _get_crop_stats()
+        if stats_root:
+            stats.dump_details(stats_root)
+        if dataset_debug and debug_root:
+            stats.debug_root = debug_root
+        stats.print_summary()
 
 
 def __extract_rect_regions(
@@ -246,10 +259,17 @@ def __extract_rect_regions(
     slide_id: str | None = None,
     zoom_levels=[128, 256, 512],
     classes={},
-    debug: bool = False,
     exclude_duplicates: bool = False,
     overlap: float = 0.0,
     centered_crop: bool = False,
+    centered_algo: str = 'heuristic',
+    edge_margin: int = 3,
+    normal_limit_mode: str = 'same',
+    normal_limit_multiplier: float = 1.0,
+    dataset_debug: bool = False,
+    debug_root: str | None = None,
+    rect_border_padding: int = 0,
+    force_extraction: bool = True,
 ):
     if hasattr(os, 'add_dll_directory'):
         with os.add_dll_directory(openslide_path):
@@ -271,29 +291,77 @@ def __extract_rect_regions(
     print(f'{rect_name} contains {len(regions)} regions')
 
     rectangle = np.asarray(slide.read_region(top, 0, (bot[0] - top[0], bot[1] - top[1])))
-    masks = np.zeros(rectangle.shape if debug else rectangle.shape[:2], dtype=np.uint8)
+    masks = np.zeros(rectangle.shape[:2], dtype=np.uint8)
 
     roi_path = os.path.join('dataset', 'rois')
     masks_path = os.path.join('dataset', 'masks')
 
     __make_dirs(roi_path, masks_path)
-    __draw_masks(classes, debug, regions, masks)
-
-    if debug:
-        __debug_draw_contours(classes, regions, rectangle)
-        # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
-        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}.jpg", cv2.cvtColor(rectangle, cv2.COLOR_RGBA2BGR))
-        cv2.imwrite(f"{jsonpath.split(os.sep)[-1].replace('.json', '')}_{rect_name}_mask.jpg", masks)
+    __draw_masks(classes, regions, masks)
 
     name_prefix = f'{slide_id}__{rect_name}' if slide_id else rect_name
+    pad = max(int(rect_border_padding), 0)
+    pathology_records = []
+    if regions and classes:
+        height, width = rectangle.shape[:2]
+        for region in regions:
+            anno, _, max_x, max_y, min_x, min_y = region
+            if anno not in classes:
+                continue
+            local_min_x = max(0, min_x - top[0])
+            local_max_x = min(width, max_x - top[0])
+            local_min_y = max(0, min_y - top[1])
+            local_max_y = min(height, max_y - top[1])
+            pathology_records.append({
+                'label': anno,
+                'bbox': (local_min_y + pad, local_min_x + pad, local_max_y + pad, local_max_x + pad),
+                'group_tiles': 0,
+                'ind_tiles': 0,
+                'forced_tiles': 0,
+            })
+
+    if pad > 0:
+        border_value = (255, 255, 255, 255) if rectangle.ndim == 3 and rectangle.shape[2] == 4 else (255, 255, 255)
+        rectangle = cv2.copyMakeBorder(
+            rectangle,
+            pad,
+            pad,
+            pad,
+            pad,
+            cv2.BORDER_CONSTANT,
+            value=border_value,
+        )
+        masks = np.pad(masks, ((pad, pad), (pad, pad)), mode='constant', constant_values=0)
     if centered_crop:
         # Use pathology-centered cropping (avoids truncating pathologies)
         # Tile size is determined by object bbox + padding, not by zoom_levels
-        __crop_dataset_centered(name_prefix, rectangle, masks, roi_path, masks_path)
-    elif debug:
-        __crop_debug_dataset(name_prefix, zoom_levels, rectangle, masks, roi_path, masks_path, jsonpath.split(os.sep)[-1].replace('.json', ''), overlap=overlap)
+        __crop_dataset_centered(
+            name_prefix,
+            rectangle,
+            masks,
+            roi_path,
+            masks_path,
+            centered_algo=centered_algo,
+            edge_margin=edge_margin,
+            normal_limit_mode=normal_limit_mode,
+            normal_limit_multiplier=normal_limit_multiplier,
+            slide_id=slide_id,
+            rect_label=rect_name,
+            pathology_records=pathology_records,
+            force_extraction=force_extraction,
+        )
     else:
         __crop_dataset(name_prefix, zoom_levels, rectangle, masks, roi_path, masks_path, overlap=overlap)
+
+    if dataset_debug and centered_crop:
+        _write_debug_rect_image(
+            debug_root,
+            slide_id,
+            rect_name,
+            rectangle,
+            pathology_records,
+            pad=rect_border_padding,
+        )
 
 
 def __make_dirs(roi_path, masks_path):
@@ -314,7 +382,7 @@ MASK_VALUE_NORMAL = 127        # Class 1: normal cells (gray)
 MASK_VALUE_ABNORMAL = 255      # Class 2: abnormal cells (white)
 
 
-def __draw_masks(classes, debug, regions, masks):
+def __draw_masks(classes, regions, masks):
     top_layer = []  # TODO priority should vary by level value
     for region in regions:
         name, points, _, _, _, _ = region
@@ -325,32 +393,14 @@ def __draw_masks(classes, debug, regions, masks):
             continue
 
         # Normal cells -> class 1 (saved as 127 for visibility)
-        cv2.drawContours(masks, [points], 0, (0, 255, 0) if debug else MASK_VALUE_NORMAL, -1)
+        cv2.drawContours(masks, [points], 0, MASK_VALUE_NORMAL, -1)
 
     # double pass for class priority
     for region in top_layer:
         name, points, _, _, _, _ = region
         name = name.strip('?) ')
         # Abnormal cells -> class 2 (saved as 255 for visibility)
-        cv2.drawContours(masks, [points], 0, (0, 0, 255) if debug else MASK_VALUE_ABNORMAL, -1)
-
-
-def __debug_draw_contours(classes, regions, image):
-    top_layer = []
-    for region in regions:
-        name, points, _, _, _, _ = region
-        name = name.strip('?) ')
-
-        if name in classes.keys():
-            top_layer.append(region)
-            continue
-        
-        cv2.drawContours(image, [points], 0, (0, 255, 0), 3)  # 1 class background info
-    
-    for region in top_layer:
-        name, points, _, _, _, _ = region
-        name = name.strip('?) ')
-        cv2.drawContours(image, [points], 0, (255, 0, 0), 3)
+        cv2.drawContours(masks, [points], 0, MASK_VALUE_ABNORMAL, -1)
 
 
 def _get_pathology_objects(masks):
@@ -569,6 +619,7 @@ def _try_fit_tile_without_truncation(
     max_expand=200,
     min_padding=10,
     padding_step=5,
+    edge_margin=3,
 ):
     """
     Try to fit objects into a tile without truncating any pathology.
@@ -626,7 +677,7 @@ def _try_fit_tile_without_truncation(
                 continue
 
             # Check no truncation
-            if not _tile_truncates_pathology(y1, x1, y2, x2, labeled):
+            if not _tile_truncates_pathology(y1, x1, y2, x2, labeled, edge_margin=edge_margin):
                 return (y1, x1, y2, x2)
 
     return None
@@ -689,25 +740,45 @@ def _compute_shift_away_from_intruders(intruders, step=10):
     return dy, dx
 
 
-def _try_fit_single_pathology_isolated(
+def _integral_image(mask):
+    """Compute integral image with 1px zero padding (top/left)."""
+    if mask.dtype != np.int64 and mask.dtype != np.int32:
+        mask = mask.astype(np.int32)
+    summed = mask.cumsum(axis=0).cumsum(axis=1)
+    return np.pad(summed, ((1, 0), (1, 0)), mode='constant', constant_values=0)
+
+
+def _sum_rect(integral, y1, x1, y2, x2):
+    return integral[y2, x2] - integral[y1, x2] - integral[y2, x1] + integral[y1, x1]
+
+
+def _ring_sum(integral, y1, x1, size, edge_margin):
+    if edge_margin <= 0:
+        return 0
+    y2 = y1 + size
+    x2 = x1 + size
+    outer = _sum_rect(integral, y1, x1, y2, x2)
+    if size <= 2 * edge_margin:
+        return outer
+    inner = _sum_rect(integral, y1 + edge_margin, x1 + edge_margin, y2 - edge_margin, x2 - edge_margin)
+    return outer - inner
+
+
+def _try_fit_single_pathology_heuristic(
     obj,
     all_pathology_objects,
     labeled,
     h,
     w,
     padding=30,
+    edge_margin=3,
     max_iterations=40,
     min_padding=10,
     padding_step=5,
 ):
     """
-    Try to fit a single pathology into a tile WITHOUT other pathologies.
-
-    Uses smart shifting: analyzes where intruding pathologies are located
-    and shifts tile in the opposite direction.
-
-    Returns:
-        tuple: (y1, x1, y2, x2) or None if cannot isolate
+    Heuristic: shift a tile around the target pathology until no pathology
+    pixels touch the tile edge (allows intruders in the interior).
     """
     obj_h = obj['y2'] - obj['y1']
     obj_w = obj['x2'] - obj['x1']
@@ -748,25 +819,19 @@ def _try_fit_single_pathology_isolated(
             if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
                 break
 
-            # Check target object is fully inside
-            if not (obj['y1'] >= y1 and obj['y2'] <= y2 and
-                    obj['x1'] >= x1 and obj['x2'] <= x2):
+            # Check target object is fully inside (with edge margin)
+            if not (obj['y1'] >= y1 + edge_margin and obj['y2'] <= y2 - edge_margin and
+                    obj['x1'] >= x1 + edge_margin and obj['x2'] <= x2 - edge_margin):
                 break  # Shifted too far, target object out of frame
 
-            # Check our object doesn't touch edges
-            tile_labeled = labeled[y1:y2, x1:x2]
-            if np.any(tile_labeled == obj['id']):
-                our_pixels = (tile_labeled == obj['id'])
-                if (np.any(our_pixels[:3, :]) or np.any(our_pixels[-3:, :]) or
-                    np.any(our_pixels[:, :3]) or np.any(our_pixels[:, -3:])):
-                    break  # Our object would be truncated
-
-            # Find intruding pathologies
-            intruders = _find_intruding_pathologies(y1, x1, y2, x2, obj, all_pathology_objects)
-
-            if not intruders:
-                # Success! No other pathologies in tile
+            # Accept if no pathology touches the tile edge band
+            if not _tile_truncates_pathology(y1, x1, y2, x2, labeled, edge_margin=edge_margin):
                 return (y1, x1, y2, x2)
+
+            # Find intruding pathologies to guide shift direction (heuristic)
+            intruders = _find_intruding_pathologies(y1, x1, y2, x2, obj, all_pathology_objects)
+            if not intruders:
+                break
 
             # Calculate shift based on where intruders are
             # Shift step proportional to intruder size for efficiency
@@ -788,6 +853,69 @@ def _try_fit_single_pathology_isolated(
             max_total_shift = tile_size
             if abs(total_dy) > max_total_shift or abs(total_dx) > max_total_shift:
                 break
+
+    return None
+
+
+def _try_fit_single_pathology_ring(
+    obj,
+    integral,
+    h,
+    w,
+    padding=30,
+    edge_margin=3,
+    min_padding=10,
+    padding_step=5,
+):
+    """
+    Ring-sum search: exhaustively find a tile where no pathology pixels
+    touch the edge band (allows intruders in the interior).
+    """
+    obj_h = obj['y2'] - obj['y1']
+    obj_w = obj['x2'] - obj['x1']
+    cy, cx = obj['cy'], obj['cx']
+
+    pad_start = max(int(padding), int(min_padding))
+    pad_end = max(int(min_padding), 0)
+    step_pad = max(int(padding_step), 1)
+
+    edge_margin = max(int(edge_margin), 0)
+
+    for pad in range(pad_start, pad_end - 1, -step_pad):
+        tile_size = max(obj_h, obj_w) + 2 * pad
+        if tile_size <= 0:
+            continue
+        if tile_size > h or tile_size > w:
+            continue
+
+        y1_min = max(0, obj['y2'] + edge_margin - tile_size)
+        y1_max = min(obj['y1'] - edge_margin, h - tile_size)
+        x1_min = max(0, obj['x2'] + edge_margin - tile_size)
+        x1_max = min(obj['x1'] - edge_margin, w - tile_size)
+
+        if y1_min > y1_max or x1_min > x1_max:
+            continue
+
+        y1_center = min(max(cy - tile_size // 2, y1_min), y1_max)
+        x1_center = min(max(cx - tile_size // 2, x1_min), x1_max)
+
+        best = None
+        best_dist = None
+        for y1 in range(int(y1_min), int(y1_max) + 1):
+            y2 = y1 + tile_size
+            for x1 in range(int(x1_min), int(x1_max) + 1):
+                if _ring_sum(integral, y1, x1, tile_size, edge_margin) != 0:
+                    continue
+                dist = (y1 - y1_center) ** 2 + (x1 - x1_center) ** 2
+                if best is None or dist < best_dist:
+                    best = (y1, x1)
+                    best_dist = dist
+                    if dist == 0:
+                        return (y1, x1, y2, x1 + tile_size)
+
+        if best is not None:
+            y1, x1 = best
+            return (y1, x1, y1 + tile_size, x1 + tile_size)
 
     return None
 
@@ -885,12 +1013,282 @@ def _try_shift_tile_away_from_pathology(obj, masks, h, w, padding=30, max_iterat
     return None
 
 
+def _try_fit_single_pathology_force(
+    obj,
+    labeled,
+    h,
+    w,
+    padding=30,
+    edge_margin=3,
+    min_padding=10,
+    padding_step=5,
+    coarse_step=8,
+):
+    obj_h = obj['y2'] - obj['y1']
+    obj_w = obj['x2'] - obj['x1']
+    cy, cx = obj['cy'], obj['cx']
+
+    pad_start = max(int(padding), int(min_padding))
+    pad_end = max(int(min_padding), 0)
+    step_pad = max(int(padding_step), 1)
+    coarse_step = max(int(coarse_step), 1)
+
+    edge_margin = max(int(edge_margin), 0)
+
+    other_mask = (labeled != 0) & (labeled != obj['id'])
+    integral = _integral_image(other_mask.astype(np.uint8))
+
+    best = None
+    best_score = None
+    best_dist = None
+
+    for pad in range(pad_start, pad_end - 1, -step_pad):
+        tile_size = max(obj_h, obj_w) + 2 * pad
+        if tile_size <= 0 or tile_size > h or tile_size > w:
+            continue
+
+        y1_min = max(0, obj['y2'] + edge_margin - tile_size)
+        y1_max = min(obj['y1'] - edge_margin, h - tile_size)
+        x1_min = max(0, obj['x2'] + edge_margin - tile_size)
+        x1_max = min(obj['x1'] - edge_margin, w - tile_size)
+
+        if y1_min > y1_max or x1_min > x1_max:
+            continue
+
+        y1_center = min(max(cy - tile_size // 2, y1_min), y1_max)
+        x1_center = min(max(cx - tile_size // 2, x1_min), x1_max)
+
+        def evaluate_range(y_start, y_end, x_start, x_end, step):
+            nonlocal best, best_score, best_dist
+            for y1 in range(int(y_start), int(y_end) + 1, step):
+                y2 = y1 + tile_size
+                for x1 in range(int(x_start), int(x_end) + 1, step):
+                    x2 = x1 + tile_size
+                    score = _sum_rect(integral, y1, x1, y2, x2)
+                    dist = (y1 - y1_center) ** 2 + (x1 - x1_center) ** 2
+                    if (best_score is None or score < best_score or
+                            (score == best_score and dist < best_dist)):
+                        best_score = score
+                        best_dist = dist
+                        best = (y1, x1, y2, x2)
+
+        evaluate_range(y1_min, y1_max, x1_min, x1_max, coarse_step)
+
+        if best is not None:
+            refine = coarse_step
+            y_start = max(y1_min, best[0] - refine)
+            y_end = min(y1_max, best[0] + refine)
+            x_start = max(x1_min, best[1] - refine)
+            x_end = min(x1_max, best[1] + refine)
+            evaluate_range(y_start, y_end, x_start, x_end, 1)
+            if best_score == 0 and best_dist == 0:
+                return best
+
+    return best
+
+
+def _pathologies_in_tile(pathology_records, y1, x1, y2, x2, edge_margin=0):
+    if not pathology_records:
+        return []
+    hits = []
+    for rec in pathology_records:
+        py1, px1, py2, px2 = rec['bbox']
+        if (py1 >= y1 + edge_margin and py2 <= y2 - edge_margin and
+                px1 >= x1 + edge_margin and px2 <= x2 - edge_margin):
+            hits.append(rec)
+    return hits
+
+
+def _bbox_overlaps_mask(bbox, intruder_mask, tile_y1, tile_x1):
+    by1, bx1, by2, bx2 = bbox
+    sy1 = max(0, by1 - tile_y1)
+    sx1 = max(0, bx1 - tile_x1)
+    sy2 = min(intruder_mask.shape[0], by2 - tile_y1)
+    sx2 = min(intruder_mask.shape[1], bx2 - tile_x1)
+    if sy1 >= sy2 or sx1 >= sx2:
+        return False
+    return bool(np.any(intruder_mask[sy1:sy2, sx1:sx2]))
+
+
+def _increment_pathology_records(pathology_records, y1, x1, y2, x2, edge_margin=0, field='ind_tiles', intruder_mask=None):
+    for rec in pathology_records or []:
+        by1, bx1, by2, bx2 = rec['bbox']
+        if (by1 >= y1 + edge_margin and by2 <= y2 - edge_margin and
+                bx1 >= x1 + edge_margin and bx2 <= x2 - edge_margin):
+            if intruder_mask is not None and _bbox_overlaps_mask(rec['bbox'], intruder_mask, y1, x1):
+                continue
+            rec[field] = rec.get(field, 0) + 1
+
+
+def _bbox_intersects_tile(bbox, y1, x1, y2, x2):
+    by1, bx1, by2, bx2 = bbox
+    return not (bx2 <= x1 or bx1 >= x2 or by2 <= y1 or by1 >= y2)
+
+
+def _rect_intersection_area(a, b):
+    ay1, ax1, ay2, ax2 = a
+    by1, bx1, by2, bx2 = b
+    dx = min(ax2, bx2) - max(ax1, bx1)
+    dy = min(ay2, by2) - max(ay1, by1)
+    if dx <= 0 or dy <= 0:
+        return 0
+    return dx * dy
+
+
+def _match_record_for_object(obj, pathology_records):
+    if not pathology_records:
+        return None
+    obj_bbox = (obj['y1'], obj['x1'], obj['y2'], obj['x2'])
+    best_idx = None
+    best_area = 0
+    for idx, rec in enumerate(pathology_records):
+        area = _rect_intersection_area(obj_bbox, rec['bbox'])
+        if area > best_area:
+            best_area = area
+            best_idx = idx
+    if best_idx is not None and best_area > 0:
+        return best_idx
+
+    # Fallback: nearest center
+    ocx, ocy = obj['cx'], obj['cy']
+    best_idx = None
+    best_dist = None
+    for idx, rec in enumerate(pathology_records):
+        by1, bx1, by2, bx2 = rec['bbox']
+        rcx = (bx1 + bx2) / 2.0
+        rcy = (by1 + by2) / 2.0
+        dist = (rcx - ocx) ** 2 + (rcy - ocy) ** 2
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_idx = idx
+    return best_idx
+
+
+def _increment_forced_pathology_records(pathology_records, y1, x1, y2, x2, intruder_mask=None):
+    for rec in pathology_records or []:
+        if not _bbox_intersects_tile(rec['bbox'], y1, x1, y2, x2):
+            continue
+        if intruder_mask is not None and _bbox_overlaps_mask(rec['bbox'], intruder_mask, y1, x1):
+            continue
+        rec['forced_tiles'] = rec.get('forced_tiles', 0) + 1
+
+
+def _apply_intruder_artifact(roi, mask, intruder_mask):
+    if intruder_mask is None or not np.any(intruder_mask):
+        return
+    if roi.ndim == 3 and roi.shape[2] == 4:
+        colors = [(0, 0, 0, 255), (255, 255, 255, 255)]
+    elif roi.ndim == 3 and roi.shape[2] == 3:
+        colors = [(0, 0, 0), (255, 255, 255)]
+    else:
+        colors = [0, 255]
+    color = random.choice(colors)
+    roi[intruder_mask] = color
+    mask[intruder_mask] = MASK_VALUE_BACKGROUND
+
+
+def _center_tile_for_object(obj, padding):
+    obj_h = obj['y2'] - obj['y1']
+    obj_w = obj['x2'] - obj['x1']
+    tile_size = max(obj_h, obj_w) + 2 * int(padding)
+    half = tile_size // 2
+    cy, cx = int(obj['cy']), int(obj['cx'])
+    y1 = cy - half
+    x1 = cx - half
+    y2 = y1 + tile_size
+    x2 = x1 + tile_size
+    return (y1, x1, y2, x2)
+
+
+def _extract_tile_with_padding(rectangle, masks, labeled_path, y1, x1, y2, x2):
+    h, w = masks.shape[:2]
+    iy1 = max(0, y1)
+    ix1 = max(0, x1)
+    iy2 = min(h, y2)
+    ix2 = min(w, x2)
+
+    roi = rectangle[iy1:iy2, ix1:ix2]
+    mask = masks[iy1:iy2, ix1:ix2]
+    labels = labeled_path[iy1:iy2, ix1:ix2]
+
+    pad_top = max(0, -y1)
+    pad_left = max(0, -x1)
+    pad_bottom = max(0, y2 - h)
+    pad_right = max(0, x2 - w)
+
+    if pad_top or pad_bottom or pad_left or pad_right:
+        border_value = (255, 255, 255, 255) if roi.ndim == 3 and roi.shape[2] == 4 else (255, 255, 255)
+        roi = cv2.copyMakeBorder(
+            roi,
+            pad_top,
+            pad_bottom,
+            pad_left,
+            pad_right,
+            cv2.BORDER_CONSTANT,
+            value=border_value,
+        )
+        mask = np.pad(mask, ((pad_top, pad_bottom), (pad_left, pad_right)), mode='constant', constant_values=0)
+        labels = np.pad(labels, ((pad_top, pad_bottom), (pad_left, pad_right)), mode='constant', constant_values=0)
+
+    return roi, mask, labels
+
+
+def _safe_debug_name(text):
+    name = str(text or 'unknown').strip()
+    name = name.replace(os.sep, '_')
+    name = name.replace(' ', '_')
+    return name or 'unknown'
+
+
+def _write_debug_rect_image(debug_root, slide_id, rect_label, rectangle, pathology_records, pad=0):
+    if not debug_root:
+        return
+    os.makedirs(debug_root, exist_ok=True)
+    slide_name = _safe_debug_name(slide_id)
+    rect_name = _safe_debug_name(rect_label)
+    out_dir = os.path.join(debug_root, slide_name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    debug_img = cv2.cvtColor(rectangle, cv2.COLOR_RGBA2BGR)
+    pad = max(int(pad), 0)
+    if pad > 0:
+        h, w = debug_img.shape[:2]
+        # Visualize padded rect boundary clearly in debug overlays.
+        cv2.rectangle(debug_img, (pad, pad), (w - pad - 1, h - pad - 1), (255, 0, 255), 2)
+
+    for rec in pathology_records or []:
+        y1, x1, y2, x2 = [int(v) for v in rec.get('bbox', (0, 0, 0, 0))]
+        forced = rec.get('forced_tiles', 0) > 0
+        extracted = (rec.get('group_tiles', 0) + rec.get('ind_tiles', 0)) > 0
+        if extracted:
+            color = (0, 200, 0)
+        elif forced:
+            color = (0, 200, 200)
+        else:
+            color = (0, 0, 200)
+        cv2.rectangle(debug_img, (x1, y1), (x2, y2), color, 2)
+        label = (
+            f"{rec.get('label', 'unknown')} "
+            f"g{rec.get('group_tiles', 0)} "
+            f"i{rec.get('ind_tiles', 0)} "
+            f"f{rec.get('forced_tiles', 0)}"
+        )
+        text_y = y1 - 5 if y1 > 10 else y1 + 15
+        cv2.putText(debug_img, label, (max(0, x1), max(0, text_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+    out_path = os.path.join(out_dir, f'{rect_name}.jpg')
+    cv2.imwrite(out_path, debug_img)
+
+
 class CropStats:
     """Statistics collector for centered crop dataset generation."""
 
     def __init__(self):
         self.total_pathologies = 0
         self.total_normals = 0
+        self.total_pathology_regions = 0
+        self.extracted_pathology_regions = 0
+        self.inextractable_pathology_regions = 0
 
         # Greedy phase
         self.greedy_saved = 0
@@ -899,8 +1297,9 @@ class CropStats:
 
         # Individual phase
         self.ind_saved = 0
-        self.ind_isolated = 0  # Successfully isolated from neighbors
-        self.ind_fallback = 0  # Used fallback (not isolated)
+        self.ind_isolated = 0  # Saved using primary algo
+        self.ind_fallback = 0  # Used fallback placement
+        self.ind_forced = 0    # Forced extraction with intruder masking
         self.ind_failed_truncation = 0
         self.ind_failed_duplicate = 0
 
@@ -910,6 +1309,77 @@ class CropStats:
         self.norm_failed_pathology = 0  # Could not avoid pathology
         self.norm_failed_duplicate = 0
         self.norm_skipped_limit = 0  # Skipped due to target limit
+
+        # Quality stats
+        self.file_rects = {}
+        self.rect_pathologies = {}
+        self.inextractable = []
+        self.stats_output_path = None
+        self.debug_root = None
+
+    def register_rect(self, slide_id, rect_name, pathologies):
+        file_key = slide_id or 'unknown'
+        self.file_rects[file_key] = self.file_rects.get(file_key, 0) + 1
+        rect_key = (file_key, rect_name or 'unknown')
+        self.rect_pathologies[rect_key] = pathologies or []
+        self.total_pathology_regions += len(pathologies or [])
+
+    def finalize_rect(self, slide_id, rect_name):
+        rect_key = (slide_id or 'unknown', rect_name or 'unknown')
+        for rec in self.rect_pathologies.get(rect_key, []):
+            total_tiles = (
+                rec.get('group_tiles', 0)
+                + rec.get('ind_tiles', 0)
+                + rec.get('forced_tiles', 0)
+            )
+            if total_tiles > 0:
+                self.extracted_pathology_regions += 1
+            else:
+                self.inextractable_pathology_regions += 1
+                self.inextractable.append({
+                    'file': rect_key[0],
+                    'rect': rect_key[1],
+                    'label': rec.get('label', 'unknown'),
+                    'bbox': rec.get('bbox'),
+                })
+
+    def dump_details(self, output_dir):
+        if not output_dir:
+            return
+        os.makedirs(output_dir, exist_ok=True)
+        payload = {
+            'totals': {
+                'pathologies_detected': self.total_pathologies,
+                'normals_detected': self.total_normals,
+                'annotated_pathologies': self.total_pathology_regions,
+                'extracted_pathologies': self.extracted_pathology_regions,
+                'inextractable_pathologies': self.inextractable_pathology_regions,
+                'greedy_saved': self.greedy_saved,
+            'greedy_failed_truncation': self.greedy_failed_truncation,
+            'greedy_failed_duplicate': self.greedy_failed_duplicate,
+            'individual_saved': self.ind_saved,
+            'individual_primary': self.ind_isolated,
+            'individual_fallback': self.ind_fallback,
+            'individual_forced': self.ind_forced,
+            'individual_failed_truncation': self.ind_failed_truncation,
+            'individual_failed_duplicate': self.ind_failed_duplicate,
+                'normal_saved': self.norm_saved,
+                'normal_shifted': self.norm_shifted,
+                'normal_failed_pathology': self.norm_failed_pathology,
+                'normal_failed_duplicate': self.norm_failed_duplicate,
+                'normal_skipped_limit': self.norm_skipped_limit,
+            },
+            'file_rects': self.file_rects,
+            'rect_pathologies': {
+                f'{file_key}::{rect_name}': records
+                for (file_key, rect_name), records in self.rect_pathologies.items()
+            },
+            'inextractable': self.inextractable,
+        }
+        out_path = os.path.join(output_dir, 'quality_stats.json')
+        with open(out_path, 'w') as f:
+            json.dump(payload, f, indent=2)
+        self.stats_output_path = out_path
 
     def print_summary(self):
         """Print final statistics summary."""
@@ -921,6 +1391,11 @@ class CropStats:
         print(f"  Pathologies detected:  {self.total_pathologies}")
         print(f"  Normal cells detected: {self.total_normals}")
 
+        print(f"\nAnnotated pathology regions:")
+        print(f"  Total:                 {self.total_pathology_regions}")
+        print(f"  Extracted (>=1 tile):  {self.extracted_pathology_regions}")
+        print(f"  Inextractable:         {self.inextractable_pathology_regions}")
+
         print(f"\nGreedy tiles (groups):")
         print(f"  Saved:                 {self.greedy_saved}")
         print(f"  Failed (truncation):   {self.greedy_failed_truncation}")
@@ -928,8 +1403,9 @@ class CropStats:
 
         print(f"\nIndividual tiles (pathology):")
         print(f"  Saved:                 {self.ind_saved}")
-        print(f"    - Isolated:          {self.ind_isolated}")
+        print(f"    - Primary algo:      {self.ind_isolated}")
         print(f"    - Fallback:          {self.ind_fallback}")
+        print(f"    - Forced:            {self.ind_forced}")
         print(f"  Failed (truncation):   {self.ind_failed_truncation}")
         print(f"  Failed (duplicate):    {self.ind_failed_duplicate}")
 
@@ -952,6 +1428,18 @@ class CropStats:
         if total_saved + total_failed > 0:
             success_rate = total_saved / (total_saved + total_failed) * 100
             print(f"  Success rate:          {success_rate:.1f}%")
+
+        if self.file_rects:
+            print(f"\nRects per file:")
+            for file_key in sorted(self.file_rects.keys()):
+                print(f"  {file_key}: {self.file_rects[file_key]}")
+
+        if self.stats_output_path:
+            rel_path = os.path.relpath(self.stats_output_path, os.getcwd())
+            print(f"\nDetails written: {rel_path}")
+        if self.debug_root:
+            rel_root = os.path.relpath(self.debug_root, os.getcwd())
+            print(f"Debug overlays:  {rel_root}{os.sep}<slide>{os.sep}<rect>.jpg")
         print("=" * 60 + "\n")
 
 
@@ -971,13 +1459,28 @@ def _reset_crop_stats():
     _crop_stats = CropStats()
 
 
-def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, padding=30):
+def __crop_dataset_centered(
+    name_prefix,
+    rectangle,
+    masks,
+    roi_path,
+    masks_path,
+    padding=30,
+    centered_algo='heuristic',
+    edge_margin=3,
+    normal_limit_mode='same',
+    normal_limit_multiplier=1.0,
+    slide_id=None,
+    rect_label=None,
+    pathology_records=None,
+    force_extraction=True,
+):
     """
     Crop dataset by centering tiles on pathology objects.
 
     Three-phase approach:
     1. Greedy: fit nearby pathologies together (context with multiple objects)
-    2. Individual: each pathology separately, isolated from neighbors
+    2. Individual: each pathology separately, edge-safe tiles
     3. Normal: normal cells, shifted away from any pathology
 
     Ensures no pathology is truncated at tile edges.
@@ -989,8 +1492,19 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
         roi_path: Output path for ROI images
         masks_path: Output path for mask images
         padding: Padding around object bbox in pixels
+        centered_algo: 'heuristic' or 'ring'
+        edge_margin: Edge band width to keep pathology away from tile borders
+        normal_limit_mode: 'same' | 'all' | 'multiplier'
+        normal_limit_multiplier: Multiplier when normal_limit_mode == 'multiplier'
+        slide_id: slide filename stem for stats
+        rect_label: rectangle label from annotation
+        pathology_records: list of pathology region dicts for per-rect stats
+        force_extraction: Force extraction by masking intruders when individual fails
     """
     stats = _get_crop_stats()
+    if pathology_records is None:
+        pathology_records = []
+    stats.register_rect(slide_id, rect_label or name_prefix, pathology_records)
 
     labeled_path, pathology_objects = _get_pathology_objects(masks)
     labeled_normal, normal_objects = _get_normal_objects(masks)
@@ -999,7 +1513,24 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
     stats.total_normals += len(normal_objects)
 
     h, w = masks.shape[:2]
+    centered_algo = (centered_algo or 'heuristic').strip().lower()
+    if centered_algo not in {'heuristic', 'ring'}:
+        centered_algo = 'heuristic'
+    edge_margin = max(int(edge_margin), 0)
+    normal_limit_mode = (normal_limit_mode or 'same').strip().lower()
+    if normal_limit_mode not in {'same', 'all', 'multiplier'}:
+        normal_limit_mode = 'same'
+    try:
+        normal_limit_multiplier = float(normal_limit_multiplier)
+    except (TypeError, ValueError):
+        normal_limit_multiplier = 1.0
+    pathology_integral = None
+    if centered_algo == 'ring':
+        pathology_integral = _integral_image((labeled_path > 0).astype(np.uint8))
     saved_tiles = set()
+
+    for obj in pathology_objects:
+        obj['rec_idx'] = _match_record_for_object(obj, pathology_records)
 
     # Phase 1: Greedy tiles — group nearby pathologies (context)
     greedy_count = 0
@@ -1014,7 +1545,9 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
 
         if len(nearby) > 1:
             # Try to fit all nearby together
-            tile = _try_fit_tile_without_truncation(nearby, labeled_path, h, w, padding)
+            tile = _try_fit_tile_without_truncation(
+                nearby, labeled_path, h, w, padding, edge_margin=edge_margin
+            )
 
             if tile is None:
                 stats.greedy_failed_truncation += 1
@@ -1036,16 +1569,19 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
 
             try:
                 cv2.imwrite(
-                    os.path.join(roi_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                    os.path.join(roi_path, f'{name_prefix}_grp_{greedy_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
                     cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
                 )
                 cv2.imwrite(
-                    os.path.join(masks_path, f'{rect_name}_grp_{greedy_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                    os.path.join(masks_path, f'{name_prefix}_grp_{greedy_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
                     mask
                 )
                 saved_tiles.add(tile_key)
                 greedy_count += 1
                 stats.greedy_saved += 1
+                _increment_pathology_records(
+                    pathology_records, y1, x1, y2, x2, edge_margin=edge_margin, field='group_tiles'
+                )
 
                 # Mark all nearby as used in greedy (but still process individually!)
                 for nearby_obj in nearby:
@@ -1053,20 +1589,43 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
             except cv2.error:
                 print(f'ROI empty: {y1}, {x1}')
 
-    # Phase 2: Individual tiles — EVERY pathology gets its own isolated tile
+    # Phase 2: Individual tiles — EVERY pathology gets its own edge-safe tile
     # Even those in greedy groups get individual tiles for focused learning
     individual_count = 0
     for obj in pathology_objects:
-        # Try to isolate this pathology from neighbors
-        tile = _try_fit_single_pathology_isolated(
-            obj, pathology_objects, labeled_path, h, w, padding
-        )
-
-        isolated = tile is not None
+        tile = None
+        used_primary = False
+        used_forced = False
+        intruder_mask = None
+        if centered_algo == 'ring' and pathology_integral is not None:
+            tile = _try_fit_single_pathology_ring(
+                obj, pathology_integral, h, w, padding, edge_margin=edge_margin
+            )
+            used_primary = tile is not None
+        else:
+            tile = _try_fit_single_pathology_heuristic(
+                obj, pathology_objects, labeled_path, h, w, padding, edge_margin=edge_margin
+            )
+            used_primary = tile is not None
 
         if tile is None:
-            # Fallback: fit without isolation check
-            tile = _try_fit_tile_without_truncation([obj], labeled_path, h, w, padding)
+            # Fallback: fit without shifting (still enforces edge margin)
+            tile = _try_fit_tile_without_truncation(
+                [obj], labeled_path, h, w, padding, edge_margin=edge_margin
+            )
+
+        if tile is None and force_extraction:
+            tile = _try_fit_single_pathology_force(
+                obj,
+                labeled_path,
+                h,
+                w,
+                padding,
+                edge_margin=0,
+            )
+            if tile is None:
+                tile = _center_tile_for_object(obj, padding)
+            used_forced = True
 
         if tile is None:
             stats.ind_failed_truncation += 1
@@ -1075,37 +1634,83 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
         y1, x1, y2, x2 = tile
         tile_key = (y1, x1, y2, x2)
 
-        if tile_key in saved_tiles:
-            stats.ind_failed_duplicate += 1
-            continue
+        if tile_key in saved_tiles and not used_forced:
+            if force_extraction:
+                # Duplicate is treated as a failure; force keeps a tile guaranteed.
+                used_forced = True
+            else:
+                stats.ind_failed_duplicate += 1
+                continue
 
-        roi = rectangle[y1:y2, x1:x2]
-        mask = masks[y1:y2, x1:x2]
+        roi, mask, tile_labels = _extract_tile_with_padding(rectangle, masks, labeled_path, y1, x1, y2, x2)
+        if used_forced:
+            intruder_mask = (tile_labels != 0) & (tile_labels != obj['id'])
+            if np.any(intruder_mask):
+                roi = roi.copy()
+                mask = mask.copy()
+                _apply_intruder_artifact(roi, mask, intruder_mask)
         tile_size = y2 - y1
 
         try:
             cv2.imwrite(
-                os.path.join(roi_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                os.path.join(roi_path, f'{name_prefix}_ind_{individual_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
                 cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
             )
             cv2.imwrite(
-                os.path.join(masks_path, f'{rect_name}_ind_{individual_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                os.path.join(masks_path, f'{name_prefix}_ind_{individual_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
                 mask
             )
             saved_tiles.add(tile_key)
             individual_count += 1
             stats.ind_saved += 1
-            if isolated:
+            if used_primary:
                 stats.ind_isolated += 1
+            elif used_forced:
+                stats.ind_forced += 1
             else:
                 stats.ind_fallback += 1
+            rec_idx = obj.get('rec_idx')
+            if used_forced:
+                if rec_idx is not None and 0 <= rec_idx < len(pathology_records):
+                    rec = pathology_records[rec_idx]
+                    rec['forced_tiles'] = rec.get('forced_tiles', 0) + 1
+                else:
+                    _increment_forced_pathology_records(
+                        pathology_records,
+                        y1,
+                        x1,
+                        y2,
+                        x2,
+                        intruder_mask=intruder_mask,
+                    )
+            else:
+                if rec_idx is not None and 0 <= rec_idx < len(pathology_records):
+                    rec = pathology_records[rec_idx]
+                    rec['ind_tiles'] = rec.get('ind_tiles', 0) + 1
+                else:
+                    _increment_pathology_records(
+                        pathology_records,
+                        y1,
+                        x1,
+                        y2,
+                        x2,
+                        edge_margin=edge_margin,
+                        field='ind_tiles',
+                        intruder_mask=intruder_mask,
+                    )
         except cv2.error:
             print(f'ROI empty: {y1}, {x1}')
 
     # Phase 3: Normal cell tiles (for class balance)
     # Try to shift tiles away from pathology instead of just skipping
     normal_count = 0
-    target_normals = max(greedy_count + individual_count, 5)
+    base_normals = greedy_count + individual_count
+    if normal_limit_mode == 'all':
+        target_normals = len(normal_objects)
+    elif normal_limit_mode == 'multiplier':
+        target_normals = max(int(round(base_normals * normal_limit_multiplier)), 0)
+    else:
+        target_normals = max(base_normals, 5)
 
     for obj in normal_objects:
         if normal_count >= target_normals:
@@ -1145,11 +1750,11 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
 
         try:
             cv2.imwrite(
-                os.path.join(roi_path, f'{rect_name}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                os.path.join(roi_path, f'{name_prefix}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
                 cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
             )
             cv2.imwrite(
-                os.path.join(masks_path, f'{rect_name}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                os.path.join(masks_path, f'{name_prefix}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
                 tile_mask
             )
             saved_tiles.add(tile_key)
@@ -1160,7 +1765,8 @@ def __crop_dataset_centered(rect_name, rectangle, masks, roi_path, masks_path, p
         except cv2.error:
             print(f'ROI empty: {y1}, {x1}')
 
-    print(f'  {rect_name}: {greedy_count} grp, {individual_count} ind, {normal_count} norm')
+    stats.finalize_rect(slide_id, rect_label or name_prefix)
+    print(f'  {name_prefix}: {greedy_count} grp, {individual_count} ind, {normal_count} norm')
 
 
 def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, overlap: float = 0.0):
@@ -1187,37 +1793,6 @@ def __crop_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_pat
                     # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
                     cv2.imwrite(os.path.join(roi_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR))
                     cv2.imwrite(os.path.join(masks_path, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
-                except cv2.error:
-                    print('ROI empty: ', x, y)
-
-
-def __crop_debug_dataset(rect_name, zoom_levels, rectangle, masks, roi_path, masks_path, slide_name, overlap: float = 0.0):
-    """
-    Crop dataset with optional overlap (debug mode with slide subdirectories).
-
-    Args:
-        rectangle: RGBA image from OpenSlide
-        overlap: Overlap ratio (0.0 = no overlap, 0.5 = 50% overlap)
-    """
-    for zoom in zoom_levels:
-        # Calculate stride based on overlap
-        stride = max(1, int(zoom * (1.0 - overlap)))
-
-        for x in range(0, rectangle.shape[0], stride):
-            for y in range(0, rectangle.shape[1], stride):
-                roi = rectangle[x: x + zoom, y: y + zoom]
-                mask = masks[x: x + zoom, y: y + zoom]
-
-                if mask.shape[0] < 100 or mask.shape[1] < 100:  # skip small crops
-                    continue
-
-                try:
-                    os.makedirs(os.path.join(roi_path, slide_name), exist_ok=True)
-                    os.makedirs(os.path.join(masks_path, slide_name), exist_ok=True)
-
-                    # OpenSlide returns RGBA, convert to BGR for cv2.imwrite/imread compatibility
-                    cv2.imwrite(os.path.join(roi_path, slide_name, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR))
-                    cv2.imwrite(os.path.join(masks_path, slide_name, f'{rect_name}_coords_{x}_{y}_{zoom}.bmp'), mask)
                 except cv2.error:
                     print('ROI empty: ', x, y)
 

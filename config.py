@@ -132,6 +132,24 @@ class Config:
     # pathology objects and adjusts size/position to avoid truncating them.
     # Generates both group tiles (multiple pathologies) and individual tiles.
     CENTERED_CROP: bool = True
+    # Centered-crop algorithm:
+    # - 'heuristic': shift-based search (fast, may miss valid placements)
+    # - 'ring': exhaustive search for edge-safe tiles (slower, guarantees if exists)
+    CENTERED_CROP_ALGO: str = 'heuristic'
+    # Edge margin (pixels) to keep pathology away from tile borders.
+    CENTERED_CROP_EDGE_MARGIN: int = 3
+    # Dataset debug outputs (writes per-rect overlays to debug_info/).
+    DATASET_DEBUG: bool = False
+    # Pad each rect with a white border (pixels) before cropping.
+    RECT_BORDER_PADDING: int = 0
+    # Force extraction if individual crop fails by masking intruders.
+    FORCE_EXTRACTION: bool = True
+    # Normal tile limit for centered-crop:
+    # - 'same': max(group+individual, 5)
+    # - 'all': no limit (use all normal objects)
+    # - 'multiplier': (group+individual) * NORMAL_TILES_MULTIPLIER
+    NORMAL_TILES_LIMIT_MODE: str = 'same'
+    NORMAL_TILES_MULTIPLIER: float = 1.0
 
     # ---------------------------------------------------------------------
     # Web
@@ -247,6 +265,20 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.TILE_OVERLAP = float(dataset['tile_overlap'])
     if 'centered_crop' in dataset:
         cfg.CENTERED_CROP = _to_bool(dataset['centered_crop'])
+    if 'centered_crop_algo' in dataset:
+        cfg.CENTERED_CROP_ALGO = str(dataset['centered_crop_algo']).lower()
+    if 'centered_crop_edge_margin' in dataset:
+        cfg.CENTERED_CROP_EDGE_MARGIN = _to_int(dataset['centered_crop_edge_margin'])
+    if 'debug' in dataset:
+        cfg.DATASET_DEBUG = _to_bool(dataset['debug'])
+    if 'rect_border_padding' in dataset:
+        cfg.RECT_BORDER_PADDING = _to_int(dataset['rect_border_padding'])
+    if 'force_extraction' in dataset:
+        cfg.FORCE_EXTRACTION = _to_bool(dataset['force_extraction'])
+    if 'normal_tiles_limit' in dataset:
+        cfg.NORMAL_TILES_LIMIT_MODE = str(dataset['normal_tiles_limit']).lower()
+    if 'normal_tiles_multiplier' in dataset:
+        cfg.NORMAL_TILES_MULTIPLIER = _to_float(dataset['normal_tiles_multiplier'])
 
     web = data.get('web', {}) or {}
     if 'ip_exposed' in web:
@@ -343,6 +375,13 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'broaden_individual_rect': 'BROADEN_INDIVIDUAL_RECT',
             'tile_overlap': 'TILE_OVERLAP',
             'centered_crop': 'CENTERED_CROP',
+            'centered_crop_algo': 'CENTERED_CROP_ALGO',
+            'centered_crop_edge_margin': 'CENTERED_CROP_EDGE_MARGIN',
+            'debug': 'DATASET_DEBUG',
+            'rect_border_padding': 'RECT_BORDER_PADDING',
+            'force_extraction': 'FORCE_EXTRACTION',
+            'normal_tiles_limit': 'NORMAL_TILES_LIMIT_MODE',
+            'normal_tiles_multiplier': 'NORMAL_TILES_MULTIPLIER',
         },
         'web': {
             'ip_exposed': 'IP_EXPOSED',
