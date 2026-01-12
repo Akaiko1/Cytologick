@@ -70,20 +70,25 @@ def run_inference(
     model: Any,
     mode: str = 'direct',
     classes: int = 3,
-    shapes: Tuple[int, int] = (128, 128)
-) -> np.ndarray:
+    shapes: Tuple[int, int] = (128, 128),
+    threshold: float = 0.5
+) -> Tuple[np.ndarray, list]:
     """
     Run inference on an image using the specified mode.
-    
+
     Args:
         image: Input image as numpy array (H, W, C) in RGB format.
         model: Loaded model object (PyTorch or TensorFlow).
-        mode: Inference mode - 'direct', 'smooth', or 'remote'.
+        mode: Inference mode - 'direct', 'smooth', 'region', or 'remote'.
         classes: Number of output classes.
         shapes: Model input shape (height, width).
-        
+        threshold: Confidence threshold for region mode atypical detection.
+
     Returns:
-        Pathology map as numpy array.
+        Tuple of:
+        - Pathology map as numpy array (H, W, C)
+        - List of region bboxes (only for 'region' mode, empty otherwise):
+          each bbox is (x, y, width, height, avg_probability)
     """
     # Import framework-specific modules lazily to avoid import errors
     if str(cfg.FRAMEWORK).lower() != 'pytorch':
@@ -109,13 +114,18 @@ def run_inference(
             parallelism_mode=1,
             thread_count=4,
         )
-        return maps[0]
+        return maps[0], []
     elif mode == 'smooth':
         # Use TTA + smooth windowing
-        return inference.apply_model_smooth_pytorch(cfg, image, model, shape=shapes[0])
+        return inference.apply_model_smooth_pytorch(cfg, image, model, shape=shapes[0]), []
+    elif mode == 'region':
+        # Region-wise refinement: fast pass + re-check each connected region
+        return inference.apply_model_region_pytorch(
+            cfg, image, model, classes=classes, shapes=shapes, atypical_threshold=threshold
+        )
     else:
         # Standard fast inference
-        return inference.apply_model_raw_pytorch(cfg, image, model, classes=classes, shapes=shapes)
+        return inference.apply_model_raw_pytorch(cfg, image, model, classes=classes, shapes=shapes), []
 
 
 # -----------------------------------------------------------------------------

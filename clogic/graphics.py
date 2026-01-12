@@ -72,8 +72,8 @@ def render_overlay_fast(pathology_map, threshold: float = 0.5):
     overlay[green_class2] = [0, 255, 0, 40]
     overlay[normal_mask] = [0, 255, 0, 64]
 
-    # Yellow on top
-    overlay[yellow_mask] = [0, 255, 255, 80]
+    # Yellow on top (alpha 127 to match process_dense_pathology_map)
+    overlay[yellow_mask] = [0, 255, 255, 127]
 
     # Red outlines + labels
     red_binary = (red_mask * 255).astype(np.uint8)
@@ -233,10 +233,34 @@ def process_cells_sparse(markup, stats, single_cell_contours, atypical_contours)
 
             cv2.drawContours(markup, [cell], -1, (0, 0, 255), -1)
             cv2.drawContours(markup, [cell], -1, (0, 125, 255), 2)
-            cv2.putText(markup, f'{proportion} %', 
-                        (t_x, t_y), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 
+            cv2.putText(markup, f'{proportion} %',
+                        (t_x, t_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
                         0.55,
                         (0, 1, 0),
                         2,
                         -1)
+
+
+def draw_region_bboxes(markup, bboxes: list) -> None:
+    """
+    Draw bounding boxes for atypical regions found in region mode.
+
+    Args:
+        markup: BGRA overlay image to draw on
+        bboxes: List of (x, y, width, height, avg_probability) tuples
+    """
+    for idx, (x, y, w, h, prob) in enumerate(bboxes):
+        # Draw rectangle (cyan color for visibility)
+        cv2.rectangle(markup, (x, y), (x + w, y + h), (255, 255, 0, 200), 2)
+
+        # Draw label with region number and probability
+        label = f'R{idx + 1}: {int(prob * 100)}%'
+        # Position label above the box
+        label_y = max(15, y - 5)
+        cv2.putText(
+            markup, label,
+            (x, label_y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+            (255, 255, 0, 255), 1, cv2.LINE_AA
+        )

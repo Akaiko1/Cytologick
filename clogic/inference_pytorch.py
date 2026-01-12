@@ -320,3 +320,121 @@ def apply_model_smooth_pytorch(
     )
 
     return predictions_smooth.astype(np.float32)
+
+
+def apply_model_region_pytorch(
+    cfg: Config,
+    source: np.ndarray,
+    model: torch.nn.Module,
+    classes: int | None = None,
+    shapes: tuple | None = None,
+    batch_size: int | None = None,
+    atypical_threshold: float = 0.5
+) -> tuple[np.ndarray, list[tuple[int, int, int, int, float]]]:
+    """
+    Apply PyTorch model with region-wise refinement.
+
+    Two-pass approach:
+    1. First pass: fast tiled inference to find non-background regions
+    2. Merge classes 1 and 2 (non-background) into a single mask
+    3. For each connected region, compute bounding box, center a tile on it,
+       and re-run inference for accurate segmentation
+
+    This improves accuracy for cells split across tile boundaries.
+
+    Args:
+        source: Input image as numpy array (H, W, C)
+        model: PyTorch model
+        classes: Number of output classes
+        shapes: Window size tuple (height, width)
+        batch_size: Batch size for inference (None for auto)
+        atypical_threshold: Threshold for considering region as atypical
+
+    Returns:
+        Tuple of:
+        - Probability map as numpy array (H, W, C) with values in [0, 1]
+        - List of atypical region bboxes: (x, y, width, height, avg_probability)
+    """
+    model.eval()
+    model = model.to(DEVICE)
+
+    shapes = tuple(cfg.IMAGE_SHAPE) if shapes is None else shapes
+    classes = int(cfg.CLASSES) if classes is None else int(classes)
+
+    # --- Pass 1: Fast tiled inference ---
+    initial_map = apply_model_raw_pytorch(
+        cfg, source, model, classes=classes, shapes=shapes, batch_size=batch_size
+    )
+
+    # Get predicted class per pixel (argmax)
+    predicted_class = np.argmax(initial_map, axis=2)
+
+    # Create binary mask: 1 where class is 1 or 2 (non-background)
+    non_background_mask = ((predicted_class == 1) | (predicted_class == 2)).astype(np.uint8)
+
+    # Find connected components
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        non_background_mask, connectivity=8
+    )
+
+    if num_labels <= 1:
+        # No non-background regions found
+        return initial_map, []
+
+    # --- Pass 2: Region-wise refinement ---
+    # Extract each region, resize to model input size, run inference
+    region_tiles = []
+    region_bboxes = []  # (bx, by, bw, bh, label_idx)
+
+    for label_idx in range(1, num_labels):  # Skip background (0)
+        # Get bounding box: [x, y, width, height, area]
+        bx, by, bw, bh, area = stats[label_idx]
+
+        # Skip only single-pixel noise
+        if area < 3:
+            continue
+
+        # Extract region from source image (will be resized in image_to_tensor_pytorch)
+        region = source[by:by + bh, bx:bx + bw]
+
+        region_tiles.append(region)
+        region_bboxes.append((bx, by, bw, bh, label_idx))
+
+    if not region_tiles:
+        return initial_map, []
+
+    # Run inference on resized regions
+    region_predictions = _run_batched_inference(
+        cfg, model, region_tiles, batch_size, return_probs=True
+    )
+
+    # Create output map - keep green overlay from initial fast inference
+    # Merge class 1 and 2 into class 1 (green) as base layer
+    output_map = np.zeros_like(initial_map)
+    output_map[:, :, 0] = initial_map[:, :, 0]  # Keep background
+    # Merge class 1 + class 2 probabilities into class 1 (will show as green)
+    output_map[:, :, 1] = initial_map[:, :, 1] + initial_map[:, :, 2]
+
+    # Collect atypical bounding boxes after refinement
+    atypical_bboxes = []
+
+    # Check each region for atypical cells, only overwrite class 2 pixels
+    for idx, (bx, by, bw, bh, label_idx) in enumerate(region_bboxes):
+        pred = region_predictions[idx]  # (IMAGE_SHAPE[0], IMAGE_SHAPE[1], classes)
+
+        # Resize prediction back to original region size
+        pred_resized = cv2.resize(pred, (bw, bh), interpolation=cv2.INTER_LINEAR)
+
+        # Check if any pixel has class 2 as dominant
+        pred_class = np.argmax(pred_resized, axis=2)
+        atypical_mask = pred_class == 2
+
+        if np.any(atypical_mask):
+            # Only overwrite pixels where class 2 dominates (red areas)
+            output_map[by:by + bh, bx:bx + bw][atypical_mask] = pred_resized[atypical_mask]
+
+            # Calculate max class 2 probability
+            max_prob = float(np.max(pred_resized[:, :, 2]))
+            atypical_bboxes.append((bx, by, bw, bh, max_prob))
+
+    return output_map, atypical_bboxes

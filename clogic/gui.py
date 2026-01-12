@@ -51,16 +51,20 @@ class RenderWorker(QThread):
     """Background worker for fast overlay rendering."""
     finished = pyqtSignal(object)  # (markup,)
 
-    def __init__(self, pathology_map, threshold):
+    def __init__(self, pathology_map, threshold, region_bboxes=None):
         super().__init__()
         self.pathology_map = pathology_map
         self.threshold = threshold
+        self.region_bboxes = region_bboxes or []
 
     def run(self):
         markup = drawing.render_overlay_fast(
             self.pathology_map,
             threshold=self.threshold
         )
+        # Draw region bboxes if available
+        if self.region_bboxes:
+            drawing.draw_region_bboxes(markup, self.region_bboxes)
         self.finished.emit(markup)
 
 
@@ -83,8 +87,8 @@ class Preview(QWidget):
     """
     
     # Inference mode options
-    modes = ['smooth', 'direct', 'remote']
-    mode_names = ['Local: Comprehensive', 'Local: Fast', 'Cloud: Fast']
+    modes = ['smooth', 'direct', 'region', 'remote']
+    mode_names = ['Local: Comprehensive', 'Local: Fast', 'Local: Region', 'Cloud: Fast']
 
     def __init__(self, parent: 'Viewer', pixmap: QPixmap):
         """
@@ -100,6 +104,7 @@ class Preview(QWidget):
         self.image = pixmap
         self.map = None  # Overlay map (set after analysis)
         self.cached_pathology_map = None
+        self.cached_region_bboxes = []  # Bounding boxes from region mode
         self.conf_threshold = 0.6  # Default 60% confidence
 
         # Async rendering state
@@ -213,15 +218,21 @@ class Preview(QWidget):
         self.parent.unet_pred_mode = radioButton.mode
         # Invalidate cached predictions when mode changes
         self.cached_pathology_map = None
+        self.cached_region_bboxes = []
         self.map = None
         self.display.repaint()
 
     def _refresh_overlay_from_cache(self):
         """Re-render overlay from cached predictions without re-running inference."""
+        import clogic.graphics as graphics
+
         markup, stats = inference_utils.process_pathology_map(
             self.cached_pathology_map,
             threshold=self.conf_threshold
         )
+        # Draw region bounding boxes if available
+        if self.cached_region_bboxes:
+            graphics.draw_region_bboxes(markup, self.cached_region_bboxes)
         cv2.imwrite('gui_map.png', markup)
         self.map = QPixmap('gui_map.png')
         self.info.setText(inference_utils.format_detection_stats(stats))
@@ -239,7 +250,8 @@ class Preview(QWidget):
         # Start new render
         self._render_worker = RenderWorker(
             self.cached_pathology_map.copy(),
-            self._pending_threshold
+            self._pending_threshold,
+            self.cached_region_bboxes
         )
         self._render_worker.finished.connect(self._on_render_finished)
         self._render_worker.start()
@@ -261,16 +273,18 @@ class Preview(QWidget):
         source = cv2.imread('gui_preview.bmp', 1)
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
         # Run inference using shared utility
-        pathology_map = inference_utils.run_inference(
+        pathology_map, region_bboxes = inference_utils.run_inference(
             self.parent.cfg,
             source,
             self.parent.model,
             mode=self.parent.unet_pred_mode,
             classes=int(self.parent.cfg.CLASSES),
             shapes=tuple(self.parent.cfg.IMAGE_SHAPE),
+            threshold=self.conf_threshold,
         )
         self.cached_pathology_map = pathology_map
-        
+        self.cached_region_bboxes = region_bboxes
+
         # Process results into visualization
         self._refresh_overlay_from_cache()
     

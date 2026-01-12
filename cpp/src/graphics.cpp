@@ -119,9 +119,9 @@ cv::Mat renderOverlayFast(const cv::Mat& pathologyMap, float threshold) {
         }
     }
 
-    // Apply yellow on top
+    // Apply yellow on top (alpha 127 to match full analysis)
     if (!yellowMask.empty()) {
-        overlay.setTo(cv::Scalar(0, 255, 255, 80), yellowMask);
+        overlay.setTo(cv::Scalar(0, 255, 255, 127), yellowMask);
     }
 
     // Red outline using contours + labels
@@ -292,7 +292,7 @@ std::pair<cv::Mat, DetectionStats> processDensePathologyMap(
 
     // 2. Apply yellow mask (already excludes red areas from earlier processing)
     if (!lowBinaryMask.empty()) {
-        overlay.setTo(cv::Scalar(0, 255, 255, 80), lowBinaryMask);
+        overlay.setTo(cv::Scalar(0, 255, 255, 127), lowBinaryMask);
     }
 
     // 3. Draw red outlines (atypical)
