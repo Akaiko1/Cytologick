@@ -52,6 +52,27 @@ public:
     cv::Mat runInferenceSmooth(const cv::Mat& image, const Config& config);
 
     /**
+     * Bounding box for atypical region detection
+     */
+    struct RegionBbox {
+        int x, y, width, height;
+        float maxProbability;
+    };
+
+    /**
+     * Run inference with region-wise refinement.
+     * Two-pass approach:
+     * 1. Fast tiled inference to find non-background regions
+     * 2. For each connected region, extract bbox, resize to model input, re-run inference
+     * Only class 2 (atypical) pixels are updated from refinement pass.
+     *
+     * @param image Input RGB image (any size)
+     * @param config Configuration with tile size, classes, etc.
+     * @return Pair of (probability map, vector of atypical region bboxes)
+     */
+    std::pair<cv::Mat, std::vector<RegionBbox>> runInferenceRegion(const cv::Mat& image, const Config& config);
+
+    /**
      * Get number of output classes
      */
     int getNumClasses() const { return m_numClasses; }

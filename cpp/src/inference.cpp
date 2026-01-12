@@ -573,4 +573,262 @@ cv::Mat InferenceEngine::runInferenceSmooth(const cv::Mat& image, const Config& 
     return unpadded(originalSize).clone();
 }
 
+std::pair<cv::Mat, std::vector<InferenceEngine::RegionBbox>> InferenceEngine::runInferenceRegion(
+    const cv::Mat& image,
+    const Config& config
+) {
+    std::vector<RegionBbox> atypicalBboxes;
+
+    if (!m_session) {
+        m_lastError = "No model loaded";
+        return {cv::Mat(), atypicalBboxes};
+    }
+
+    if (image.empty()) {
+        m_lastError = "Empty input image";
+        return {cv::Mat(), atypicalBboxes};
+    }
+
+    // --- Pass 1: Fast tiled inference ---
+    cv::Mat initialMap = runInference(image, config);
+    if (initialMap.empty()) {
+        return {cv::Mat(), atypicalBboxes};
+    }
+
+    // Get predicted class per pixel (argmax)
+    cv::Mat predictedClass(initialMap.rows, initialMap.cols, CV_8UC1);
+    for (int y = 0; y < initialMap.rows; ++y) {
+        const float* mapRow = initialMap.ptr<float>(y);
+        uchar* classRow = predictedClass.ptr<uchar>(y);
+        for (int x = 0; x < initialMap.cols; ++x) {
+            int base = x * m_numClasses;
+            float maxVal = mapRow[base];
+            int maxIdx = 0;
+            for (int c = 1; c < m_numClasses; ++c) {
+                if (mapRow[base + c] > maxVal) {
+                    maxVal = mapRow[base + c];
+                    maxIdx = c;
+                }
+            }
+            classRow[x] = static_cast<uchar>(maxIdx);
+        }
+    }
+
+    // Create binary mask: 1 where class is 1 or 2 (non-background)
+    cv::Mat nonBackgroundMask(initialMap.rows, initialMap.cols, CV_8UC1);
+    for (int y = 0; y < predictedClass.rows; ++y) {
+        const uchar* classRow = predictedClass.ptr<uchar>(y);
+        uchar* maskRow = nonBackgroundMask.ptr<uchar>(y);
+        for (int x = 0; x < predictedClass.cols; ++x) {
+            maskRow[x] = (classRow[x] == 1 || classRow[x] == 2) ? 255 : 0;
+        }
+    }
+
+    // Find connected components
+    cv::Mat labels, stats, centroids;
+    int numLabels = cv::connectedComponentsWithStats(nonBackgroundMask, labels, stats, centroids, 8, CV_32S);
+
+    if (numLabels <= 1) {
+        // No non-background regions found - return initial map with merged green
+        cv::Mat outputMap(initialMap.rows, initialMap.cols, CV_32FC(m_numClasses), cv::Scalar::all(0));
+        for (int y = 0; y < initialMap.rows; ++y) {
+            const float* inRow = initialMap.ptr<float>(y);
+            float* outRow = outputMap.ptr<float>(y);
+            for (int x = 0; x < initialMap.cols; ++x) {
+                int base = x * m_numClasses;
+                outRow[base + 0] = inRow[base + 0];  // Background
+                outRow[base + 1] = inRow[base + 1] + inRow[base + 2];  // Merge to green
+                if (m_numClasses > 2) {
+                    outRow[base + 2] = 0.0f;
+                }
+            }
+        }
+        return {outputMap, atypicalBboxes};
+    }
+
+    // --- Pass 2: Region-wise refinement ---
+    // Collect regions
+    struct RegionInfo {
+        int x, y, width, height;
+        int labelIdx;
+    };
+    std::vector<RegionInfo> regions;
+    std::vector<cv::Mat> regionTiles;
+
+    for (int labelIdx = 1; labelIdx < numLabels; ++labelIdx) {
+        int bx = stats.at<int>(labelIdx, cv::CC_STAT_LEFT);
+        int by = stats.at<int>(labelIdx, cv::CC_STAT_TOP);
+        int bw = stats.at<int>(labelIdx, cv::CC_STAT_WIDTH);
+        int bh = stats.at<int>(labelIdx, cv::CC_STAT_HEIGHT);
+        int area = stats.at<int>(labelIdx, cv::CC_STAT_AREA);
+
+        // Skip single-pixel noise
+        if (area < 3) {
+            continue;
+        }
+
+        // Extract region from source image (will be resized in preprocessTile)
+        cv::Mat rgb;
+        if (image.channels() == 4) {
+            cv::cvtColor(image, rgb, cv::COLOR_RGBA2RGB);
+        } else if (image.channels() == 1) {
+            cv::cvtColor(image, rgb, cv::COLOR_GRAY2RGB);
+        } else {
+            rgb = image;
+        }
+
+        cv::Rect roi(bx, by, bw, bh);
+        roi &= cv::Rect(0, 0, rgb.cols, rgb.rows);  // Clamp to image bounds
+        if (roi.width <= 0 || roi.height <= 0) {
+            continue;
+        }
+
+        cv::Mat region = rgb(roi).clone();
+        regionTiles.push_back(region);
+        regions.push_back({bx, by, bw, bh, labelIdx});
+    }
+
+    if (regions.empty()) {
+        // No valid regions - return initial map with merged green
+        cv::Mat outputMap(initialMap.rows, initialMap.cols, CV_32FC(m_numClasses), cv::Scalar::all(0));
+        for (int y = 0; y < initialMap.rows; ++y) {
+            const float* inRow = initialMap.ptr<float>(y);
+            float* outRow = outputMap.ptr<float>(y);
+            for (int x = 0; x < initialMap.cols; ++x) {
+                int base = x * m_numClasses;
+                outRow[base + 0] = inRow[base + 0];
+                outRow[base + 1] = inRow[base + 1] + inRow[base + 2];
+                if (m_numClasses > 2) {
+                    outRow[base + 2] = 0.0f;
+                }
+            }
+        }
+        return {outputMap, atypicalBboxes};
+    }
+
+    // Run batched inference on regions
+    int batchSize = config.batchSize;
+    int tileSize = 3 * m_inputShape.first * m_inputShape.second;
+    int outputTileSize = m_numClasses * m_inputShape.first * m_inputShape.second;
+
+    // Store all region predictions
+    std::vector<std::vector<float>> regionPredictions(regions.size());
+
+    for (size_t start = 0; start < regionTiles.size(); start += batchSize) {
+        size_t end = std::min(start + static_cast<size_t>(batchSize), regionTiles.size());
+        int currentBatch = static_cast<int>(end - start);
+
+        std::vector<float> batchData;
+        batchData.reserve(currentBatch * tileSize);
+
+        for (size_t i = start; i < end; ++i) {
+            auto tileData = preprocessTile(regionTiles[i]);
+            batchData.insert(batchData.end(), tileData.begin(), tileData.end());
+        }
+
+        auto batchOutput = runBatch(batchData, currentBatch);
+        if (batchOutput.empty()) {
+            return {cv::Mat(), atypicalBboxes};
+        }
+
+        // Store predictions for each region in batch
+        for (int i = 0; i < currentBatch; ++i) {
+            size_t regionIdx = start + i;
+            regionPredictions[regionIdx].resize(outputTileSize);
+            std::copy(
+                batchOutput.begin() + i * outputTileSize,
+                batchOutput.begin() + (i + 1) * outputTileSize,
+                regionPredictions[regionIdx].begin()
+            );
+        }
+    }
+
+    // Create output map - keep green overlay from initial fast inference
+    cv::Mat outputMap(initialMap.rows, initialMap.cols, CV_32FC(m_numClasses), cv::Scalar::all(0));
+    for (int y = 0; y < initialMap.rows; ++y) {
+        const float* inRow = initialMap.ptr<float>(y);
+        float* outRow = outputMap.ptr<float>(y);
+        for (int x = 0; x < initialMap.cols; ++x) {
+            int base = x * m_numClasses;
+            outRow[base + 0] = inRow[base + 0];  // Keep background
+            outRow[base + 1] = inRow[base + 1] + inRow[base + 2];  // Merge class 1+2 to green
+            if (m_numClasses > 2) {
+                outRow[base + 2] = 0.0f;  // Clear class 2 initially
+            }
+        }
+    }
+
+    // Process each region - only overwrite class 2 pixels
+    for (size_t regionIdx = 0; regionIdx < regions.size(); ++regionIdx) {
+        const auto& region = regions[regionIdx];
+        const auto& pred = regionPredictions[regionIdx];
+
+        int bx = region.x;
+        int by = region.y;
+        int bw = region.width;
+        int bh = region.height;
+
+        // Resize prediction from model output size to bbox size
+        // pred is in NCHW format (but N=1), we need to convert to HWC and resize
+        cv::Mat predMap(m_inputShape.first, m_inputShape.second, CV_32FC(m_numClasses));
+        for (int h = 0; h < m_inputShape.first; ++h) {
+            float* row = predMap.ptr<float>(h);
+            for (int w = 0; w < m_inputShape.second; ++w) {
+                for (int c = 0; c < m_numClasses; ++c) {
+                    int srcIdx = c * m_inputShape.first * m_inputShape.second + h * m_inputShape.second + w;
+                    row[w * m_numClasses + c] = pred[srcIdx];
+                }
+            }
+        }
+
+        // Resize to bbox size
+        cv::Mat predResized;
+        cv::resize(predMap, predResized, cv::Size(bw, bh), 0, 0, cv::INTER_LINEAR);
+
+        // Check if any pixel has class 2 as dominant and find max probability
+        bool hasAtypical = false;
+        float maxProb = 0.0f;
+
+        for (int py = 0; py < bh; ++py) {
+            const float* predRow = predResized.ptr<float>(py);
+            for (int px = 0; px < bw; ++px) {
+                int base = px * m_numClasses;
+                float maxVal = predRow[base];
+                int maxIdx = 0;
+                for (int c = 1; c < m_numClasses; ++c) {
+                    if (predRow[base + c] > maxVal) {
+                        maxVal = predRow[base + c];
+                        maxIdx = c;
+                    }
+                }
+
+                // Track max class 2 probability
+                if (m_numClasses > 2) {
+                    maxProb = std::max(maxProb, predRow[base + 2]);
+                }
+
+                // Only overwrite if class 2 dominates
+                if (maxIdx == 2) {
+                    hasAtypical = true;
+                    int outY = by + py;
+                    int outX = bx + px;
+                    if (outY >= 0 && outY < outputMap.rows && outX >= 0 && outX < outputMap.cols) {
+                        float* outRow = outputMap.ptr<float>(outY);
+                        for (int c = 0; c < m_numClasses; ++c) {
+                            outRow[outX * m_numClasses + c] = predRow[base + c];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add bbox if atypical detected
+        if (hasAtypical) {
+            atypicalBboxes.push_back({bx, by, bw, bh, maxProb});
+        }
+    }
+
+    return {outputMap, atypicalBboxes};
+}
+
 } // namespace cytologick

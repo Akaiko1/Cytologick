@@ -92,16 +92,24 @@ void PreviewWindow::setupUi() {
     // Inference mode
     m_directButton = new QRadioButton("Local: Fast", this);
     m_smoothButton = new QRadioButton("Local: Comprehensive", this);
+    m_regionButton = new QRadioButton("Local: Region", this);
     const auto& cfg = m_mainWindow->getConfig();
     if (cfg.predMode == "smooth") {
         m_useSmooth = true;
+        m_useRegion = false;
         m_smoothButton->setChecked(true);
+    } else if (cfg.predMode == "region") {
+        m_useSmooth = false;
+        m_useRegion = true;
+        m_regionButton->setChecked(true);
     } else {
         m_useSmooth = false;
+        m_useRegion = false;
         m_directButton->setChecked(true);
     }
     connect(m_directButton, &QRadioButton::toggled, this, &PreviewWindow::onModeToggled);
     connect(m_smoothButton, &QRadioButton::toggled, this, &PreviewWindow::onModeToggled);
+    connect(m_regionButton, &QRadioButton::toggled, this, &PreviewWindow::onModeToggled);
 
     // Confidence threshold
     m_confLabel = new QLabel(this);
@@ -128,6 +136,7 @@ void PreviewWindow::setupUi() {
     controlLayout->addSpacing(10);
     controlLayout->addWidget(m_directButton);
     controlLayout->addWidget(m_smoothButton);
+    controlLayout->addWidget(m_regionButton);
     controlLayout->addSpacing(5);
     controlLayout->addWidget(m_confLabel);
     controlLayout->addWidget(m_confSlider);
@@ -171,8 +180,16 @@ void PreviewWindow::onAnalyzeClicked() {
 
     // Run inference
     cv::Mat pathologyMap;
+    m_cachedRegionBboxes.clear();
     if (m_useSmooth) {
         pathologyMap = inference.runInferenceSmooth(m_sourceImage, config);
+    } else if (m_useRegion) {
+        auto result = inference.runInferenceRegion(m_sourceImage, config);
+        pathologyMap = result.first;
+        m_cachedRegionBboxes.reserve(result.second.size());
+        for (const auto& bbox : result.second) {
+            m_cachedRegionBboxes.push_back({bbox.x, bbox.y, bbox.width, bbox.height, bbox.maxProbability});
+        }
     } else {
         pathologyMap = inference.runInference(m_sourceImage, config);
     }
@@ -205,7 +222,16 @@ void PreviewWindow::onModeToggled(bool checked) {
         return;
     }
     m_useSmooth = (sender() == m_smoothButton);
+    m_useRegion = (sender() == m_regionButton);
+    if (m_useSmooth) {
+        m_mainWindow->getConfig().predMode = "smooth";
+    } else if (m_useRegion) {
+        m_mainWindow->getConfig().predMode = "region";
+    } else {
+        m_mainWindow->getConfig().predMode = "direct";
+    }
     m_cachedPathologyMap.release();
+    m_cachedRegionBboxes.clear();
     m_displayLabel->setImages(m_originalImage);
     m_infoLabel->setText("Analysis\nResults");
 }
@@ -220,6 +246,9 @@ void PreviewWindow::renderOverlayFromCache(bool fullAnalysis) {
         // Full analysis with stats (after Analyze button click)
         auto [fullOverlay, stats] = processDensePathologyMap(m_cachedPathologyMap, m_confThreshold);
         overlay = fullOverlay;
+        if (!m_cachedRegionBboxes.empty()) {
+            drawRegionBboxes(overlay, m_cachedRegionBboxes);
+        }
 
         std::cout << "Detections: " << stats.totalDetections << " (atypical: " << stats.atypicalCells
                   << ", normal: " << stats.normalCells << ")" << std::endl;
@@ -229,6 +258,9 @@ void PreviewWindow::renderOverlayFromCache(bool fullAnalysis) {
     } else {
         // Fast rendering for slider updates (no stats recalculation)
         overlay = renderOverlayFast(m_cachedPathologyMap, m_confThreshold);
+        if (!overlay.empty() && !m_cachedRegionBboxes.empty()) {
+            drawRegionBboxes(overlay, m_cachedRegionBboxes);
+        }
     }
 
     if (overlay.empty()) {
@@ -268,10 +300,15 @@ void PreviewWindow::scheduleRender() {
     // Capture variables for lambda
     cv::Mat pathologyMap = m_cachedPathologyMap.clone();
     float threshold = m_pendingThreshold;
+    std::vector<RegionBbox> regionBboxes = m_cachedRegionBboxes;
 
     // Run rendering in background thread
-    QFuture<cv::Mat> future = QtConcurrent::run([pathologyMap, threshold]() {
-        return renderOverlayFast(pathologyMap, threshold);
+    QFuture<cv::Mat> future = QtConcurrent::run([pathologyMap, threshold, regionBboxes]() {
+        cv::Mat overlay = renderOverlayFast(pathologyMap, threshold);
+        if (!overlay.empty() && !regionBboxes.empty()) {
+            drawRegionBboxes(overlay, regionBboxes);
+        }
+        return overlay;
     });
 
     m_renderWatcher->setFuture(future);

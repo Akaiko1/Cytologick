@@ -122,6 +122,22 @@ void drawDetectionLabels(
 std::string formatDetectionStats(const DetectionStats& stats);
 
 /**
+ * Bounding box for atypical region (matches InferenceEngine::RegionBbox)
+ */
+struct RegionBbox {
+    int x, y, width, height;
+    float maxProbability;
+};
+
+/**
+ * Draw bounding boxes around atypical regions
+ *
+ * @param overlay Output RGBA image to draw on
+ * @param bboxes Vector of region bounding boxes
+ */
+void drawRegionBboxes(cv::Mat& overlay, const std::vector<RegionBbox>& bboxes);
+
+/**
  * Correct size to be divisible by a factor
  *
  * @param width Input width

@@ -9,6 +9,9 @@
 #include <QFuture>
 #include <QFutureWatcher>
 #include <opencv2/core.hpp>
+#include <vector>
+
+#include "graphics.h"
 
 namespace cytologick {
 
@@ -70,6 +73,7 @@ private:
     QLabel* m_confLabel = nullptr;
     QRadioButton* m_directButton = nullptr;
     QRadioButton* m_smoothButton = nullptr;
+    QRadioButton* m_regionButton = nullptr;
     QSlider* m_confSlider = nullptr;
     QPushButton* m_analyzeButton = nullptr;
 
@@ -77,6 +81,7 @@ private:
     QPixmap m_originalImage;
     cv::Mat m_sourceImage;
     cv::Mat m_cachedPathologyMap;
+    std::vector<RegionBbox> m_cachedRegionBboxes;
 
     // Async rendering
     QFutureWatcher<cv::Mat>* m_renderWatcher = nullptr;
@@ -86,6 +91,7 @@ private:
     // Settings
     float m_confThreshold = 0.6f;
     bool m_useSmooth = false;
+    bool m_useRegion = false;
 };
 
 } // namespace cytologick

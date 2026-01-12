@@ -373,6 +373,41 @@ void drawDetectionLabels(cv::Mat& overlay, const std::vector<Detection>& detecti
     }
 }
 
+void drawRegionBboxes(cv::Mat& overlay, const std::vector<RegionBbox>& bboxes) {
+    if (overlay.empty() || bboxes.empty()) {
+        return;
+    }
+
+    for (size_t idx = 0; idx < bboxes.size(); ++idx) {
+        const auto& bbox = bboxes[idx];
+        cv::Rect rect(bbox.x, bbox.y, bbox.width, bbox.height);
+        rect &= cv::Rect(0, 0, overlay.cols, overlay.rows);
+        if (rect.width <= 0 || rect.height <= 0) {
+            continue;
+        }
+
+        // Cyan rectangle (BGRA)
+        cv::rectangle(overlay, rect, cv::Scalar(255, 255, 0, 200), 2);
+
+        std::ostringstream label;
+        label << "R" << (idx + 1) << ": "
+              << std::fixed << std::setprecision(0)
+              << (bbox.maxProbability * 100) << "%";
+
+        int labelY = std::max(15, rect.y - 5);
+        cv::putText(
+            overlay,
+            label.str(),
+            cv::Point(rect.x, labelY),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            cv::Scalar(255, 255, 0, 255),
+            1,
+            cv::LINE_AA
+        );
+    }
+}
+
 std::string formatDetectionStats(const DetectionStats& stats) {
     std::ostringstream ss;
     ss << "Analysis Results\n";
