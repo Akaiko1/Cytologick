@@ -260,7 +260,7 @@ int mergeFromAsapXml(const fs::path& xmlPath, std::vector<Annotation>& annotatio
         xml.readNext();
         if (xml.isStartElement()) {
             const auto name = xml.name();
-            if (name == "Annotation") {
+            if (name == QStringLiteral("Annotation")) {
                 flushAnnotation();
                 inAnnotation = true;
                 fallbackOrder = 0;
@@ -268,7 +268,7 @@ int mergeFromAsapXml(const fs::path& xmlPath, std::vector<Annotation>& annotatio
                 const auto attrs = xml.attributes();
                 curName = attrs.value("Name").toString();
                 curType = attrs.value("Type").toString();
-            } else if (inAnnotation && name == "Coordinate") {
+            } else if (inAnnotation && name == QStringLiteral("Coordinate")) {
                 const auto attrs = xml.attributes();
                 bool okX = false;
                 bool okY = false;
@@ -282,7 +282,7 @@ int mergeFromAsapXml(const fs::path& xmlPath, std::vector<Annotation>& annotatio
                 fallbackOrder = std::max(fallbackOrder + 1, order + 1);
                 curCoords.push_back(Coord{order, QPointF(x, y)});
             }
-        } else if (xml.isEndElement() && xml.name() == "Annotation") {
+        } else if (xml.isEndElement() && xml.name() == QStringLiteral("Annotation")) {
             flushAnnotation();
         }
     }

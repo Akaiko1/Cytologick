@@ -14,7 +14,6 @@ ai/
 .DS_Store
 __web/static/temp/
 openslide/
-*.png
 *.bmp
 *slide-*
 dist/
@@ -47,3 +46,5 @@ cpp/build-annotator/.qt/
 
 # Annotation exports (saved next to slides when slides live in-repo)
 current/**/*.json
+
+gui_map.png
