@@ -4,7 +4,11 @@
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QFormLayout>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QDockWidget>
+#include <QSplitter>
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
@@ -14,6 +18,7 @@
 #include <QScrollBar>
 #include <QEvent>
 #include <QLineF>
+#include <QFontMetrics>
 
 #include <algorithm>
 #include <cmath>
@@ -419,9 +424,21 @@ void AnnotatorImageLabel::paintEvent(QPaintEvent* event) {
                 }
             }
 
-            // Label
-            painter.setPen(QPen(QColor(255, 255, 255, 220), 1));
-            painter.drawText(vbox.topLeft() + QPointF(4, 14), a.label);
+            // Label: black text on a light chip for readability on gray/dark tissue.
+            const QPointF textPos = vbox.topLeft() + QPointF(4, 14);
+            const QFontMetrics fm(painter.font());
+            const QRect tr = fm.boundingRect(a.label);
+            QRectF chip(
+                textPos.x() - 3.0,
+                textPos.y() - tr.height() + 3.0,
+                tr.width() + 8.0,
+                tr.height() + 4.0
+            );
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(255, 255, 255, 215));
+            painter.drawRoundedRect(chip, 3.0, 3.0);
+            painter.setPen(QPen(QColor(0, 0, 0, 235), 1));
+            painter.drawText(textPos, a.label);
         }
     }
 
@@ -459,7 +476,7 @@ void AnnotatorImageLabel::mousePressEvent(QMouseEvent* event) {
         // Hold right mouse button and drag to pan the viewport.
         m_panning = true;
         m_panMoved = false;
-        m_panLast = pos;
+        m_panLastGlobal = event->globalPosition().toPoint();
         setCursor(Qt::ClosedHandCursor);
         event->accept();
         return;
@@ -512,11 +529,12 @@ void AnnotatorImageLabel::mouseMoveEvent(QMouseEvent* event) {
     emit mouseMovedLevel0(viewToLevel0(pos));
 
     if (m_panning && (event->buttons() & Qt::RightButton)) {
-        const QPoint delta = pos - m_panLast;
+        const QPoint nowGlobal = event->globalPosition().toPoint();
+        const QPoint delta = nowGlobal - m_panLastGlobal;
         if (!delta.isNull()) {
             m_panMoved = true;
             emit panByPixels(delta);
-            m_panLast = pos;
+            m_panLastGlobal = nowGlobal;
         }
         event->accept();
         return;
@@ -624,11 +642,15 @@ void AnnotatorWindow::setupUi() {
     setGeometry(80, 80, 1200, 800);
 
     QWidget* central = new QWidget(this);
+    central->setStyleSheet("background: #f7fafc;");
     QVBoxLayout* mainLayout = new QVBoxLayout(central);
 
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(false);
     m_scrollArea->setAlignment(Qt::AlignCenter);
+    m_scrollArea->setStyleSheet(
+        "QScrollArea { background: #f7fafc; border: none; }"
+        "QScrollBar:horizontal, QScrollBar:vertical { background: #edf2f7; }");
     m_scrollArea->viewport()->installEventFilter(this);
 
     m_imageLabel = new AnnotatorImageLabel(this);
@@ -636,7 +658,8 @@ void AnnotatorWindow::setupUi() {
     m_scrollArea->setWidget(m_imageLabel);
 
     m_statusLabel = new QLabel("Open a slide to start annotating");
-    m_statusLabel->setStyleSheet("background-color: black; color: white; padding: 5px;");
+    m_statusLabel->setStyleSheet(
+        "background: #f3f5f8; color: #1f2937; padding: 6px 10px; border-top: 1px solid #d5dbe3;");
     m_statusLabel->setFixedHeight(30);
 
     mainLayout->addWidget(m_scrollArea);
@@ -648,8 +671,69 @@ void AnnotatorWindow::setupUi() {
     // Right-side tools dock.
     QDockWidget* dock = new QDockWidget("Tools", this);
     dock->setAllowedAreas(Qt::RightDockWidgetArea);
+    dock->setMinimumWidth(360);
+    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
     QWidget* dockW = new QWidget(dock);
     QVBoxLayout* dockLayout = new QVBoxLayout(dockW);
+    dockLayout->setContentsMargins(10, 10, 10, 10);
+    dockLayout->setSpacing(10);
+
+    dockW->setStyleSheet(
+        "QWidget { color: #0f172a; background: #f8fafc; }"
+        "QGroupBox {"
+        "  border: 1px solid #d8dee6;"
+        "  border-radius: 8px;"
+        "  margin-top: 10px;"
+        "  padding-top: 8px;"
+        "  background: #ffffff;"
+        "  font-weight: 600;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin;"
+        "  left: 8px;"
+        "  padding: 0 4px;"
+        "  color: #0f172a;"
+        "}"
+        "QLabel { color: #0f172a; }"
+        "QComboBox, QListWidget, QPushButton, QToolButton {"
+        "  font-size: 12px;"
+        "}"
+        "QComboBox, QListWidget {"
+        "  border: 1px solid #cbd5e1;"
+        "  border-radius: 6px;"
+        "  padding: 4px 6px;"
+        "  background: #ffffff;"
+        "}"
+        "QListWidget::item {"
+        "  border-bottom: 1px solid #e5e7eb;"
+        "  padding: 4px 6px;"
+        "}"
+        "QListWidget::item:selected {"
+        "  background: #dbeafe;"
+        "  color: #111827;"
+        "  border-radius: 0px;"
+        "}"
+        "QToolButton {"
+        "  border: 1px solid #cbd5e1;"
+        "  border-radius: 6px;"
+        "  padding: 6px 8px;"
+        "  background: #f8fafc;"
+        "}"
+        "QToolButton:checked {"
+        "  background: #bfdbfe;"
+        "  border-color: #60a5fa;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton {"
+        "  border: 1px solid #cbd5e1;"
+        "  border-radius: 6px;"
+        "  padding: 6px 10px;"
+        "  background: #f8fafc;"
+        "}"
+        "QPushButton:hover {"
+        "  background: #eef2ff;"
+        "}"
+    );
 
     m_toolRect = new QToolButton(dockW);
     m_toolRect->setText("Rect");
@@ -666,15 +750,22 @@ void AnnotatorWindow::setupUi() {
     connect(m_toolPoly, &QToolButton::clicked, this, &AnnotatorWindow::onToolPolygon);
     connect(m_toolSelect, &QToolButton::clicked, this, &AnnotatorWindow::onToolSelect);
 
-    dockLayout->addWidget(m_toolRect);
-    dockLayout->addWidget(m_toolPoly);
-    dockLayout->addWidget(m_toolSelect);
-
-    dockLayout->addSpacing(10);
+    QGroupBox* toolsBox = new QGroupBox("Tools", dockW);
+    QHBoxLayout* toolsLayout = new QHBoxLayout(toolsBox);
+    toolsLayout->setContentsMargins(8, 8, 8, 8);
+    toolsLayout->setSpacing(8);
+    toolsLayout->addWidget(m_toolRect);
+    toolsLayout->addWidget(m_toolPoly);
+    toolsLayout->addWidget(m_toolSelect);
+    dockLayout->addWidget(toolsBox);
 
     m_labelCombo = new QComboBox(dockW);
-    dockLayout->addWidget(new QLabel("Label:", dockW));
-    dockLayout->addWidget(m_labelCombo);
+    QGroupBox* labelBox = new QGroupBox("Label", dockW);
+    QFormLayout* labelLayout = new QFormLayout(labelBox);
+    labelLayout->setContentsMargins(8, 8, 8, 8);
+    labelLayout->setSpacing(6);
+    labelLayout->addRow("Polygon class:", m_labelCombo);
+    dockLayout->addWidget(labelBox);
 
     m_btnNewRect = new QPushButton("New rect N", dockW);
     m_btnSave = new QPushButton("Save JSON", dockW);
@@ -684,22 +775,44 @@ void AnnotatorWindow::setupUi() {
     connect(m_btnSave, &QPushButton::clicked, this, &AnnotatorWindow::onSaveJson);
     connect(m_btnDelete, &QPushButton::clicked, this, &AnnotatorWindow::onDeleteSelected);
 
-    dockLayout->addWidget(m_btnNewRect);
-    dockLayout->addWidget(m_btnSave);
-    dockLayout->addWidget(m_btnDelete);
-
-    dockLayout->addSpacing(10);
+    QGroupBox* actionsBox = new QGroupBox("Actions", dockW);
+    QGridLayout* actionsLayout = new QGridLayout(actionsBox);
+    actionsLayout->setContentsMargins(8, 8, 8, 8);
+    actionsLayout->setHorizontalSpacing(8);
+    actionsLayout->setVerticalSpacing(8);
+    actionsLayout->addWidget(m_btnNewRect, 0, 0, 1, 2);
+    actionsLayout->addWidget(m_btnSave, 1, 0);
+    actionsLayout->addWidget(m_btnDelete, 1, 1);
+    dockLayout->addWidget(actionsBox);
 
     m_annotationList = new QListWidget(dockW);
-    dockLayout->addWidget(new QLabel("Annotations:", dockW));
-    dockLayout->addWidget(m_annotationList, 1);
+    m_annotationList->setAlternatingRowColors(false);
     connect(m_annotationList, &QListWidget::itemSelectionChanged, this, &AnnotatorWindow::onAnnotationSelectionChanged);
     connect(m_annotationList, &QListWidget::itemDoubleClicked, this, &AnnotatorWindow::onAnnotationItemDoubleClicked);
 
-    dockLayout->addSpacing(8);
-    dockLayout->addWidget(new QLabel("Navigator:", dockW));
-    m_overviewMap = new OverviewMapWidget(dockW);
-    dockLayout->addWidget(m_overviewMap);
+    QGroupBox* annBox = new QGroupBox("Annotations", dockW);
+    QVBoxLayout* annLayout = new QVBoxLayout(annBox);
+    annLayout->setContentsMargins(8, 8, 8, 8);
+    annLayout->setSpacing(6);
+    QLabel* annHint = new QLabel("Double-click item to center view", annBox);
+    annHint->setStyleSheet("color: #4b5563; font-size: 11px; font-weight: 400;");
+    annLayout->addWidget(annHint);
+    annLayout->addWidget(m_annotationList, 1);
+
+    QGroupBox* navBox = new QGroupBox("Navigator", dockW);
+    QVBoxLayout* navLayout = new QVBoxLayout(navBox);
+    navLayout->setContentsMargins(8, 8, 8, 8);
+    navLayout->setSpacing(6);
+    m_overviewMap = new OverviewMapWidget(navBox);
+    m_overviewMap->setMinimumHeight(220);
+    navLayout->addWidget(m_overviewMap);
+
+    QSplitter* rightSplitter = new QSplitter(Qt::Vertical, dockW);
+    rightSplitter->addWidget(annBox);
+    rightSplitter->addWidget(navBox);
+    rightSplitter->setStretchFactor(0, 3);
+    rightSplitter->setStretchFactor(1, 2);
+    dockLayout->addWidget(rightSplitter, 1);
     connect(m_overviewMap, &OverviewMapWidget::jumpRequestedLevel0, this, &AnnotatorWindow::onMapJumpRequested);
 
     dockW->setLayout(dockLayout);

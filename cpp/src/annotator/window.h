@@ -127,7 +127,7 @@ private:
     int m_dragAnnotationIndex = -1;
     bool m_panning = false;
     bool m_panMoved = false;
-    QPoint m_panLast;
+    QPoint m_panLastGlobal;
 };
 
 class AnnotatorWindow : public QMainWindow {
