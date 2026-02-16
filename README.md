@@ -38,10 +38,16 @@ A standalone C++ version is available for users who prefer native performance wi
 - Native Qt6 desktop application
 - ONNX Runtime inference (CPU/GPU)
 - No Python installation required
+- Includes both `Cytologick` (viewer) and `CytologickAnnotator`
 
 **Current limitations:**
 
 - Only MRXS slide format is supported (SVS and other formats coming soon)
+
+**Slide discovery (C++ viewer + annotator):**
+
+- Both apps scan two config paths: `general.hdd_slides` and `gui.slide_dir`
+- You can either set those paths in `config.yaml`, or place slides in `./current` next to the executable/config
 
 For build instructions and documentation, see [cpp/README.md](cpp/README.md).
 
@@ -233,6 +239,10 @@ cmake -S . -B build
 cmake --build build -j
 ./build/CytologickAnnotator
 ```
+
+Slide lookup in the annotator is the same as in the C++ viewer:
+- scans `general.hdd_slides` and `gui.slide_dir` from `config.yaml`
+- if you keep defaults, place slides in `./current` next to the executable/config
 
 ![Cytologick Annotator](./assets/annotator_example.png)
 

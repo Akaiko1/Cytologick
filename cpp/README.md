@@ -58,9 +58,17 @@ Each release includes:
 
    ```yaml
    general:
-     slide_dir: /path/to/your/slides    # Folder with .mrxs files
      hdd_slides: /path/to/more/slides   # Optional: additional slides folder
+
+   gui:
+     slide_dir: /path/to/your/slides    # Folder with .mrxs files
    ```
+
+   Both `Cytologick` (viewer) and `CytologickAnnotator` scan both paths:
+   - `general.hdd_slides`
+   - `gui.slide_dir`
+
+   If you prefer not to edit paths, place slides into `./current` next to the executable/config.
 
 4. Install runtime dependencies (macOS/Linux only — Windows has all DLLs bundled)
 
@@ -455,21 +463,31 @@ The exported `model.onnx` file should be placed in the `_main/` directory.
 
 2. **Place model** in `_main/` folder (e.g., `_main/model.onnx`)
 
-3. **Run the application:**
+3. **Run viewer:**
    ```bash
    ./Cytologick          # Linux/macOS
    Cytologick.exe        # Windows
    ```
 
-4. **Select a slide** from the menu dialog
+4. **Run annotator (optional):**
+   ```bash
+   ./CytologickAnnotator     # Linux/macOS
+   CytologickAnnotator.exe   # Windows
+   ```
 
-5. **Choose zoom level** (lower level = higher resolution, more memory)
+5. **Slide discovery (viewer + annotator):**
+   - Both apps scan `general.hdd_slides` and `gui.slide_dir`.
+   - If both are unset/empty for your environment, place slides in `./current` next to executable/config.
 
-6. **Drag to select** a region of interest on the slide
+6. **Select a slide** from the menu dialog
 
-7. **Click "Analyze"** in the preview window
+7. **Choose zoom level** (lower level = higher resolution, more memory)
 
-8. **Adjust confidence** threshold with the slider
+8. **Drag to select** a region of interest on the slide
+
+9. **Click "Analyze"** in the preview window
+
+10. **Adjust confidence** threshold with the slider
 
 ---
 
@@ -479,7 +497,6 @@ Create `config.yaml` in the same directory as the executable:
 
 ```yaml
 general:
-  slide_dir: /path/to/slides
   hdd_slides: /path/to/more/slides
   openslide_path: C:/openslide/bin  # Windows only
 
@@ -490,11 +507,15 @@ neural_network:
   batch_size: 16
 
 gui:
+  slide_dir: /path/to/slides
   default_threshold: 0.6
 
 model:
   path: /path/to/model.onnx  # Optional, auto-detected from _main/
 ```
+
+`Cytologick` and `CytologickAnnotator` both read slides from `general.hdd_slides` and `gui.slide_dir`.
+If you keep defaults, they will also find slides in `./current` next to the executable/config.
 
 ---
 
