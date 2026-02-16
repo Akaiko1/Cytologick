@@ -219,13 +219,39 @@ You can use the included ASAP example annotation file as a reference:
 
 - `annotation_example.xml` (ASAP XML format with `Rectangle` and `Spline` annotations)
 
+### Alternative: Built-in Annotator (no ASAP required)
+
+If you don't have access to ASAP, you can annotate directly in Cytologick's native annotator:
+
+- Download pre-built `CytologickAnnotator` from [GitHub Releases](https://github.com/Akaiko1/Cytologick/releases)
+- or build it locally:
+
+```bash
+# Build and run annotator
+cd cpp
+cmake -S . -B build
+cmake --build build -j
+./build/CytologickAnnotator
+```
+
+![Cytologick Annotator](./assets/annotator_example.png)
+
+Workflow:
+
+1. Open `File -> Select Slide...`
+2. Create group rectangles as `rect N` labels
+3. Draw polygon regions for cell classes (LSIL, HSIL, ASCUS, ASCH, etc.)
+4. Save via `File -> Save JSON` (saved next to slide as `basename.json`)
+
+The dataset pipeline automatically prefers `basename.json` next to each slide.
+
 ### Step 2: Generate Dataset
 
 ```bash
-# Extract annotations from ASAP XML files
+# If you annotated in ASAP XML format, convert XML -> JSON first
 python get_xmls.py
 
-# Create training images and masks
+# Create training images and masks (uses JSON next to slides if present)
 python get_dataset.py
 ```
 

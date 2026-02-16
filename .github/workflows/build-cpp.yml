@@ -39,6 +39,7 @@ jobs:
           cd cpp/build
           mkdir -p dist/_main
           cp Cytologick dist/
+          cp CytologickAnnotator dist/
 
           # Create default config
           cat > dist/config.yaml << 'EOF'
@@ -154,6 +155,7 @@ jobs:
           cd cpp/build
           mkdir -p dist/lib dist/_main
           cp Cytologick dist/
+          cp CytologickAnnotator dist/
 
           # Copy ONNX Runtime library
           cp /opt/onnxruntime/lib/libonnxruntime.so* dist/lib/
@@ -319,6 +321,7 @@ jobs:
           mkdir dist
           mkdir dist\_main
           copy Release\Cytologick.exe dist\
+          copy Release\CytologickAnnotator.exe dist\
           # Bundle VC++ Redistributable installer
           copy ..\..\vc_redist.x64.exe dist\
 
