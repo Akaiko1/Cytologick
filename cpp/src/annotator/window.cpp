@@ -455,6 +455,16 @@ void AnnotatorImageLabel::mousePressEvent(QMouseEvent* event) {
     const QPoint pos = event->pos();
     emit mouseMovedLevel0(viewToLevel0(pos));
 
+    if (event->button() == Qt::RightButton) {
+        // Hold right mouse button and drag to pan the viewport.
+        m_panning = true;
+        m_panMoved = false;
+        m_panLast = pos;
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+
     if (m_tool == Tool::Select && event->button() == Qt::LeftButton) {
         int vertexIndex = -1;
         int annoIdx = hitTestVertex(pos, &vertexIndex);
@@ -501,6 +511,17 @@ void AnnotatorImageLabel::mouseMoveEvent(QMouseEvent* event) {
     const QPoint pos = event->pos();
     emit mouseMovedLevel0(viewToLevel0(pos));
 
+    if (m_panning && (event->buttons() & Qt::RightButton)) {
+        const QPoint delta = pos - m_panLast;
+        if (!delta.isNull()) {
+            m_panMoved = true;
+            emit panByPixels(delta);
+            m_panLast = pos;
+        }
+        event->accept();
+        return;
+    }
+
     if (m_tool == Tool::Select && m_draggingVertex && m_dragAnnotationIndex >= 0 && m_dragVertexIndex >= 0) {
         emit polygonVertexMoved(m_dragAnnotationIndex, m_dragVertexIndex, viewToLevel0(pos));
     }
@@ -515,6 +536,18 @@ void AnnotatorImageLabel::mouseMoveEvent(QMouseEvent* event) {
 
 void AnnotatorImageLabel::mouseReleaseEvent(QMouseEvent* event) {
     if (!event) return;
+
+    if (event->button() == Qt::RightButton && m_panning) {
+        unsetCursor();
+        m_panning = false;
+        // Keep old shortcut: right-click in polygon mode completes polygon,
+        // but only if user didn't drag (drag is reserved for panning).
+        if (!m_panMoved && m_tool == Tool::Polygon && m_currentPolyLevel0.size() >= 3) {
+            emit polygonCompletedLevel0(m_currentPolyLevel0);
+        }
+        event->accept();
+        return;
+    }
 
     if (m_tool == Tool::Select && event->button() == Qt::LeftButton) {
         m_draggingVertex = false;
@@ -677,6 +710,11 @@ void AnnotatorWindow::setupUi() {
     connect(m_imageLabel, &AnnotatorImageLabel::rectDrawnLevel0, this, &AnnotatorWindow::onRectDrawn);
     connect(m_imageLabel, &AnnotatorImageLabel::polygonCompletedLevel0, this, &AnnotatorWindow::onPolygonCompleted);
     connect(m_imageLabel, &AnnotatorImageLabel::mouseMovedLevel0, this, &AnnotatorWindow::onMouseMoved);
+    connect(m_imageLabel, &AnnotatorImageLabel::panByPixels, this, [this](QPoint delta) {
+        if (!m_scrollArea) return;
+        m_scrollArea->horizontalScrollBar()->setValue(m_scrollArea->horizontalScrollBar()->value() - delta.x());
+        m_scrollArea->verticalScrollBar()->setValue(m_scrollArea->verticalScrollBar()->value() - delta.y());
+    });
     connect(m_imageLabel, &AnnotatorImageLabel::annotationSelected, this, &AnnotatorWindow::onImageAnnotationSelected);
     connect(m_imageLabel, &AnnotatorImageLabel::polygonVertexMoved, this, &AnnotatorWindow::onPolygonVertexMoved);
 

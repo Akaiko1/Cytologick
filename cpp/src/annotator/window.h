@@ -84,6 +84,7 @@ signals:
     void rectDrawnLevel0(QRectF rectLevel0);
     void polygonCompletedLevel0(std::vector<QPointF> pointsLevel0);
     void mouseMovedLevel0(QPointF posLevel0);
+    void panByPixels(QPoint delta);
     void annotationSelected(int index);
     void polygonVertexMoved(int annotationIndex, int vertexIndex, QPointF newPosLevel0);
 
@@ -124,6 +125,9 @@ private:
     bool m_draggingVertex = false;
     int m_dragVertexIndex = -1;
     int m_dragAnnotationIndex = -1;
+    bool m_panning = false;
+    bool m_panMoved = false;
+    QPoint m_panLast;
 };
 
 class AnnotatorWindow : public QMainWindow {
