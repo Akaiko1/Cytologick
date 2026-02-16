@@ -12,10 +12,13 @@
 #include <QListWidget>
 #include <QToolButton>
 #include <QPushButton>
+#include <QSlider>
 #include <QPointF>
 #include <QRectF>
 #include <QImage>
 #include <QString>
+#include <QDialog>
+#include <QAction>
 
 #include <filesystem>
 #include <functional>
@@ -107,7 +110,7 @@ private:
     std::function<QImage(const QRect& levelRect)> m_regionProvider;
     QImage m_cachedRegionImage;
     QRect m_cachedRegionRect;
-    Tool m_tool = Tool::Rect;
+    Tool m_tool = Tool::Select;
 
     bool m_dragging = false;
     QPoint m_dragStart;
@@ -152,8 +155,10 @@ private slots:
     void onToolPolygon();
     void onToolSelect();
     void onNewRect();
+    void onLoadJson();
     void onSaveJson();
     void onDeleteSelected();
+    void onOpenVertexDeformSettings();
     void onAnnotationSelectionChanged();
     void onAnnotationItemDoubleClicked(QListWidgetItem* item);
     void onImageAnnotationSelected(int index);
@@ -164,6 +169,12 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    enum class SoftFalloff {
+        Smooth = 0,
+        Linear = 1,
+        Gaussian = 2,
+    };
+
     void setupUi();
     void rebuildLabelList();
     void clearCurrentPolygon();
@@ -176,9 +187,12 @@ private:
     void ensureLabelPresent(const QString& label);
     void recomputeRectCounter();
     QImage readLevelRegionImage(const QRect& levelRect) const;
+    int listRowToAnnotationIndex(int row) const;
+    int annotationIndexToListRow(int annotationIndex) const;
     void rebuildOverviewMap();
     void updateOverviewViewport();
     void centerViewOnLevel0(const QPointF& centerLevel0);
+    double softInfluence(double normalizedDistance) const;
 
     QString currentLabel() const;
     QString nextRectLabel();
@@ -196,6 +210,7 @@ private:
     bool m_levelLoaded = false;
 
     std::vector<Annotation> m_annotations;
+    std::vector<int> m_annotationListOrder;
 
     // UI
     QScrollArea* m_scrollArea = nullptr;
@@ -205,13 +220,20 @@ private:
 
     QComboBox* m_labelCombo = nullptr;
     QListWidget* m_annotationList = nullptr;
-
     QToolButton* m_toolRect = nullptr;
     QToolButton* m_toolPoly = nullptr;
     QToolButton* m_toolSelect = nullptr;
     QPushButton* m_btnNewRect = nullptr;
-    QPushButton* m_btnSave = nullptr;
     QPushButton* m_btnDelete = nullptr;
+    QAction* m_actionSelectSlide = nullptr;
+    QAction* m_actionLoadJson = nullptr;
+    QAction* m_actionSaveJson = nullptr;
+    QSlider* m_softRadiusSlider = nullptr;
+    QLabel* m_softRadiusValueLabel = nullptr;
+    QComboBox* m_softFalloffCombo = nullptr;
+    int m_softRadiusViewPx = 56;
+    SoftFalloff m_softFalloff = SoftFalloff::Smooth;
+    QDialog* m_vertexDeformDialog = nullptr;
 
     std::unique_ptr<AnnotatorMenuWindow> m_menuWindow;
 };

@@ -16,12 +16,18 @@
 #include <QTimer>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QEvent>
 #include <QLineF>
 #include <QFontMetrics>
+#include <QMenuBar>
+#include <QMenu>
+#include <QAction>
+#include <QDialogButtonBox>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 #include <opencv2/imgproc.hpp>
@@ -31,6 +37,34 @@ namespace fs = std::filesystem;
 namespace cytologick {
 
 namespace {
+
+int rectNumber(const QString& label) {
+    static const QRegularExpression re("^\\s*rect\\s*(\\d+)\\s*$", QRegularExpression::CaseInsensitiveOption);
+    const auto m = re.match(label);
+    if (!m.hasMatch()) return std::numeric_limits<int>::max();
+    bool ok = false;
+    const int v = m.captured(1).toInt(&ok);
+    return ok ? v : std::numeric_limits<int>::max();
+}
+
+bool annotationSortLess(const Annotation& a, int idxA, const Annotation& b, int idxB) {
+    if (a.isRect != b.isRect) {
+        return a.isRect && !b.isRect;
+    }
+
+    const QString la = a.label.trimmed();
+    const QString lb = b.label.trimmed();
+
+    if (a.isRect) {
+        const int na = rectNumber(la);
+        const int nb = rectNumber(lb);
+        if (na != nb) return na < nb;
+    }
+
+    const int cmp = QString::compare(la, lb, Qt::CaseInsensitive);
+    if (cmp != 0) return cmp < 0;
+    return idxA < idxB;
+}
 
 double pointToSegmentDistance(const QPointF& p, const QPointF& a, const QPointF& b) {
     const double abx = b.x() - a.x();
@@ -623,6 +657,8 @@ AnnotatorWindow::~AnnotatorWindow() = default;
 
 void AnnotatorWindow::onSlideOpened(const fs::path& path) {
     m_slidePath = path;
+    if (m_actionLoadJson) m_actionLoadJson->setEnabled(true);
+    if (m_actionSaveJson) m_actionSaveJson->setEnabled(true);
     clearAnnotations();
     rebuildLabelList();
     reloadAnnotationsFromDisk();
@@ -640,10 +676,31 @@ void AnnotatorWindow::onSlideOpened(const fs::path& path) {
 void AnnotatorWindow::setupUi() {
     setWindowTitle("Cytologick Annotator");
     setGeometry(80, 80, 1200, 800);
+    menuBar()->setStyleSheet(
+        "QMenuBar { background: #f8fafc; color: #0f172a; }"
+        "QMenuBar::item:selected { background: #e2e8f0; }"
+        "QMenu { background: #ffffff; border: 1px solid #cbd5e1; color: #0f172a; }"
+        "QMenu::item:selected { background: #dbeafe; color: #0f172a; }"
+    );
+    QMenu* fileMenu = menuBar()->addMenu("File");
+    m_actionSelectSlide = fileMenu->addAction("Select Slide...");
+    m_actionLoadJson = fileMenu->addAction("Load JSON");
+    m_actionSaveJson = fileMenu->addAction("Save JSON");
+    connect(m_actionSelectSlide, &QAction::triggered, this, &AnnotatorWindow::showSlideMenu);
+    connect(m_actionLoadJson, &QAction::triggered, this, &AnnotatorWindow::onLoadJson);
+    connect(m_actionSaveJson, &QAction::triggered, this, &AnnotatorWindow::onSaveJson);
+    m_actionLoadJson->setEnabled(false);
+    m_actionSaveJson->setEnabled(false);
+
+    QMenu* settingsMenu = menuBar()->addMenu("Settings");
+    QAction* vertexDeformAction = settingsMenu->addAction("Vertex Deform...");
+    connect(vertexDeformAction, &QAction::triggered, this, &AnnotatorWindow::onOpenVertexDeformSettings);
 
     QWidget* central = new QWidget(this);
     central->setStyleSheet("background: #f7fafc;");
     QVBoxLayout* mainLayout = new QVBoxLayout(central);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(false);
@@ -664,8 +721,6 @@ void AnnotatorWindow::setupUi() {
 
     mainLayout->addWidget(m_scrollArea);
     mainLayout->addWidget(m_statusLabel);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
-    mainLayout->setSpacing(0);
     setCentralWidget(central);
 
     // Right-side tools dock.
@@ -738,13 +793,14 @@ void AnnotatorWindow::setupUi() {
     m_toolRect = new QToolButton(dockW);
     m_toolRect->setText("Rect");
     m_toolRect->setCheckable(true);
-    m_toolRect->setChecked(true);
+    m_toolRect->setChecked(false);
     m_toolPoly = new QToolButton(dockW);
     m_toolPoly->setText("Polygon");
     m_toolPoly->setCheckable(true);
     m_toolSelect = new QToolButton(dockW);
     m_toolSelect->setText("Select");
     m_toolSelect->setCheckable(true);
+    m_toolSelect->setChecked(true);
 
     connect(m_toolRect, &QToolButton::clicked, this, &AnnotatorWindow::onToolRect);
     connect(m_toolPoly, &QToolButton::clicked, this, &AnnotatorWindow::onToolPolygon);
@@ -768,11 +824,9 @@ void AnnotatorWindow::setupUi() {
     dockLayout->addWidget(labelBox);
 
     m_btnNewRect = new QPushButton("New rect N", dockW);
-    m_btnSave = new QPushButton("Save JSON", dockW);
     m_btnDelete = new QPushButton("Delete selected", dockW);
 
     connect(m_btnNewRect, &QPushButton::clicked, this, &AnnotatorWindow::onNewRect);
-    connect(m_btnSave, &QPushButton::clicked, this, &AnnotatorWindow::onSaveJson);
     connect(m_btnDelete, &QPushButton::clicked, this, &AnnotatorWindow::onDeleteSelected);
 
     QGroupBox* actionsBox = new QGroupBox("Actions", dockW);
@@ -780,9 +834,8 @@ void AnnotatorWindow::setupUi() {
     actionsLayout->setContentsMargins(8, 8, 8, 8);
     actionsLayout->setHorizontalSpacing(8);
     actionsLayout->setVerticalSpacing(8);
-    actionsLayout->addWidget(m_btnNewRect, 0, 0, 1, 2);
-    actionsLayout->addWidget(m_btnSave, 1, 0);
-    actionsLayout->addWidget(m_btnDelete, 1, 1);
+    actionsLayout->addWidget(m_btnNewRect, 0, 0);
+    actionsLayout->addWidget(m_btnDelete, 0, 1);
     dockLayout->addWidget(actionsBox);
 
     m_annotationList = new QListWidget(dockW);
@@ -837,6 +890,8 @@ void AnnotatorWindow::setupUi() {
     connect(m_scrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
         updateOverviewViewport();
     });
+
+    m_imageLabel->setTool(AnnotatorImageLabel::Tool::Select);
 }
 
 void AnnotatorWindow::rebuildLabelList() {
@@ -856,6 +911,7 @@ void AnnotatorWindow::rebuildLabelList() {
 
 void AnnotatorWindow::clearAnnotations() {
     m_annotations.clear();
+    m_annotationListOrder.clear();
     if (m_annotationList) {
         m_annotationList->clear();
     }
@@ -918,16 +974,52 @@ void AnnotatorWindow::addAnnotationToUi(const Annotation& a) {
     m_annotationList->addItem(a.label);
 }
 
+int AnnotatorWindow::listRowToAnnotationIndex(int row) const {
+    if (row < 0 || row >= static_cast<int>(m_annotationListOrder.size())) return -1;
+    return m_annotationListOrder[row];
+}
+
+int AnnotatorWindow::annotationIndexToListRow(int annotationIndex) const {
+    for (int row = 0; row < static_cast<int>(m_annotationListOrder.size()); ++row) {
+        if (m_annotationListOrder[row] == annotationIndex) return row;
+    }
+    return -1;
+}
+
 void AnnotatorWindow::syncAnnotationUiFromData() {
+    int selectedAnnotation = m_selectedAnnotation;
+    if (selectedAnnotation < 0 || selectedAnnotation >= static_cast<int>(m_annotations.size())) {
+        selectedAnnotation = -1;
+    }
+    m_annotationListOrder.clear();
+    m_annotationListOrder.reserve(m_annotations.size());
+    for (int i = 0; i < static_cast<int>(m_annotations.size()); ++i) {
+        m_annotationListOrder.push_back(i);
+    }
+    std::stable_sort(m_annotationListOrder.begin(), m_annotationListOrder.end(),
+                     [this](int ia, int ib) {
+                         return annotationSortLess(m_annotations[ia], ia, m_annotations[ib], ib);
+                     });
+
     if (m_annotationList) {
+        QSignalBlocker blocker(m_annotationList);
         m_annotationList->clear();
+        for (int idx : m_annotationListOrder) {
+            ensureLabelPresent(m_annotations[idx].label);
+            addAnnotationToUi(m_annotations[idx]);
+        }
+        const int selectedRow = annotationIndexToListRow(selectedAnnotation);
+        if (selectedRow >= 0) {
+            m_annotationList->setCurrentRow(selectedRow);
+        } else {
+            m_annotationList->setCurrentRow(-1);
+        }
     }
-    for (const auto& a : m_annotations) {
-        ensureLabelPresent(a.label);
-        addAnnotationToUi(a);
-    }
+
+    m_selectedAnnotation = selectedAnnotation;
     recomputeRectCounter();
     if (m_imageLabel) {
+        m_imageLabel->setSelectedAnnotationIndex(m_selectedAnnotation);
         m_imageLabel->update();
     }
 }
@@ -1013,6 +1105,23 @@ QString AnnotatorWindow::nextRectLabel() {
 
 void AnnotatorWindow::clearCurrentPolygon() {
     m_imageLabel->setCurrentPolygon(nullptr, m_currentDownsample);
+}
+
+double AnnotatorWindow::softInfluence(double normalizedDistance) const {
+    const double t = std::clamp(normalizedDistance, 0.0, 1.0);
+    switch (m_softFalloff) {
+        case SoftFalloff::Linear:
+            return 1.0 - t;
+        case SoftFalloff::Gaussian: {
+            // sigma chosen so influence is near-zero at t = 1.
+            constexpr double sigma = 0.35;
+            const double s = t / sigma;
+            return std::exp(-0.5 * s * s) * (1.0 - t);
+        }
+        case SoftFalloff::Smooth:
+        default:
+            return 1.0 - (t * t * (3.0 - 2.0 * t));  // 1 - smoothstep
+    }
 }
 
 fs::path AnnotatorWindow::annotationPathForSlide() const {
@@ -1137,11 +1246,8 @@ void AnnotatorWindow::onRectDrawn(QRectF rectLevel0) {
     };
 
     m_annotations.push_back(a);
-    m_annotationList->addItem(a.label);
-    const int idx = static_cast<int>(m_annotations.size()) - 1;
-    m_annotationList->setCurrentRow(idx);
-    m_selectedAnnotation = idx;
-    m_imageLabel->setSelectedAnnotationIndex(idx);
+    m_selectedAnnotation = static_cast<int>(m_annotations.size()) - 1;
+    syncAnnotationUiFromData();
     updateStatus(QString("Added %1").arg(a.label));
     m_imageLabel->update();
 }
@@ -1149,6 +1255,9 @@ void AnnotatorWindow::onRectDrawn(QRectF rectLevel0) {
 void AnnotatorWindow::onPolygonCompleted(std::vector<QPointF> pointsLevel0) {
     if (m_slidePath.empty()) return;
     if (pointsLevel0.size() < 3) return;
+    if (QLineF(pointsLevel0.front(), pointsLevel0.back()).length() > 1e-6) {
+        pointsLevel0.push_back(pointsLevel0.front());
+    }
 
     // Compute bbox.
     double minx = pointsLevel0[0].x();
@@ -1169,11 +1278,8 @@ void AnnotatorWindow::onPolygonCompleted(std::vector<QPointF> pointsLevel0) {
     a.bboxLevel0 = QRectF(QPointF(minx, miny), QPointF(maxx, maxy));
 
     m_annotations.push_back(a);
-    m_annotationList->addItem(a.label);
-    const int idx = static_cast<int>(m_annotations.size()) - 1;
-    m_annotationList->setCurrentRow(idx);
-    m_selectedAnnotation = idx;
-    m_imageLabel->setSelectedAnnotationIndex(idx);
+    m_selectedAnnotation = static_cast<int>(m_annotations.size()) - 1;
+    syncAnnotationUiFromData();
     updateStatus(QString("Added polygon: %1").arg(a.label));
 
     // Reset polygon tool state.
@@ -1217,6 +1323,27 @@ void AnnotatorWindow::onNewRect() {
     updateStatus("Rect tool selected: drag to create rect N");
 }
 
+void AnnotatorWindow::onLoadJson() {
+    if (m_slidePath.empty()) {
+        QMessageBox::information(this, "Load", "No slide selected");
+        return;
+    }
+
+    clearAnnotations();
+    rebuildLabelList();
+    reloadAnnotationsFromDisk();
+    m_selectedAnnotation = -1;
+    m_imageLabel->setSelectedAnnotationIndex(-1);
+    m_imageLabel->update();
+
+    const fs::path jsonPath = annotationPathForSlide();
+    if (!jsonPath.empty() && fs::exists(jsonPath)) {
+        updateStatus(QString("Loaded: %1").arg(QString::fromStdString(jsonPath.string())));
+    } else {
+        updateStatus("JSON file not found near slide");
+    }
+}
+
 void AnnotatorWindow::onSaveJson() {
     if (m_slidePath.empty()) {
         QMessageBox::information(this, "Save", "No slide selected");
@@ -1234,52 +1361,157 @@ void AnnotatorWindow::onSaveJson() {
     updateStatus(QString("Saved: %1").arg(QString::fromStdString(outPath.string())));
 }
 
+void AnnotatorWindow::onOpenVertexDeformSettings() {
+    if (!m_vertexDeformDialog) {
+        m_vertexDeformDialog = new QDialog(this);
+        m_vertexDeformDialog->setWindowTitle("Vertex Deform");
+        m_vertexDeformDialog->setMinimumWidth(360);
+        m_vertexDeformDialog->setStyleSheet(
+            "QDialog { background: #f8fafc; color: #0f172a; }"
+            "QWidget { color: #0f172a; }"
+            "QGroupBox {"
+            "  border: 1px solid #d8dee6;"
+            "  border-radius: 8px;"
+            "  margin-top: 10px;"
+            "  padding-top: 8px;"
+            "  background: #ffffff;"
+            "  font-weight: 600;"
+            "}"
+            "QGroupBox::title {"
+            "  subcontrol-origin: margin;"
+            "  left: 8px;"
+            "  padding: 0 4px;"
+            "  color: #0f172a;"
+            "}"
+            "QLabel { color: #0f172a; background: transparent; }"
+            "QComboBox, QSlider, QPushButton { font-size: 12px; color: #0f172a; }"
+            "QComboBox {"
+            "  border: 1px solid #cbd5e1;"
+            "  border-radius: 6px;"
+            "  padding: 4px 6px;"
+            "  background: #ffffff;"
+            "  color: #0f172a;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "  background: #ffffff;"
+            "  color: #0f172a;"
+            "  selection-background-color: #dbeafe;"
+            "  selection-color: #0f172a;"
+            "}"
+            "QPushButton {"
+            "  border: 1px solid #cbd5e1;"
+            "  border-radius: 6px;"
+            "  padding: 6px 10px;"
+            "  background: #f8fafc;"
+            "  color: #0f172a;"
+            "}"
+            "QPushButton:hover { background: #eef2ff; }"
+        );
+
+        QVBoxLayout* dlgLayout = new QVBoxLayout(m_vertexDeformDialog);
+        dlgLayout->setContentsMargins(10, 10, 10, 10);
+        dlgLayout->setSpacing(10);
+
+        QGroupBox* deformBox = new QGroupBox("Soft Selection", m_vertexDeformDialog);
+        QFormLayout* deformLayout = new QFormLayout(deformBox);
+        deformLayout->setContentsMargins(8, 8, 8, 8);
+        deformLayout->setSpacing(6);
+
+        m_softRadiusSlider = new QSlider(Qt::Horizontal, deformBox);
+        m_softRadiusSlider->setRange(8, 240);
+        m_softRadiusValueLabel = new QLabel(deformBox);
+        m_softRadiusValueLabel->setMinimumWidth(44);
+
+        QWidget* radiusRow = new QWidget(deformBox);
+        QHBoxLayout* radiusLayout = new QHBoxLayout(radiusRow);
+        radiusLayout->setContentsMargins(0, 0, 0, 0);
+        radiusLayout->setSpacing(8);
+        radiusLayout->addWidget(m_softRadiusSlider, 1);
+        radiusLayout->addWidget(m_softRadiusValueLabel);
+
+        m_softFalloffCombo = new QComboBox(deformBox);
+        m_softFalloffCombo->addItem("Smooth");
+        m_softFalloffCombo->addItem("Linear");
+        m_softFalloffCombo->addItem("Gaussian");
+
+        deformLayout->addRow("Radius:", radiusRow);
+        deformLayout->addRow("Falloff:", m_softFalloffCombo);
+        dlgLayout->addWidget(deformBox);
+
+        QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Close, m_vertexDeformDialog);
+        connect(buttons, &QDialogButtonBox::rejected, m_vertexDeformDialog, &QDialog::hide);
+        dlgLayout->addWidget(buttons);
+
+        connect(m_softRadiusSlider, &QSlider::valueChanged, this, [this](int value) {
+            m_softRadiusViewPx = std::max(1, value);
+            if (m_softRadiusValueLabel) {
+                m_softRadiusValueLabel->setText(QString("%1 px").arg(m_softRadiusViewPx));
+            }
+        });
+        connect(m_softFalloffCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+            if (index < 0 || index > static_cast<int>(SoftFalloff::Gaussian)) {
+                m_softFalloff = SoftFalloff::Smooth;
+                return;
+            }
+            m_softFalloff = static_cast<SoftFalloff>(index);
+        });
+    }
+
+    if (m_softRadiusSlider) m_softRadiusSlider->setValue(m_softRadiusViewPx);
+    if (m_softRadiusValueLabel) m_softRadiusValueLabel->setText(QString("%1 px").arg(m_softRadiusViewPx));
+    if (m_softFalloffCombo) m_softFalloffCombo->setCurrentIndex(static_cast<int>(m_softFalloff));
+    m_vertexDeformDialog->show();
+    m_vertexDeformDialog->raise();
+    m_vertexDeformDialog->activateWindow();
+}
+
 void AnnotatorWindow::onDeleteSelected() {
     auto items = m_annotationList->selectedItems();
     if (items.isEmpty()) return;
 
     const int row = m_annotationList->row(items[0]);
-    if (row < 0 || row >= static_cast<int>(m_annotations.size())) return;
+    const int annotationIndex = listRowToAnnotationIndex(row);
+    if (annotationIndex < 0 || annotationIndex >= static_cast<int>(m_annotations.size())) return;
 
-    m_annotations.erase(m_annotations.begin() + row);
-    delete m_annotationList->takeItem(row);
+    m_annotations.erase(m_annotations.begin() + annotationIndex);
     m_selectedAnnotation = -1;
-    m_imageLabel->setSelectedAnnotationIndex(-1);
-    m_imageLabel->update();
+    syncAnnotationUiFromData();
     updateStatus("Deleted annotation");
 }
 
 void AnnotatorWindow::onAnnotationSelectionChanged() {
     if (!m_annotationList) return;
     const int row = m_annotationList->currentRow();
-    m_selectedAnnotation = row;
-    m_imageLabel->setSelectedAnnotationIndex(row);
+    m_selectedAnnotation = listRowToAnnotationIndex(row);
+    m_imageLabel->setSelectedAnnotationIndex(m_selectedAnnotation);
 }
 
 void AnnotatorWindow::onAnnotationItemDoubleClicked(QListWidgetItem* item) {
     if (!m_annotationList || !item) return;
     const int row = m_annotationList->row(item);
-    if (row < 0 || row >= static_cast<int>(m_annotations.size())) return;
+    const int annotationIndex = listRowToAnnotationIndex(row);
+    if (annotationIndex < 0 || annotationIndex >= static_cast<int>(m_annotations.size())) return;
 
     m_annotationList->setCurrentRow(row);
-    m_selectedAnnotation = row;
-    m_imageLabel->setSelectedAnnotationIndex(row);
+    m_selectedAnnotation = annotationIndex;
+    m_imageLabel->setSelectedAnnotationIndex(annotationIndex);
 
-    const QRectF& bb = m_annotations[row].bboxLevel0;
+    const QRectF& bb = m_annotations[annotationIndex].bboxLevel0;
     const QPointF center = bb.center();
     centerViewOnLevel0(center);
-    updateStatus(QString("Centered on: %1").arg(m_annotations[row].label));
+    updateStatus(QString("Centered on: %1").arg(m_annotations[annotationIndex].label));
 }
 
 void AnnotatorWindow::onImageAnnotationSelected(int index) {
     m_selectedAnnotation = index;
     if (!m_annotationList) return;
-    if (index < 0 || index >= m_annotationList->count()) {
+    const int row = annotationIndexToListRow(index);
+    if (row < 0 || row >= m_annotationList->count()) {
         m_annotationList->clearSelection();
         m_annotationList->setCurrentRow(-1);
         return;
     }
-    m_annotationList->setCurrentRow(index);
+    m_annotationList->setCurrentRow(row);
 }
 
 void AnnotatorWindow::onPolygonVertexMoved(int annotationIndex, int vertexIndex, QPointF newPosLevel0) {
@@ -1288,16 +1520,72 @@ void AnnotatorWindow::onPolygonVertexMoved(int annotationIndex, int vertexIndex,
     if (a.isRect) return;
     if (vertexIndex < 0 || vertexIndex >= static_cast<int>(a.pointsLevel0.size())) return;
 
-    a.pointsLevel0[vertexIndex] = newPosLevel0;
-
     const bool closed = a.pointsLevel0.size() >= 3 &&
         QLineF(a.pointsLevel0.front(), a.pointsLevel0.back()).length() <= 1e-6;
+
+    int headSize = static_cast<int>(a.pointsLevel0.size());
     if (closed) {
-        if (vertexIndex == 0) {
-            a.pointsLevel0.back() = newPosLevel0;
-        } else if (vertexIndex == static_cast<int>(a.pointsLevel0.size()) - 1) {
-            a.pointsLevel0.front() = newPosLevel0;
+        headSize -= 1;  // trailing duplicate of first vertex
+        if (headSize <= 0) return;
+        if (vertexIndex == static_cast<int>(a.pointsLevel0.size()) - 1) {
+            vertexIndex = 0;
         }
+    }
+
+    const QPointF oldPos = a.pointsLevel0[vertexIndex];
+    const QPointF delta = newPosLevel0 - oldPos;
+    const double radiusLevel0 = std::max(1.0, m_currentDownsample * static_cast<double>(m_softRadiusViewPx));
+
+    // Distance is measured along contour arc-length ("connectivity mode"), not straight-line.
+    std::vector<double> arcDistance(headSize, std::numeric_limits<double>::infinity());
+    if (closed) {
+        double perimeter = 0.0;
+        for (int i = 0; i < headSize; ++i) {
+            const int j = (i + 1) % headSize;
+            perimeter += QLineF(a.pointsLevel0[i], a.pointsLevel0[j]).length();
+        }
+
+        arcDistance[vertexIndex] = 0.0;
+        double run = 0.0;
+        for (int step = 1; step < headSize; ++step) {
+            const int prev = (vertexIndex + step - 1) % headSize;
+            const int curr = (vertexIndex + step) % headSize;
+            run += QLineF(a.pointsLevel0[prev], a.pointsLevel0[curr]).length();
+            arcDistance[curr] = run;
+        }
+
+        if (perimeter > 1e-9) {
+            for (int i = 0; i < headSize; ++i) {
+                arcDistance[i] = std::min(arcDistance[i], perimeter - arcDistance[i]);
+            }
+        } else {
+            std::fill(arcDistance.begin(), arcDistance.end(), 0.0);
+        }
+    } else {
+        std::vector<double> prefix(headSize, 0.0);
+        for (int i = 1; i < headSize; ++i) {
+            prefix[i] = prefix[i - 1] + QLineF(a.pointsLevel0[i - 1], a.pointsLevel0[i]).length();
+        }
+        const double pivot = prefix[vertexIndex];
+        for (int i = 0; i < headSize; ++i) {
+            arcDistance[i] = std::abs(prefix[i] - pivot);
+        }
+    }
+
+    for (int i = 0; i < headSize; ++i) {
+        if (i == vertexIndex) {
+            a.pointsLevel0[i] = newPosLevel0;
+            continue;
+        }
+        const double d = arcDistance[i];
+        if (d > radiusLevel0) continue;
+        const double influence = softInfluence(d / radiusLevel0);
+        if (influence <= 1e-4) continue;
+        a.pointsLevel0[i] = a.pointsLevel0[i] + delta * influence;
+    }
+
+    if (closed) {
+        a.pointsLevel0.back() = a.pointsLevel0.front();
     }
 
     double minx = a.pointsLevel0[0].x();

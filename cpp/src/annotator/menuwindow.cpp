@@ -2,6 +2,10 @@
 #include "window.h"
 
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QPushButton>
 #include <QLabel>
 #include <QMessageBox>
 #include <QApplication>
@@ -24,22 +28,75 @@ AnnotatorMenuWindow::AnnotatorMenuWindow(AnnotatorWindow* parent)
 
 void AnnotatorMenuWindow::setupUi() {
     setWindowTitle("Select Slide");
-    setMinimumWidth(420);
+    setMinimumWidth(500);
+    setStyleSheet(
+        "QDialog { background: #f8fafc; color: #0f172a; }"
+        "QGroupBox {"
+        "  border: 1px solid #d8dee6;"
+        "  border-radius: 8px;"
+        "  margin-top: 10px;"
+        "  padding-top: 8px;"
+        "  background: #ffffff;"
+        "  font-weight: 600;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin;"
+        "  left: 8px;"
+        "  padding: 0 4px;"
+        "}"
+        "QLabel { color: #0f172a; }"
+        "QComboBox, QPushButton { font-size: 12px; }"
+        "QComboBox {"
+        "  border: 1px solid #cbd5e1;"
+        "  border-radius: 6px;"
+        "  padding: 5px 6px;"
+        "  background: #ffffff;"
+        "  color: #0f172a;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "  background: #ffffff;"
+        "  color: #0f172a;"
+        "  selection-background-color: #dbeafe;"
+        "  selection-color: #0f172a;"
+        "}"
+        "QPushButton {"
+        "  border: 1px solid #cbd5e1;"
+        "  border-radius: 6px;"
+        "  padding: 6px 10px;"
+        "  background: #f8fafc;"
+        "}"
+        "QPushButton:hover { background: #eef2ff; }"
+    );
 
     QVBoxLayout* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(10);
 
     m_status = new QLabel("Scanning for slides...", this);
+    m_status->setStyleSheet("background: #e2e8f0; color: #0f172a; border-radius: 6px; padding: 6px 8px;");
     layout->addWidget(m_status);
 
-    layout->addWidget(new QLabel("Slide:", this));
-    m_slideCombo = new QComboBox(this);
-    m_slideCombo->setMinimumWidth(380);
-    layout->addWidget(m_slideCombo);
+    QGroupBox* sourceBox = new QGroupBox("Slide Source", this);
+    QFormLayout* sourceLayout = new QFormLayout(sourceBox);
+    sourceLayout->setContentsMargins(8, 8, 8, 8);
+    sourceLayout->setSpacing(8);
 
-    layout->addWidget(new QLabel("Zoom Level:", this));
-    m_levelCombo = new QComboBox(this);
-    m_levelCombo->setMinimumWidth(220);
-    layout->addWidget(m_levelCombo);
+    m_slideCombo = new QComboBox(sourceBox);
+    m_slideCombo->setMinimumWidth(440);
+    sourceLayout->addRow("Slide:", m_slideCombo);
+
+    m_levelCombo = new QComboBox(sourceBox);
+    m_levelCombo->setMinimumWidth(260);
+    sourceLayout->addRow("Zoom Level:", m_levelCombo);
+    layout->addWidget(sourceBox);
+
+    QPushButton* closeBtn = new QPushButton("Close", this);
+    closeBtn->setMinimumWidth(90);
+    connect(closeBtn, &QPushButton::clicked, this, &QDialog::hide);
+    QHBoxLayout* actionsLayout = new QHBoxLayout();
+    actionsLayout->addStretch(1);
+    actionsLayout->addWidget(closeBtn);
+    layout->addLayout(actionsLayout);
 
     // Only react to explicit user choice. Using currentIndexChanged causes
     // expensive slide open / preview load during initial population, which

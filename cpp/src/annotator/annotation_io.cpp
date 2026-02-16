@@ -18,6 +18,13 @@ namespace cytologick::annotation_io {
 
 namespace {
 
+void closePolygonIfNeeded(Annotation& a) {
+    if (a.isRect) return;
+    if (a.pointsLevel0.size() < 3) return;
+    if (QLineF(a.pointsLevel0.front(), a.pointsLevel0.back()).length() <= 1e-6) return;
+    a.pointsLevel0.push_back(a.pointsLevel0.front());
+}
+
 std::string dedupKey(const Annotation& a) {
     std::string key;
     const std::string label = a.label.trimmed().toLower().toStdString();
@@ -118,6 +125,7 @@ bool loadJson(const fs::path& jsonPath, std::vector<Annotation>& out, QString* e
                 a.pointsLevel0.emplace_back(pa.at(0).toDouble(), pa.at(1).toDouble());
             }
         }
+        closePolygonIfNeeded(a);
 
         bool haveRect = false;
         const QJsonValue rv = obj.value("rect");
@@ -150,11 +158,17 @@ bool saveJson(const fs::path& jsonPath, const std::vector<Annotation>& annotatio
 
     QJsonArray arr;
     for (const auto& a : annotations) {
+        std::vector<QPointF> pointsOut = a.pointsLevel0;
+        if (!a.isRect && pointsOut.size() >= 3 &&
+            QLineF(pointsOut.front(), pointsOut.back()).length() > 1e-6) {
+            pointsOut.push_back(pointsOut.front());
+        }
+
         QJsonObject obj;
         obj["label"] = a.label;
 
         QJsonArray points;
-        for (const auto& p : a.pointsLevel0) {
+        for (const auto& p : pointsOut) {
             QJsonArray pt;
             pt.append(static_cast<int>(std::llround(p.x())));
             pt.append(static_cast<int>(std::llround(p.y())));
@@ -236,6 +250,7 @@ int mergeFromAsapXml(const fs::path& xmlPath, std::vector<Annotation>& annotatio
         for (const auto& c : curCoords) {
             a.pointsLevel0.push_back(c.p);
         }
+        closePolygonIfNeeded(a);
         ensureBbox(a);
         parsed.push_back(std::move(a));
         curCoords.clear();
@@ -298,4 +313,3 @@ int mergeFromAsapXml(const fs::path& xmlPath, std::vector<Annotation>& annotatio
 }
 
 }  // namespace cytologick::annotation_io
-
