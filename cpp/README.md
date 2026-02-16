@@ -21,8 +21,11 @@ python scripts/export_onnx.py
 
 # 2. Install dependencies and build (see platform-specific instructions below)
 
-# 3. Run
+# 3. Run viewer
 ./build/Cytologick
+
+# 4. Run annotator
+./build/CytologickAnnotator
 ```
 
 ---

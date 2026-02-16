@@ -1,6 +1,7 @@
 #include "config.h"
 #include <yaml-cpp/yaml.h>
 #include <iostream>
+#include <algorithm>
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -141,6 +142,23 @@ Config Config::loadFrom(const fs::path& path) {
 
             cfg.classes = getOrDefault(nn, "classes", cfg.classes);
             cfg.batchSize = getOrDefault(nn, "batch_size", cfg.batchSize);
+
+            // Optional label list for annotation (keys of neural_network.labels mapping).
+            if (nn["labels"] && nn["labels"].IsMap()) {
+                cfg.annotationLabels.clear();
+                for (auto it = nn["labels"].begin(); it != nn["labels"].end(); ++it) {
+                    try {
+                        cfg.annotationLabels.push_back(it->first.as<std::string>());
+                    } catch (...) {
+                        // ignore
+                    }
+                }
+                std::sort(cfg.annotationLabels.begin(), cfg.annotationLabels.end());
+                cfg.annotationLabels.erase(
+                    std::unique(cfg.annotationLabels.begin(), cfg.annotationLabels.end()),
+                    cfg.annotationLabels.end()
+                );
+            }
         }
 
         // General settings (paths)

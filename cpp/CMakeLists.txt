@@ -110,9 +110,55 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${OPENSLIDE_LIBRARY}
 )
 
+# -----------------------------------------------------------------------------
+# Annotator (separate program)
+# -----------------------------------------------------------------------------
+
+set(ANNOTATOR_SOURCES
+    src/annotator/main.cpp
+    src/config.cpp
+    src/slidereader.cpp
+    src/annotator/window.cpp
+    src/annotator/menuwindow.cpp
+)
+
+set(ANNOTATOR_HEADERS
+    src/config.h
+    src/slidereader.h
+    src/annotator/window.h
+    src/annotator/menuwindow.h
+)
+
+add_executable(${PROJECT_NAME}Annotator WIN32
+    ${ANNOTATOR_SOURCES}
+    ${ANNOTATOR_HEADERS}
+    ${RESOURCES}
+)
+
+target_include_directories(${PROJECT_NAME}Annotator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/annotator
+    ${OPENSLIDE_INCLUDE_DIR}
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(${PROJECT_NAME}Annotator PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Concurrent
+    ${OpenCV_LIBS}
+    ${YAML_CPP_TARGET}
+    ${OPENSLIDE_LIBRARY}
+)
+
 # Windows-specific settings
 if(WIN32)
     set_target_properties(${PROJECT_NAME} PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
+
+    set_target_properties(${PROJECT_NAME}Annotator PROPERTIES
         WIN32_EXECUTABLE TRUE
     )
 
@@ -124,6 +170,15 @@ if(WIN32)
             $<TARGET_FILE:Qt6::Widgets>
             $<TARGET_FILE:Qt6::Concurrent>
             $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    )
+
+    add_custom_command(TARGET ${PROJECT_NAME}Annotator POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:Qt6::Core>
+            $<TARGET_FILE:Qt6::Gui>
+            $<TARGET_FILE:Qt6::Widgets>
+            $<TARGET_FILE:Qt6::Concurrent>
+            $<TARGET_FILE_DIR:${PROJECT_NAME}Annotator>
     )
 endif()
 

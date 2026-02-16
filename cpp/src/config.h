@@ -3,6 +3,7 @@
 #include <string>
 #include <array>
 #include <filesystem>
+#include <vector>
 
 namespace cytologick {
 
@@ -28,6 +29,9 @@ struct Config {
 
     // GUI
     std::string predMode = "direct";               // Prediction mode
+
+    // Optional: label list for annotator (derived from YAML neural_network.labels keys)
+    std::vector<std::string> annotationLabels;
 
     /**
      * Load configuration from YAML file

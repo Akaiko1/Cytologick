@@ -19,9 +19,12 @@ openslide/
 *slide-*
 dist/
 build/
+cpp/build*/
 model/
 
 previous/
+
+temp/
 
 *jquery.js
 *openseadragon*.js
@@ -39,3 +42,8 @@ _main/model.onnx
 debug_info/
 
 _main/
+
+cpp/build-annotator/.qt/
+
+# Annotation exports (saved next to slides when slides live in-repo)
+current/**/*.json

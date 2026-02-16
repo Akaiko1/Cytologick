@@ -87,7 +87,12 @@ def extract_all_cells(
         # Derive expected JSON name robustly from slide filename
         base_name = os.path.splitext(os.path.basename(slidepath))[0]
         json_name = f"{base_name}.json"
-        json_path = [f for f in json_list if json_name in f]
+        # Prefer JSON that lives next to the slide (annotator workflow).
+        local_json = os.path.join(os.path.dirname(slidepath), json_name)
+        if os.path.exists(local_json):
+            json_path = [local_json]
+        else:
+            json_path = [f for f in json_list if json_name in f]
 
         slide = openslide.OpenSlide(slidepath)
 
@@ -200,7 +205,12 @@ def extract_all_slides(
         # Derive expected JSON name robustly from slide filename
         base_name = os.path.splitext(os.path.basename(slide))[0]
         json_name = f"{base_name}.json"
-        json_path = [f for f in json_list if json_name in f]
+        # Prefer JSON that lives next to the slide (annotator workflow).
+        local_json = os.path.join(os.path.dirname(slide), json_name)
+        if os.path.exists(local_json):
+            json_path = [local_json]
+        else:
+            json_path = [f for f in json_list if json_name in f]
 
         if not json_path:
             print(f'JSON for {slide} not found, skipping')
