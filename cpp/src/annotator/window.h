@@ -90,6 +90,8 @@ signals:
     void panByPixels(QPoint delta);
     void annotationSelected(int index);
     void polygonVertexMoved(int annotationIndex, int vertexIndex, QPointF newPosLevel0);
+    void annotationLabelDoubleClicked(int index);
+    void annotationLabelContextRequested(int index, QPoint globalPos);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -103,6 +105,7 @@ private:
     QRect computeCacheRect(const QRect& targetRect) const;
     int hitTestVertex(const QPoint& viewPos, int* outVertexIndex) const;
     int hitTestAnnotation(const QPoint& viewPos) const;
+    int hitTestAnnotationLabel(const QPoint& viewPos) const;
     QColor classColor(const QString& label, bool selected) const;
 
     QPixmap m_slideImage;
@@ -131,6 +134,7 @@ private:
     bool m_panning = false;
     bool m_panMoved = false;
     QPoint m_panLastGlobal;
+    std::vector<QRectF> m_labelChipRectsView;
 };
 
 class AnnotatorWindow : public QMainWindow {
@@ -162,6 +166,8 @@ private slots:
     void onAnnotationSelectionChanged();
     void onAnnotationItemDoubleClicked(QListWidgetItem* item);
     void onImageAnnotationSelected(int index);
+    void onImageAnnotationLabelDoubleClicked(int index);
+    void onImageAnnotationLabelContextRequested(int index, QPoint globalPos);
     void onPolygonVertexMoved(int annotationIndex, int vertexIndex, QPointF newPosLevel0);
     void onMapJumpRequested(QPointF centerLevel0);
 
@@ -192,6 +198,7 @@ private:
     void rebuildOverviewMap();
     void updateOverviewViewport();
     void centerViewOnLevel0(const QPointF& centerLevel0);
+    void centerOnAnnotation(int annotationIndex);
     double softInfluence(double normalizedDistance) const;
 
     QString currentLabel() const;

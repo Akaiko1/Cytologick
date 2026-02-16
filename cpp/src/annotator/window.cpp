@@ -24,10 +24,13 @@
 #include <QMenu>
 #include <QAction>
 #include <QDialogButtonBox>
+#include <QInputDialog>
+#include <QLineEdit>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <tuple>
 #include <utility>
 
 #include <opencv2/imgproc.hpp>
@@ -45,6 +48,10 @@ int rectNumber(const QString& label) {
     bool ok = false;
     const int v = m.captured(1).toInt(&ok);
     return ok ? v : std::numeric_limits<int>::max();
+}
+
+bool isRectLabel(const QString& label) {
+    return rectNumber(label.trimmed()) != std::numeric_limits<int>::max();
 }
 
 bool annotationSortLess(const Annotation& a, int idxA, const Annotation& b, int idxB) {
@@ -213,6 +220,7 @@ void AnnotatorImageLabel::setSlideImage(const QPixmap& pixmap) {
     m_cachedRegionImage = QImage();
     m_cachedRegionRect = QRect();
     m_regionProvider = {};
+    m_labelChipRectsView.clear();
     resize(pixmap.size());
     update();
 }
@@ -222,6 +230,7 @@ void AnnotatorImageLabel::setVirtualCanvasSize(const QSize& size) {
     m_slideImage = QPixmap();
     m_cachedRegionImage = QImage();
     m_cachedRegionRect = QRect();
+    m_labelChipRectsView.clear();
     resize(size);
     update();
 }
@@ -250,6 +259,7 @@ void AnnotatorImageLabel::setPreviewPolygonEnabled(bool enabled) {
 
 void AnnotatorImageLabel::setAnnotations(const std::vector<Annotation>* annos) {
     m_annotations = annos;
+    m_labelChipRectsView.clear();
     update();
 }
 
@@ -375,6 +385,42 @@ int AnnotatorImageLabel::hitTestAnnotation(const QPoint& viewPos) const {
     return -1;
 }
 
+int AnnotatorImageLabel::hitTestAnnotationLabel(const QPoint& viewPos) const {
+    if (!m_annotations) return -1;
+    const QPointF p(viewPos);
+    if (m_labelChipRectsView.size() == m_annotations->size()) {
+        for (int i = static_cast<int>(m_labelChipRectsView.size()) - 1; i >= 0; --i) {
+            if (m_labelChipRectsView[i].isValid() &&
+                m_labelChipRectsView[i].adjusted(-2.0, -2.0, 2.0, 2.0).contains(p)) {
+                return i;
+            }
+        }
+    }
+
+    const QFontMetrics fm(font());
+    for (int i = static_cast<int>(m_annotations->size()) - 1; i >= 0; --i) {
+        const auto& a = (*m_annotations)[i];
+        QRectF vbox(
+            a.bboxLevel0.left() / m_downsample,
+            a.bboxLevel0.top() / m_downsample,
+            a.bboxLevel0.width() / m_downsample,
+            a.bboxLevel0.height() / m_downsample
+        );
+        const QPointF textPos = vbox.topLeft() + QPointF(4, 14);
+        const QRect tr = fm.boundingRect(a.label);
+        QRectF chip(
+            textPos.x() - 3.0,
+            textPos.y() - tr.height() + 3.0,
+            tr.width() + 8.0,
+            tr.height() + 4.0
+        );
+        if (chip.adjusted(-2.0, -2.0, 2.0, 2.0).contains(p)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 QColor AnnotatorImageLabel::classColor(const QString& label, bool selected) const {
     QString key = label.trimmed().toLower();
     if (key.startsWith("rect")) {
@@ -426,6 +472,20 @@ void AnnotatorImageLabel::paintEvent(QPaintEvent* event) {
     // Draw existing annotations.
     if (m_annotations) {
         painter.setRenderHint(QPainter::Antialiasing, true);
+        m_labelChipRectsView.assign(m_annotations->size(), QRectF());
+        struct LabelDraw {
+            int index = -1;
+            QPointF textPos;
+            QRectF chip;
+            QString text;
+            bool selected = false;
+        };
+        std::vector<LabelDraw> labelsToDraw;
+        labelsToDraw.reserve(m_annotations->size());
+        std::vector<QRectF> placedChips;
+        placedChips.reserve(m_annotations->size());
+        const QFontMetrics fm(painter.font());
+        const QRectF canvasRect = QRectF(rect()).adjusted(2.0, 2.0, -2.0, -2.0);
 
         for (int i = 0; i < static_cast<int>(m_annotations->size()); ++i) {
             const auto& a = (*m_annotations)[i];
@@ -458,22 +518,72 @@ void AnnotatorImageLabel::paintEvent(QPaintEvent* event) {
                 }
             }
 
-            // Label: black text on a light chip for readability on gray/dark tissue.
-            const QPointF textPos = vbox.topLeft() + QPointF(4, 14);
-            const QFontMetrics fm(painter.font());
+            // Label placement: prefer outside the bbox and avoid overlap with other label chips.
             const QRect tr = fm.boundingRect(a.label);
-            QRectF chip(
-                textPos.x() - 3.0,
-                textPos.y() - tr.height() + 3.0,
-                tr.width() + 8.0,
-                tr.height() + 4.0
-            );
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(255, 255, 255, 215));
-            painter.drawRoundedRect(chip, 3.0, 3.0);
-            painter.setPen(QPen(QColor(0, 0, 0, 235), 1));
-            painter.drawText(textPos, a.label);
+            if (tr.width() <= 0 || tr.height() <= 0) continue;
+
+            const double textW = tr.width();
+            const double textH = tr.height();
+            const QRectF regionBox = vbox.adjusted(-2.0, -2.0, 2.0, 2.0);
+
+            auto evalCandidate = [&](double desiredX, double desiredY, double pref) {
+                const double minX = canvasRect.left();
+                const double maxX = canvasRect.right() - textW;
+                const double minY = canvasRect.top() + textH;
+                const double maxY = canvasRect.bottom();
+                const double x = std::clamp(desiredX, minX, maxX);
+                const double y = std::clamp(desiredY, minY, maxY);
+                const QRectF chip(x - 3.0, y - textH + 3.0, textW + 8.0, textH + 4.0);
+
+                double overlapArea = 0.0;
+                for (const auto& pc : placedChips) {
+                    const QRectF inter = chip.intersected(pc);
+                    if (!inter.isEmpty()) overlapArea += inter.width() * inter.height();
+                }
+                const QRectF regionInter = chip.intersected(regionBox);
+                const double regionArea = regionInter.isEmpty() ? 0.0 : regionInter.width() * regionInter.height();
+                const double clampPenalty = std::abs(x - desiredX) + std::abs(y - desiredY);
+                const double score = overlapArea * 50.0 + regionArea * 20.0 + clampPenalty * 4.0 + pref;
+                return std::tuple<double, QPointF, QRectF>(score, QPointF(x, y), chip);
+            };
+
+            std::vector<std::pair<QPointF, double>> requests = {
+                {QPointF(vbox.left() + 4.0, vbox.top() - 8.0), 0.0},
+                {QPointF(vbox.right() - textW - 4.0, vbox.top() - 8.0), 2.0},
+                {QPointF(vbox.center().x() - textW / 2.0, vbox.top() - 8.0), 4.0},
+                {QPointF(vbox.left() + 4.0, vbox.bottom() + textH + 3.0), 6.0},
+                {QPointF(vbox.right() - textW - 4.0, vbox.bottom() + textH + 3.0), 8.0},
+                {QPointF(vbox.center().x() - textW / 2.0, vbox.bottom() + textH + 3.0), 10.0},
+                {QPointF(vbox.left() + 4.0, vbox.top() + textH + 2.0), 50.0},
+            };
+
+            double bestScore = std::numeric_limits<double>::infinity();
+            QPointF bestTextPos;
+            QRectF bestChip;
+            for (const auto& [pt, pref] : requests) {
+                auto [score, textPos, chip] = evalCandidate(pt.x(), pt.y(), pref);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestTextPos = textPos;
+                    bestChip = chip;
+                }
+            }
+
+            placedChips.push_back(bestChip);
+            m_labelChipRectsView[i] = bestChip;
+            labelsToDraw.push_back({i, bestTextPos, bestChip, a.label, selected});
         }
+
+        // Draw labels after contours to keep text readable and reduce overlap artifacts.
+        for (const auto& ld : labelsToDraw) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(ld.selected ? QColor(255, 255, 255, 230) : QColor(255, 255, 255, 205));
+            painter.drawRoundedRect(ld.chip, 3.0, 3.0);
+            painter.setPen(QPen(QColor(0, 0, 0, 235), 1));
+            painter.drawText(ld.textPos, ld.text);
+        }
+    } else {
+        m_labelChipRectsView.clear();
     }
 
     // Draw selection rectangle while dragging.
@@ -507,6 +617,16 @@ void AnnotatorImageLabel::mousePressEvent(QMouseEvent* event) {
     emit mouseMovedLevel0(viewToLevel0(pos));
 
     if (event->button() == Qt::RightButton) {
+        if (m_tool == Tool::Select) {
+            const int labelIdx = hitTestAnnotationLabel(pos);
+            if (labelIdx >= 0) {
+                m_selectedAnnotation = labelIdx;
+                emit annotationSelected(labelIdx);
+                emit annotationLabelContextRequested(labelIdx, event->globalPosition().toPoint());
+                event->accept();
+                return;
+            }
+        }
         // Hold right mouse button and drag to pan the viewport.
         m_panning = true;
         m_panMoved = false;
@@ -628,6 +748,16 @@ void AnnotatorImageLabel::mouseReleaseEvent(QMouseEvent* event) {
 
 void AnnotatorImageLabel::mouseDoubleClickEvent(QMouseEvent* event) {
     if (!event) return;
+    if (m_tool == Tool::Select && event->button() == Qt::LeftButton) {
+        const int labelIdx = hitTestAnnotationLabel(event->pos());
+        if (labelIdx >= 0) {
+            m_selectedAnnotation = labelIdx;
+            emit annotationSelected(labelIdx);
+            emit annotationLabelDoubleClicked(labelIdx);
+            event->accept();
+            return;
+        }
+    }
     if (m_tool == Tool::Polygon && event->button() == Qt::LeftButton) {
         if (m_currentPolyLevel0.size() >= 3) {
             emit polygonCompletedLevel0(m_currentPolyLevel0);
@@ -882,6 +1012,8 @@ void AnnotatorWindow::setupUi() {
         m_scrollArea->verticalScrollBar()->setValue(m_scrollArea->verticalScrollBar()->value() - delta.y());
     });
     connect(m_imageLabel, &AnnotatorImageLabel::annotationSelected, this, &AnnotatorWindow::onImageAnnotationSelected);
+    connect(m_imageLabel, &AnnotatorImageLabel::annotationLabelDoubleClicked, this, &AnnotatorWindow::onImageAnnotationLabelDoubleClicked);
+    connect(m_imageLabel, &AnnotatorImageLabel::annotationLabelContextRequested, this, &AnnotatorWindow::onImageAnnotationLabelContextRequested);
     connect(m_imageLabel, &AnnotatorImageLabel::polygonVertexMoved, this, &AnnotatorWindow::onPolygonVertexMoved);
 
     connect(m_scrollArea->horizontalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
@@ -965,6 +1097,7 @@ void AnnotatorWindow::ensureLabelPresent(const QString& label) {
     if (!m_labelCombo) return;
     const QString trimmed = label.trimmed();
     if (trimmed.isEmpty()) return;
+    if (isRectLabel(trimmed)) return;  // keep polygon class combo free of rect labels
     if (m_labelCombo->findText(trimmed) >= 0) return;
     m_labelCombo->addItem(trimmed);
 }
@@ -1222,6 +1355,12 @@ void AnnotatorWindow::centerViewOnLevel0(const QPointF& centerLevel0) {
     m_scrollArea->horizontalScrollBar()->setValue(newH);
     m_scrollArea->verticalScrollBar()->setValue(newV);
     updateOverviewViewport();
+}
+
+void AnnotatorWindow::centerOnAnnotation(int annotationIndex) {
+    if (annotationIndex < 0 || annotationIndex >= static_cast<int>(m_annotations.size())) return;
+    centerViewOnLevel0(m_annotations[annotationIndex].bboxLevel0.center());
+    updateStatus(QString("Centered on: %1").arg(m_annotations[annotationIndex].label));
 }
 
 void AnnotatorWindow::onRectDrawn(QRectF rectLevel0) {
@@ -1512,6 +1651,108 @@ void AnnotatorWindow::onImageAnnotationSelected(int index) {
         return;
     }
     m_annotationList->setCurrentRow(row);
+}
+
+void AnnotatorWindow::onImageAnnotationLabelDoubleClicked(int index) {
+    if (index < 0 || index >= static_cast<int>(m_annotations.size())) return;
+
+    const bool mustBeRect = m_annotations[index].isRect;
+    const QString oldLabel = m_annotations[index].label.trimmed();
+    bool ok = false;
+    QString newLabel = QInputDialog::getText(
+        this,
+        "Rename Label",
+        "Label:",
+        QLineEdit::Normal,
+        oldLabel,
+        &ok
+    ).trimmed();
+    if (!ok || newLabel.isEmpty() || newLabel == oldLabel) return;
+    const bool newIsRect = isRectLabel(newLabel);
+    if (mustBeRect != newIsRect) {
+        QMessageBox::warning(
+            this,
+            "Rename Label",
+            mustBeRect
+                ? "Rectangle can only be renamed to format: rect N"
+                : "Region label cannot be in format: rect N"
+        );
+        return;
+    }
+
+    m_annotations[index].label = newLabel;
+    ensureLabelPresent(newLabel);
+    m_selectedAnnotation = index;
+    syncAnnotationUiFromData();
+    updateStatus(QString("Label changed: %1 -> %2").arg(oldLabel, newLabel));
+}
+
+void AnnotatorWindow::onImageAnnotationLabelContextRequested(int index, QPoint globalPos) {
+    if (index < 0 || index >= static_cast<int>(m_annotations.size())) return;
+
+    const bool mustBeRect = m_annotations[index].isRect;
+    QMenu menu(this);
+    QAction* centerAction = menu.addAction("Center on Region");
+    menu.addSeparator();
+    QMenu* labelMenu = menu.addMenu(mustBeRect ? "Set Rect Label" : "Set Region Label");
+
+    std::vector<QString> labels;
+    if (m_labelCombo) {
+        for (int i = 0; i < m_labelCombo->count(); ++i) {
+            const QString text = m_labelCombo->itemText(i).trimmed();
+            if (text.isEmpty()) continue;
+            if (isRectLabel(text) != mustBeRect) continue;
+            if (std::find(labels.begin(), labels.end(), text) == labels.end()) {
+                labels.push_back(text);
+            }
+        }
+    }
+
+    for (const auto& a : m_annotations) {
+        const QString text = a.label.trimmed();
+        if (text.isEmpty()) continue;
+        if (isRectLabel(text) != mustBeRect) continue;
+        if (std::find(labels.begin(), labels.end(), text) == labels.end()) {
+            labels.push_back(text);
+        }
+    }
+
+    const QString current = m_annotations[index].label.trimmed();
+    if (!current.isEmpty() && isRectLabel(current) == mustBeRect &&
+        std::find(labels.begin(), labels.end(), current) == labels.end()) {
+        labels.push_back(current);
+    }
+    std::sort(labels.begin(), labels.end(), [](const QString& a, const QString& b) {
+        return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+    });
+
+    std::vector<std::pair<QAction*, QString>> labelActions;
+    labelActions.reserve(labels.size());
+    for (const auto& l : labels) {
+        QAction* act = labelMenu->addAction(l);
+        act->setCheckable(true);
+        act->setChecked(QString::compare(l, current, Qt::CaseInsensitive) == 0);
+        labelActions.push_back({act, l});
+    }
+
+    QAction* picked = menu.exec(globalPos);
+    if (!picked) return;
+    if (picked == centerAction) {
+        centerOnAnnotation(index);
+        return;
+    }
+
+    for (const auto& [act, label] : labelActions) {
+        if (act != picked) continue;
+        if (label.isEmpty() || label == current) return;
+        if (isRectLabel(label) != mustBeRect) return;
+        m_annotations[index].label = label;
+        ensureLabelPresent(label);
+        m_selectedAnnotation = index;
+        syncAnnotationUiFromData();
+        updateStatus(QString("Label changed: %1 -> %2").arg(current, label));
+        return;
+    }
 }
 
 void AnnotatorWindow::onPolygonVertexMoved(int annotationIndex, int vertexIndex, QPointF newPosLevel0) {

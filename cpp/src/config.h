@@ -35,7 +35,7 @@ struct Config {
 
     /**
      * Load configuration from YAML file
-     * Searches: current dir -> executable dir
+     * Uses config next to executable; creates a default one there if missing.
      * @return Loaded config with defaults for missing values
      */
     static Config load();
