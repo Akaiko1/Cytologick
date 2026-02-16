@@ -118,6 +118,7 @@ set(ANNOTATOR_SOURCES
     src/annotator/main.cpp
     src/config.cpp
     src/slidereader.cpp
+    src/annotator/annotation_io.cpp
     src/annotator/window.cpp
     src/annotator/menuwindow.cpp
 )
@@ -125,6 +126,8 @@ set(ANNOTATOR_SOURCES
 set(ANNOTATOR_HEADERS
     src/config.h
     src/slidereader.h
+    src/annotator/annotation_io.h
+    src/annotator/annotation_types.h
     src/annotator/window.h
     src/annotator/menuwindow.h
 )

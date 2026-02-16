@@ -1,4 +1,5 @@
 #include "window.h"
+#include "annotation_io.h"
 #include "menuwindow.h"
 
 #include <QHBoxLayout>
@@ -8,13 +9,7 @@
 #include <QPainterPath>
 #include <QMouseEvent>
 #include <QMessageBox>
-#include <QSaveFile>
-#include <QJsonArray>
-#include <QJsonObject>
-#include <QJsonDocument>
-#include <QFileInfo>
 #include <QTimer>
-#include <QFile>
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QEvent>
@@ -580,7 +575,6 @@ void AnnotatorWindow::onSlideOpened(const fs::path& path) {
     clearAnnotations();
     rebuildLabelList();
     reloadAnnotationsFromDisk();
-    recomputeRectCounter();
     m_selectedAnnotation = -1;
     m_levelLoaded = false;
     m_imageLabel->setSelectedAnnotationIndex(-1);
@@ -723,14 +717,41 @@ void AnnotatorWindow::clearAnnotations() {
 
 void AnnotatorWindow::reloadAnnotationsFromDisk() {
     if (m_slidePath.empty()) return;
-    const fs::path jsonPath = annotationPathForSlide();
-    if (jsonPath.empty()) return;
-    if (!fs::exists(jsonPath)) return;
 
-    if (!loadAnnotationsJson(jsonPath)) {
-        QMessageBox::warning(this, "Annotations",
-            QString("Failed to load annotations:\n%1").arg(QString::fromStdString(jsonPath.string())));
+    const fs::path jsonPath = annotationPathForSlide();
+    if (!jsonPath.empty() && fs::exists(jsonPath)) {
+        QString err;
+        std::vector<Annotation> loaded;
+        if (!annotation_io::loadJson(jsonPath, loaded, &err)) {
+            QMessageBox::warning(this, "Annotations",
+                QString("Failed to load annotations:\n%1\n\n%2")
+                    .arg(QString::fromStdString(jsonPath.string()))
+                    .arg(err));
+        } else {
+            m_annotations = std::move(loaded);
+        }
     }
+
+    const fs::path xmlPath = xmlPathForSlide();
+    if (!xmlPath.empty() && fs::exists(xmlPath)) {
+        QString err;
+        const int added = annotation_io::mergeFromAsapXml(xmlPath, m_annotations, &err);
+        if (added < 0) {
+            QMessageBox::warning(this, "XML import",
+                QString("Failed to parse XML annotations:\n%1\n\n%2")
+                    .arg(QString::fromStdString(xmlPath.string()))
+                    .arg(err));
+        }
+        if (added > 0 && !jsonPath.empty()) {
+            if (!annotation_io::saveJson(jsonPath, m_annotations, &err)) {
+                QMessageBox::warning(this, "Annotations",
+                    QString("Imported %1 item(s) from XML but failed to save JSON:\n%2")
+                        .arg(added).arg(err));
+            }
+        }
+    }
+
+    syncAnnotationUiFromData();
 }
 
 void AnnotatorWindow::ensureLabelPresent(const QString& label) {
@@ -746,87 +767,18 @@ void AnnotatorWindow::addAnnotationToUi(const Annotation& a) {
     m_annotationList->addItem(a.label);
 }
 
-bool AnnotatorWindow::loadAnnotationsJson(const fs::path& jsonPath) {
-    QFile f(QString::fromStdString(jsonPath.string()));
-    if (!f.open(QIODevice::ReadOnly)) {
-        return false;
+void AnnotatorWindow::syncAnnotationUiFromData() {
+    if (m_annotationList) {
+        m_annotationList->clear();
     }
-    const QByteArray bytes = f.readAll();
-    f.close();
-
-    QJsonParseError err;
-    QJsonDocument doc = QJsonDocument::fromJson(bytes, &err);
-    if (err.error != QJsonParseError::NoError) {
-        return false;
-    }
-    // Some existing files may be a placeholder "null".
-    if (doc.isNull()) {
-        return true;
-    }
-    if (!doc.isArray()) {
-        return false;
-    }
-
-    QJsonArray arr = doc.array();
-    for (const auto& v : arr) {
-        if (!v.isObject()) continue;
-        QJsonObject obj = v.toObject();
-
-        Annotation a;
-        a.label = obj.value("label").toString().trimmed();
-        if (a.label.isEmpty()) continue;
+    for (const auto& a : m_annotations) {
         ensureLabelPresent(a.label);
-
-        const QString lower = a.label.toLower();
-        a.isRect = lower.contains("rect");
-
-        // points: [[x,y], ...]
-        const QJsonValue pv = obj.value("points");
-        if (pv.isArray()) {
-            for (const auto& p : pv.toArray()) {
-                if (!p.isArray()) continue;
-                const QJsonArray pa = p.toArray();
-                if (pa.size() < 2) continue;
-                const double x = pa.at(0).toDouble();
-                const double y = pa.at(1).toDouble();
-                a.pointsLevel0.push_back(QPointF(x, y));
-            }
-        }
-
-        // rect: [minx,miny,maxx,maxy]
-        const QJsonValue rv = obj.value("rect");
-        bool haveRect = false;
-        if (rv.isArray()) {
-            const QJsonArray ra = rv.toArray();
-            if (ra.size() >= 4) {
-                const double minx = ra.at(0).toDouble();
-                const double miny = ra.at(1).toDouble();
-                const double maxx = ra.at(2).toDouble();
-                const double maxy = ra.at(3).toDouble();
-                a.bboxLevel0 = QRectF(QPointF(minx, miny), QPointF(maxx, maxy));
-                haveRect = true;
-            }
-        }
-
-        if (!haveRect && !a.pointsLevel0.empty()) {
-            double minx = a.pointsLevel0[0].x();
-            double miny = a.pointsLevel0[0].y();
-            double maxx = a.pointsLevel0[0].x();
-            double maxy = a.pointsLevel0[0].y();
-            for (const auto& p : a.pointsLevel0) {
-                minx = std::min(minx, p.x());
-                miny = std::min(miny, p.y());
-                maxx = std::max(maxx, p.x());
-                maxy = std::max(maxy, p.y());
-            }
-            a.bboxLevel0 = QRectF(QPointF(minx, miny), QPointF(maxx, maxy));
-        }
-
-        m_annotations.push_back(a);
         addAnnotationToUi(a);
     }
-
-    return true;
+    recomputeRectCounter();
+    if (m_imageLabel) {
+        m_imageLabel->update();
+    }
 }
 
 void AnnotatorWindow::recomputeRectCounter() {
@@ -916,6 +868,13 @@ fs::path AnnotatorWindow::annotationPathForSlide() const {
     if (m_slidePath.empty()) return {};
     fs::path out = m_slidePath;
     out.replace_extension(".json");
+    return out;
+}
+
+fs::path AnnotatorWindow::xmlPathForSlide() const {
+    if (m_slidePath.empty()) return {};
+    fs::path out = m_slidePath;
+    out.replace_extension(".xml");
     return out;
 }
 
@@ -1115,44 +1074,9 @@ void AnnotatorWindow::onSaveJson() {
 
     fs::path outPath = annotationPathForSlide();
     if (outPath.empty()) return;
-
-    QJsonArray arr;
-    for (const auto& a : m_annotations) {
-        QJsonObject obj;
-        obj["label"] = a.label;
-
-        QJsonArray points;
-        for (const auto& p : a.pointsLevel0) {
-            QJsonArray pt;
-            pt.append(static_cast<int>(std::llround(p.x())));
-            pt.append(static_cast<int>(std::llround(p.y())));
-            points.append(pt);
-        }
-        obj["points"] = points;
-
-        const int minx = static_cast<int>(std::llround(a.bboxLevel0.left()));
-        const int miny = static_cast<int>(std::llround(a.bboxLevel0.top()));
-        const int maxx = static_cast<int>(std::llround(a.bboxLevel0.right()));
-        const int maxy = static_cast<int>(std::llround(a.bboxLevel0.bottom()));
-        QJsonArray rect;
-        rect.append(minx);
-        rect.append(miny);
-        rect.append(maxx);
-        rect.append(maxy);
-        obj["rect"] = rect;
-
-        arr.append(obj);
-    }
-
-    QJsonDocument doc(arr);
-    QSaveFile f(QString::fromStdString(outPath.string()));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::warning(this, "Save", "Failed to open output file for writing");
-        return;
-    }
-    f.write(doc.toJson(QJsonDocument::Indented));
-    if (!f.commit()) {
-        QMessageBox::warning(this, "Save", "Failed to commit output file");
+    QString err;
+    if (!annotation_io::saveJson(outPath, m_annotations, &err)) {
+        QMessageBox::warning(this, "Save", err.isEmpty() ? "Failed to save JSON" : err);
         return;
     }
 

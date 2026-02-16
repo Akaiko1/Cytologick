@@ -1,5 +1,6 @@
 #pragma once
 
+#include "annotation_types.h"
 #include "config.h"
 #include "slidereader.h"
 
@@ -13,8 +14,8 @@
 #include <QPushButton>
 #include <QPointF>
 #include <QRectF>
-#include <QJsonObject>
 #include <QImage>
+#include <QString>
 
 #include <filesystem>
 #include <functional>
@@ -23,13 +24,6 @@
 namespace cytologick {
 
 class AnnotatorMenuWindow;
-
-struct Annotation {
-    QString label;
-    std::vector<QPointF> pointsLevel0;  // level-0 pixel coordinates
-    QRectF bboxLevel0;                  // [minx,miny,maxx,maxy] in level-0
-    bool isRect = false;                // label contains "rect" isn't enforced here
-};
 
 class OverviewMapWidget : public QWidget {
     Q_OBJECT
@@ -173,8 +167,8 @@ private:
     void loadSlideLevelPreview(int levelIndex);
     void clearAnnotations();
     void reloadAnnotationsFromDisk();
-    bool loadAnnotationsJson(const std::filesystem::path& jsonPath);
     void addAnnotationToUi(const Annotation& a);
+    void syncAnnotationUiFromData();
     void ensureLabelPresent(const QString& label);
     void recomputeRectCounter();
     QImage readLevelRegionImage(const QRect& levelRect) const;
@@ -185,6 +179,7 @@ private:
     QString currentLabel() const;
     QString nextRectLabel();
     std::filesystem::path annotationPathForSlide() const;
+    std::filesystem::path xmlPathForSlide() const;
 
     // Data
     Config m_config;
