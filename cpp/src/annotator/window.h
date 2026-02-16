@@ -157,6 +157,7 @@ private slots:
     void onSaveJson();
     void onDeleteSelected();
     void onAnnotationSelectionChanged();
+    void onAnnotationItemDoubleClicked(QListWidgetItem* item);
     void onImageAnnotationSelected(int index);
     void onPolygonVertexMoved(int annotationIndex, int vertexIndex, QPointF newPosLevel0);
     void onMapJumpRequested(QPointF centerLevel0);

@@ -667,6 +667,7 @@ void AnnotatorWindow::setupUi() {
     dockLayout->addWidget(new QLabel("Annotations:", dockW));
     dockLayout->addWidget(m_annotationList, 1);
     connect(m_annotationList, &QListWidget::itemSelectionChanged, this, &AnnotatorWindow::onAnnotationSelectionChanged);
+    connect(m_annotationList, &QListWidget::itemDoubleClicked, this, &AnnotatorWindow::onAnnotationItemDoubleClicked);
 
     dockLayout->addSpacing(8);
     dockLayout->addWidget(new QLabel("Navigator:", dockW));
@@ -1178,6 +1179,21 @@ void AnnotatorWindow::onAnnotationSelectionChanged() {
     const int row = m_annotationList->currentRow();
     m_selectedAnnotation = row;
     m_imageLabel->setSelectedAnnotationIndex(row);
+}
+
+void AnnotatorWindow::onAnnotationItemDoubleClicked(QListWidgetItem* item) {
+    if (!m_annotationList || !item) return;
+    const int row = m_annotationList->row(item);
+    if (row < 0 || row >= static_cast<int>(m_annotations.size())) return;
+
+    m_annotationList->setCurrentRow(row);
+    m_selectedAnnotation = row;
+    m_imageLabel->setSelectedAnnotationIndex(row);
+
+    const QRectF& bb = m_annotations[row].bboxLevel0;
+    const QPointF center = bb.center();
+    centerViewOnLevel0(center);
+    updateStatus(QString("Centered on: %1").arg(m_annotations[row].label));
 }
 
 void AnnotatorWindow::onImageAnnotationSelected(int index) {
