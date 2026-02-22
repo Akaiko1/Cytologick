@@ -41,20 +41,8 @@ jobs:
           cp Cytologick dist/
           cp CytologickAnnotator dist/
 
-          # Create default config
-          cat > dist/config.yaml << 'EOF'
-          general:
-            slide_dir: ./slides
-            hdd_slides: ""
-
-          neural_network:
-            image_shape: [128, 128]
-            classes: 3
-            batch_size: 16
-
-          gui:
-            default_threshold: 0.6
-          EOF
+          # Create default config from the repository template.
+          cp ../../config.example.yaml dist/config.yaml
 
           # Create run script
           cat > dist/run.sh << 'EOF'
@@ -93,7 +81,7 @@ jobs:
 
           Usage:
             1. Place your model.onnx in _main/ folder
-            2. Edit config.yaml to set slide_dir path
+            2. Edit config.yaml (gui.slide_dir and/or general.hdd_slides), or place slides in ./current
             3. Run: ./run.sh
                Or directly: ./Cytologick
           EOF
@@ -160,20 +148,8 @@ jobs:
           # Copy ONNX Runtime library
           cp /opt/onnxruntime/lib/libonnxruntime.so* dist/lib/
 
-          # Create default config
-          cat > dist/config.yaml << 'EOF'
-          general:
-            slide_dir: ./slides
-            hdd_slides: ""
-
-          neural_network:
-            image_shape: [128, 128]
-            classes: 3
-            batch_size: 16
-
-          gui:
-            default_threshold: 0.6
-          EOF
+          # Create default config from the repository template.
+          cp ../../config.example.yaml dist/config.yaml
 
           # Create run script with library path
           cat > dist/run.sh << 'EOF'
@@ -219,7 +195,7 @@ jobs:
 
           Usage:
             1. Place your model.onnx in _main/ folder
-            2. Edit config.yaml to set slide_dir path
+            2. Edit config.yaml (gui.slide_dir and/or general.hdd_slides), or place slides in ./current
             3. Run: ./run.sh
           EOF
 
@@ -347,20 +323,8 @@ jobs:
             }
           }
 
-          # Create default config
-          @"
-          general:
-            slide_dir: ./slides
-            hdd_slides: ""
-
-          neural_network:
-            image_shape: [128, 128]
-            classes: 3
-            batch_size: 16
-
-          gui:
-            default_threshold: 0.6
-          "@ | Out-File -FilePath dist\config.yaml -Encoding utf8
+          # Create default config from the repository template.
+          copy ..\..\config.example.yaml dist\config.yaml
 
           # Create README
           @"
@@ -372,7 +336,7 @@ jobs:
 
           Usage:
             1. Place your model.onnx in _main\ folder
-            2. Edit config.yaml to set slide_dir path
+            2. Edit config.yaml (gui.slide_dir and/or general.hdd_slides), or place slides in .\current
             3. Run: Cytologick.exe
           "@ | Out-File -FilePath dist\README.txt -Encoding utf8
 

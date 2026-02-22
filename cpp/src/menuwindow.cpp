@@ -4,12 +4,8 @@
 
 #include <QVBoxLayout>
 #include <QLabel>
-#include <QPixmap>
-#include <QImage>
 #include <QMessageBox>
 #include <QApplication>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
 #include <algorithm>
 #include <set>
 
@@ -47,11 +43,9 @@ void MenuWindow::setupUi() {
     layout->addWidget(m_levelCombo);
 
     // Connect signals
-    connect(m_slideCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &MenuWindow::onSlideSelected);
     connect(m_slideCombo, QOverload<int>::of(&QComboBox::activated),
             this, &MenuWindow::onSlideSelected);
-    connect(m_levelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    connect(m_levelCombo, QOverload<int>::of(&QComboBox::activated),
             this, &MenuWindow::onLevelSelected);
 }
 
@@ -105,6 +99,7 @@ void MenuWindow::onSlideSelected(int index) {
         return;
     }
 
+    m_mainWindow->onSlideOpened(slidePath);
     updateLevelList();
 }
 
@@ -115,58 +110,36 @@ void MenuWindow::updateLevelList() {
 
     m_levelCombo->clear();
 
-    // Limit to first 4 levels to prevent memory issues (same as Python)
-    int maxLevels = std::min(4, static_cast<int>(m_levelDimensions.size()));
+    // Show all levels, from lowest-resolution (fast) to highest-resolution (level 0).
+    for (int level = static_cast<int>(m_levelDimensions.size()) - 1; level >= 0; --level) {
+        auto [w, h] = m_levelDimensions[level];
+        const double ds = slideReader.getLevelDownsample(level);
+        QString text = QString("Level %1 (%2x%3) ds=%4")
+                           .arg(level)
+                           .arg(w)
+                           .arg(h)
+                           .arg(ds, 0, 'f', 3);
+        m_levelCombo->addItem(text, level);
+    }
 
-    for (int i = 0; i < maxLevels; ++i) {
-        auto [w, h] = m_levelDimensions[i];
-        QString text = QString("Level %1 (%2x%3)").arg(i).arg(w).arg(h);
-        m_levelCombo->addItem(text);
+    // Auto-load the first (lowest-resolution) level after opening a slide.
+    if (m_levelCombo->count() > 0) {
+        onLevelSelected(0);
     }
 }
 
 void MenuWindow::onLevelSelected(int index) {
-    if (index < 0 || index >= static_cast<int>(m_levelDimensions.size())) {
+    if (index < 0 || index >= m_levelCombo->count()) {
         return;
     }
 
-    auto& slideReader = m_mainWindow->getSlideReader();
-
-    // Calculate position from the end (higher index = more zoom)
-    int position = static_cast<int>(m_levelDimensions.size()) - index - 1;
-
-    // Clamp position
-    position = std::max(0, std::min(position, static_cast<int>(m_levelDimensions.size()) - 1));
-
-    // Calculate scaling coefficient
-    int scaleFactor = 1;
-    if (m_levelDimensions[0].first > 0 && m_levelDimensions[position].first > 0) {
-        scaleFactor = static_cast<int>(
-            m_levelDimensions[0].first / m_levelDimensions[position].first
-        );
-    }
-
-    // Read slide at selected level
-    auto [width, height] = m_levelDimensions[position];
+    bool ok = false;
+    const int level = m_levelCombo->itemData(index).toInt(&ok);
+    if (!ok) return;
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    cv::Mat region = slideReader.readRegionRGB(0, 0, position, width, height);
+    m_mainWindow->loadSlideLevel(level);
     QApplication::restoreOverrideCursor();
-
-    if (region.empty()) {
-        QMessageBox::warning(this, "Error", "Failed to read slide region");
-        return;
-    }
-
-    // Convert to QPixmap
-    cv::Mat rgbSwapped;
-    cv::cvtColor(region, rgbSwapped, cv::COLOR_RGB2BGR);
-    cv::imwrite("gui_temp.bmp", rgbSwapped);
-
-    QImage qImage(region.data, region.cols, region.rows, region.step, QImage::Format_RGB888);
-    QPixmap pixmap = QPixmap::fromImage(qImage.copy());
-
-    m_mainWindow->setSlideImage(pixmap, scaleFactor);
 }
 
 } // namespace cytologick

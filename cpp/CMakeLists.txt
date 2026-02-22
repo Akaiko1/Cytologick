@@ -63,9 +63,12 @@ endif()
 set(SOURCES
     src/main.cpp
     src/config.cpp
+    src/workingdir_prefs.cpp
     src/slidereader.cpp
     src/inference.cpp
     src/graphics.cpp
+    src/annotation_overlay.cpp
+    src/annotator/annotation_io.cpp
     src/mainwindow.cpp
     src/menuwindow.cpp
     src/previewwindow.cpp
@@ -73,9 +76,13 @@ set(SOURCES
 
 set(HEADERS
     src/config.h
+    src/workingdir_prefs.h
     src/slidereader.h
     src/inference.h
     src/graphics.h
+    src/annotation_overlay.h
+    src/annotator/annotation_io.h
+    src/annotator/annotation_types.h
     src/mainwindow.h
     src/menuwindow.h
     src/previewwindow.h
@@ -117,6 +124,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 set(ANNOTATOR_SOURCES
     src/annotator/main.cpp
     src/config.cpp
+    src/workingdir_prefs.cpp
     src/slidereader.cpp
     src/annotator/annotation_io.cpp
     src/annotator/window.cpp
@@ -125,6 +133,7 @@ set(ANNOTATOR_SOURCES
 
 set(ANNOTATOR_HEADERS
     src/config.h
+    src/workingdir_prefs.h
     src/slidereader.h
     src/annotator/annotation_io.h
     src/annotator/annotation_types.h

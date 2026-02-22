@@ -36,6 +36,7 @@ public:
 
     void setOverview(const QImage& image, double downsampleToLevel0, const QSize& level0Size);
     void setViewportLevel0(const QRectF& viewportLevel0);
+    void setRectOverlaysLevel0(const std::vector<QRectF>& rects);
     void clear();
 
 signals:
@@ -54,6 +55,7 @@ private:
     QImage m_overview;
     QSize m_level0Size;
     QRectF m_viewportLevel0;
+    std::vector<QRectF> m_rectOverlaysLevel0;
     double m_overviewDownsample = 1.0;
     bool m_mouseDown = false;
 };
@@ -161,6 +163,7 @@ private slots:
     void onNewRect();
     void onLoadJson();
     void onSaveJson();
+    void onSelectWorkingDirectory();
     void onDeleteSelected();
     void onOpenVertexDeformSettings();
     void onAnnotationSelectionChanged();
@@ -196,10 +199,12 @@ private:
     int listRowToAnnotationIndex(int row) const;
     int annotationIndexToListRow(int annotationIndex) const;
     void rebuildOverviewMap();
+    void syncOverviewRectOverlays();
     void updateOverviewViewport();
     void centerViewOnLevel0(const QPointF& centerLevel0);
     void centerOnAnnotation(int annotationIndex);
     double softInfluence(double normalizedDistance) const;
+    void applyWorkingDirectory(const std::filesystem::path& dir, bool persist);
 
     QString currentLabel() const;
     QString nextRectLabel();
@@ -233,6 +238,7 @@ private:
     QPushButton* m_btnNewRect = nullptr;
     QPushButton* m_btnDelete = nullptr;
     QAction* m_actionSelectSlide = nullptr;
+    QAction* m_actionSelectWorkingDir = nullptr;
     QAction* m_actionLoadJson = nullptr;
     QAction* m_actionSaveJson = nullptr;
     QSlider* m_softRadiusSlider = nullptr;
