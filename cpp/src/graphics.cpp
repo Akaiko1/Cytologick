@@ -427,8 +427,18 @@ std::string formatDetectionStats(const DetectionStats& stats) {
 }
 
 std::pair<int, int> getCorrectedSize(int width, int height, int factor) {
-    int correctedWidth = (width / factor) * factor;
-    int correctedHeight = (height / factor) * factor;
+    if (factor <= 1) {
+        return {std::max(1, width), std::max(1, height)};
+    }
+
+    const int correctedWidth = std::max(
+        factor,
+        ((std::max(1, width) + factor - 1) / factor) * factor
+    );
+    const int correctedHeight = std::max(
+        factor,
+        ((std::max(1, height) + factor - 1) / factor) * factor
+    );
     return {correctedWidth, correctedHeight};
 }
 
