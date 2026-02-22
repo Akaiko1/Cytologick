@@ -77,11 +77,13 @@ public:
 
 private slots:
     void showSlideMenu();
+    void onSelectWorkingDirectory();
 
 private:
     void setupUi();
     void loadModel();
     void showPreview();
+    void applyWorkingDirectory(const std::filesystem::path& dir, bool persist);
 
     // Configuration and model
     Config m_config;

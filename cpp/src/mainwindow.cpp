@@ -2,6 +2,7 @@
 #include "menuwindow.h"
 #include "previewwindow.h"
 #include "graphics.h"
+#include "workingdir_prefs.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -10,6 +11,10 @@
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QApplication>
+#include <QMenuBar>
+#include <QMenu>
+#include <QFileDialog>
+#include <QDir>
 #include <opencv2/imgcodecs.hpp>
 
 namespace cytologick {
@@ -91,6 +96,9 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     m_config = Config::load();
+    if (const auto rememberedDir = loadRememberedWorkingDir(); !rememberedDir.empty()) {
+        applyWorkingDirectory(rememberedDir, false);
+    }
     setupUi();
     loadModel();
 
@@ -103,6 +111,12 @@ MainWindow::~MainWindow() = default;
 void MainWindow::setupUi() {
     setWindowTitle("Cytologick");
     setGeometry(100, 100, 800, 800);
+
+    QMenu* fileMenu = menuBar()->addMenu("File");
+    QAction* selectSlideAction = fileMenu->addAction("Select Slide...");
+    QAction* selectWorkingDirAction = fileMenu->addAction("Select Working Folder...");
+    connect(selectSlideAction, &QAction::triggered, this, &MainWindow::showSlideMenu);
+    connect(selectWorkingDirAction, &QAction::triggered, this, &MainWindow::onSelectWorkingDirectory);
 
     // Central widget with layout
     QWidget* centralWidget = new QWidget(this);
@@ -158,6 +172,36 @@ void MainWindow::showSlideMenu() {
     m_menuWindow->move(menuX, menuY);
 
     m_menuWindow->show();
+}
+
+void MainWindow::onSelectWorkingDirectory() {
+    QString startDir = QDir::currentPath();
+    if (!m_config.slideDir.empty()) {
+        startDir = QString::fromStdString(m_config.slideDir.string());
+    } else if (!m_config.hddSlides.empty()) {
+        startDir = QString::fromStdString(m_config.hddSlides.string());
+    }
+
+    const QString selectedDir = QFileDialog::getExistingDirectory(
+        this,
+        "Select Working Folder",
+        startDir,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
+    );
+    if (selectedDir.isEmpty()) return;
+
+    applyWorkingDirectory(std::filesystem::path(selectedDir.toStdString()), true);
+    updateStatusBar(QString("Working folder set: %1").arg(selectedDir));
+    showSlideMenu();
+}
+
+void MainWindow::applyWorkingDirectory(const std::filesystem::path& dir, bool persist) {
+    if (dir.empty()) return;
+    m_config.slideDir = dir;
+    m_config.hddSlides.clear();
+    if (persist) {
+        saveRememberedWorkingDir(dir);
+    }
 }
 
 void MainWindow::setSlideImage(const QPixmap& pixmap, int scaleFactor) {

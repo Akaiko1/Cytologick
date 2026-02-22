@@ -161,6 +161,7 @@ private slots:
     void onNewRect();
     void onLoadJson();
     void onSaveJson();
+    void onSelectWorkingDirectory();
     void onDeleteSelected();
     void onOpenVertexDeformSettings();
     void onAnnotationSelectionChanged();
@@ -200,6 +201,7 @@ private:
     void centerViewOnLevel0(const QPointF& centerLevel0);
     void centerOnAnnotation(int annotationIndex);
     double softInfluence(double normalizedDistance) const;
+    void applyWorkingDirectory(const std::filesystem::path& dir, bool persist);
 
     QString currentLabel() const;
     QString nextRectLabel();
@@ -233,6 +235,7 @@ private:
     QPushButton* m_btnNewRect = nullptr;
     QPushButton* m_btnDelete = nullptr;
     QAction* m_actionSelectSlide = nullptr;
+    QAction* m_actionSelectWorkingDir = nullptr;
     QAction* m_actionLoadJson = nullptr;
     QAction* m_actionSaveJson = nullptr;
     QSlider* m_softRadiusSlider = nullptr;

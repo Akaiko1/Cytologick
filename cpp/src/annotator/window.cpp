@@ -1,6 +1,7 @@
 #include "window.h"
 #include "annotation_io.h"
 #include "menuwindow.h"
+#include "workingdir_prefs.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -26,6 +27,8 @@
 #include <QDialogButtonBox>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QFileDialog>
+#include <QDir>
 
 #include <algorithm>
 #include <cmath>
@@ -774,6 +777,9 @@ AnnotatorWindow::AnnotatorWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     m_config = Config::load();
+    if (const auto rememberedDir = loadRememberedWorkingDir(); !rememberedDir.empty()) {
+        applyWorkingDirectory(rememberedDir, false);
+    }
     setupUi();
     rebuildLabelList();
 
@@ -814,9 +820,11 @@ void AnnotatorWindow::setupUi() {
     );
     QMenu* fileMenu = menuBar()->addMenu("File");
     m_actionSelectSlide = fileMenu->addAction("Select Slide...");
+    m_actionSelectWorkingDir = fileMenu->addAction("Select Working Folder...");
     m_actionLoadJson = fileMenu->addAction("Load JSON");
     m_actionSaveJson = fileMenu->addAction("Save JSON");
     connect(m_actionSelectSlide, &QAction::triggered, this, &AnnotatorWindow::showSlideMenu);
+    connect(m_actionSelectWorkingDir, &QAction::triggered, this, &AnnotatorWindow::onSelectWorkingDirectory);
     connect(m_actionLoadJson, &QAction::triggered, this, &AnnotatorWindow::onLoadJson);
     connect(m_actionSaveJson, &QAction::triggered, this, &AnnotatorWindow::onSaveJson);
     m_actionLoadJson->setEnabled(false);
@@ -1500,6 +1508,28 @@ void AnnotatorWindow::onSaveJson() {
     updateStatus(QString("Saved: %1").arg(QString::fromStdString(outPath.string())));
 }
 
+void AnnotatorWindow::onSelectWorkingDirectory() {
+    QString startDir = QDir::currentPath();
+    if (!m_config.slideDir.empty()) {
+        startDir = QString::fromStdString(m_config.slideDir.string());
+    } else if (!m_config.hddSlides.empty()) {
+        startDir = QString::fromStdString(m_config.hddSlides.string());
+    }
+
+    const QString selectedDir = QFileDialog::getExistingDirectory(
+        this,
+        "Select Working Folder",
+        startDir,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks
+    );
+    if (selectedDir.isEmpty()) return;
+
+    const fs::path dir = fs::path(selectedDir.toStdString());
+    applyWorkingDirectory(dir, true);
+    updateStatus(QString("Working folder set: %1").arg(selectedDir));
+    showSlideMenu();
+}
+
 void AnnotatorWindow::onOpenVertexDeformSettings() {
     if (!m_vertexDeformDialog) {
         m_vertexDeformDialog = new QDialog(this);
@@ -1602,6 +1632,15 @@ void AnnotatorWindow::onOpenVertexDeformSettings() {
     m_vertexDeformDialog->show();
     m_vertexDeformDialog->raise();
     m_vertexDeformDialog->activateWindow();
+}
+
+void AnnotatorWindow::applyWorkingDirectory(const fs::path& dir, bool persist) {
+    if (dir.empty()) return;
+    m_config.slideDir = dir;
+    m_config.hddSlides.clear();
+    if (persist) {
+        saveRememberedWorkingDir(dir);
+    }
 }
 
 void AnnotatorWindow::onDeleteSelected() {
