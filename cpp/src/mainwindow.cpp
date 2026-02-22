@@ -17,6 +17,8 @@
 #include <QFileDialog>
 #include <QDir>
 #include <QTimer>
+#include <QRegularExpression>
+#include <QLineF>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -30,6 +32,35 @@ namespace {
 constexpr int kOverviewOverlayWidth = 240;
 constexpr int kOverviewOverlayHeight = 240;
 constexpr int kOverviewOverlayMargin = 12;
+
+int rectNumber(const QString& label) {
+    static const QRegularExpression re("^\\s*rect\\s*(\\d+)\\s*$", QRegularExpression::CaseInsensitiveOption);
+    const auto m = re.match(label.trimmed());
+    if (!m.hasMatch()) return 0;
+    bool ok = false;
+    const int v = m.captured(1).toInt(&ok);
+    return ok ? v : 0;
+}
+
+bool hasPositiveIntersection(const QRectF& a, const QRectF& b) {
+    const QRectF inter = a.intersected(b);
+    return !inter.isEmpty() && inter.width() > 0.0 && inter.height() > 0.0;
+}
+
+QRectF computeBbox(const std::vector<QPointF>& points) {
+    if (points.empty()) return QRectF();
+    double minx = points[0].x();
+    double miny = points[0].y();
+    double maxx = points[0].x();
+    double maxy = points[0].y();
+    for (const auto& p : points) {
+        minx = std::min(minx, p.x());
+        miny = std::min(miny, p.y());
+        maxx = std::max(maxx, p.x());
+        maxy = std::max(maxy, p.y());
+    }
+    return QRectF(QPointF(minx, miny), QPointF(maxx, maxy));
+}
 }
 
 // ============================================================================
@@ -615,6 +646,90 @@ void MainWindow::drawSlideMarkup(QPainter& painter, const QRect& viewRect, doubl
         )
     );
     painter.restore();
+}
+
+bool MainWindow::savePreviewAnnotations(const QRect& previewRectLevel0,
+                                        const std::vector<Annotation>& regions,
+                                        QString* error,
+                                        int* addedCount) {
+    if (addedCount) *addedCount = 0;
+    if (!m_slideReader.isOpen() || m_slidePath.empty()) {
+        if (error) *error = "No slide is open";
+        return false;
+    }
+
+    QRectF rect0 = QRectF(previewRectLevel0).normalized();
+    if (rect0.width() <= 1.0 || rect0.height() <= 1.0) {
+        if (error) *error = "Selected rect is too small";
+        return false;
+    }
+
+    for (const auto& a : m_slideAnnotations) {
+        if (!a.isRect) continue;
+        if (hasPositiveIntersection(a.bboxLevel0.normalized(), rect0)) {
+            if (error) *error = "Selected rect intersects an existing rect";
+            return false;
+        }
+    }
+
+    std::vector<Annotation> merged = m_slideAnnotations;
+    int maxRectN = 0;
+    for (const auto& a : merged) {
+        maxRectN = std::max(maxRectN, rectNumber(a.label));
+    }
+    const int nextRectN = maxRectN + 1;
+
+    Annotation rectAnno;
+    rectAnno.label = QString("rect %1").arg(nextRectN);
+    rectAnno.isRect = true;
+    rectAnno.bboxLevel0 = rect0;
+    const double x1 = rect0.left();
+    const double y1 = rect0.top();
+    const double x2 = rect0.right();
+    const double y2 = rect0.bottom();
+    rectAnno.pointsLevel0 = {
+        QPointF(x1, y1),
+        QPointF(x2, y1),
+        QPointF(x2, y2),
+        QPointF(x1, y2),
+        QPointF(x1, y1),
+    };
+    merged.push_back(rectAnno);
+
+    int regionAdded = 0;
+    for (auto r : regions) {
+        r.isRect = false;
+        if (r.pointsLevel0.size() >= 3 &&
+            QLineF(r.pointsLevel0.front(), r.pointsLevel0.back()).length() > 1e-6) {
+            r.pointsLevel0.push_back(r.pointsLevel0.front());
+        }
+        if (!r.bboxLevel0.isValid()) {
+            r.bboxLevel0 = computeBbox(r.pointsLevel0);
+        }
+        if (!r.bboxLevel0.isValid()) continue;
+        merged.push_back(std::move(r));
+        ++regionAdded;
+    }
+
+    const auto jsonPath = annotationPathForSlide();
+    if (jsonPath.empty()) {
+        if (error) *error = "Cannot resolve slide JSON path";
+        return false;
+    }
+
+    QString saveErr;
+    if (!annotation_io::saveJson(jsonPath, merged, &saveErr)) {
+        if (error) *error = saveErr;
+        return false;
+    }
+
+    m_slideAnnotations = std::move(merged);
+    syncOverviewRectOverlays();
+    if (m_imageLabel) m_imageLabel->update();
+
+    if (addedCount) *addedCount = regionAdded + 1;
+    updateStatusBar(QString("Saved: rect %1 + %2 region(s)").arg(nextRectN).arg(regionAdded));
+    return true;
 }
 
 void MainWindow::loadSlideLevel(int levelIndex) {

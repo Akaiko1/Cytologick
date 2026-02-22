@@ -133,6 +133,10 @@ public:
     const std::vector<Annotation>& getSlideAnnotations() const { return m_slideAnnotations; }
     bool isSlideMarkupVisible() const { return m_showSlideMarkup; }
     void drawSlideMarkup(QPainter& painter, const QRect& viewRect, double downsample) const;
+    bool savePreviewAnnotations(const QRect& previewRectLevel0,
+                                const std::vector<Annotation>& regions,
+                                QString* error = nullptr,
+                                int* addedCount = nullptr);
 
     // Called by ImageLabel when selection completes
     void onSelectionComplete(const QPoint& pressPos, const QPoint& releasePos);

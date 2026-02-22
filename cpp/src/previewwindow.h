@@ -75,6 +75,7 @@ public:
 private slots:
     void onConfidenceChanged(int value);
     void onAnalyzeClicked();
+    void onSaveMarkupClicked();
     void onModeToggled(bool checked);
     void onRenderFinished();
     void onShowMarkupToggled(bool checked);
@@ -84,6 +85,7 @@ private:
     void updateConfidenceLabel();
     void renderOverlayFromCache(bool fullAnalysis = false);
     void scheduleRender();
+    std::vector<Annotation> buildAnnotationsFromPathologyMap(QString* error = nullptr) const;
     void rebuildMarkupOverlay();
     void updateDisplayedOverlay();
 
@@ -99,6 +101,7 @@ private:
     ToggleSwitch* m_showMarkupToggle = nullptr;
     QSlider* m_confSlider = nullptr;
     QPushButton* m_analyzeButton = nullptr;
+    QPushButton* m_saveMarkupButton = nullptr;
 
     // Images
     QPixmap m_originalImage;
