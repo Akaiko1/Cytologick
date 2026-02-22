@@ -40,6 +40,7 @@ OverviewMapWidget::OverviewMapWidget(QWidget* parent)
     setMinimumSize(220, 220);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setMouseTracking(true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
 }
 
 void OverviewMapWidget::setOverview(const QImage& image, double downsampleToLevel0, const QSize& level0Size) {
@@ -92,7 +93,7 @@ QPointF OverviewMapWidget::widgetToLevel0(const QPoint& pos) const {
 void OverviewMapWidget::paintEvent(QPaintEvent* event) {
     Q_UNUSED(event);
     QPainter p(this);
-    p.fillRect(rect(), QColor(24, 24, 24));
+    p.fillRect(rect(), QColor(24, 24, 24, 130));
 
     const QRect target = imageTargetRect();
     if (target.isEmpty() || m_overview.isNull()) {
@@ -101,7 +102,9 @@ void OverviewMapWidget::paintEvent(QPaintEvent* event) {
         return;
     }
 
+    p.setOpacity(0.82);
     p.drawImage(target, m_overview);
+    p.setOpacity(1.0);
     p.setPen(QPen(QColor(255, 255, 255, 120), 1));
     p.setBrush(Qt::NoBrush);
     p.drawRect(target);
@@ -342,7 +345,7 @@ void MainWindow::setupUi() {
     m_overviewMap = new OverviewMapWidget(m_scrollArea->viewport());
     m_overviewMap->setFixedSize(kOverviewOverlayWidth, kOverviewOverlayHeight);
     m_overviewMap->setStyleSheet(
-        "background-color: rgba(24, 24, 24, 220);"
+        "background: transparent;"
         "border: 1px solid rgba(255, 255, 255, 80);"
         "border-radius: 6px;"
     );
