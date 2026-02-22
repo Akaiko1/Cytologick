@@ -31,6 +31,23 @@ QColor classColor(const QString& label, bool selected) {
     return c;
 }
 
+namespace {
+QRectF boundsFromPoints(const std::vector<QPointF>& points) {
+    if (points.empty()) return QRectF();
+    double minx = points[0].x();
+    double miny = points[0].y();
+    double maxx = points[0].x();
+    double maxy = points[0].y();
+    for (const auto& p : points) {
+        minx = std::min(minx, p.x());
+        miny = std::min(miny, p.y());
+        maxx = std::max(maxx, p.x());
+        maxy = std::max(maxy, p.y());
+    }
+    return QRectF(QPointF(minx, miny), QPointF(maxx, maxy)).normalized();
+}
+}  // namespace
+
 void drawAnnotations(
     QPainter& painter,
     const std::vector<Annotation>& annotations,
@@ -54,38 +71,61 @@ void drawAnnotations(
     std::vector<QRectF> placedChips;
     placedChips.reserve(annotations.size());
 
+    std::vector<int> drawOrder;
+    drawOrder.reserve(static_cast<int>(annotations.size()));
+    for (int i = 0; i < static_cast<int>(annotations.size()); ++i) {
+        if (annotations[i].isRect) drawOrder.push_back(i);
+    }
+    for (int i = 0; i < static_cast<int>(annotations.size()); ++i) {
+        if (!annotations[i].isRect) drawOrder.push_back(i);
+    }
+
     const QFontMetrics fm(painter.font());
     const QRectF safeCanvas = canvasRect.adjusted(2.0, 2.0, -2.0, -2.0);
 
-    for (const auto& a : annotations) {
+    for (int idx : drawOrder) {
+        const auto& a = annotations[idx];
         if (a.label.trimmed().isEmpty()) continue;
 
-        QRectF vbox(
-            (a.bboxLevel0.left() - level0Origin.x()) / downsample,
-            (a.bboxLevel0.top() - level0Origin.y()) / downsample,
-            a.bboxLevel0.width() / downsample,
-            a.bboxLevel0.height() / downsample
-        );
-        if (!safeCanvas.adjusted(-100.0, -100.0, 100.0, 100.0).intersects(vbox)) {
+        QRectF bbox0;
+        if (!a.isRect && !a.pointsLevel0.empty()) {
+            // Match annotator behavior: polygon geometry is authoritative.
+            // Some legacy JSONs may contain stale/incorrect rect field.
+            bbox0 = boundsFromPoints(a.pointsLevel0);
+        } else {
+            bbox0 = a.bboxLevel0.normalized();
+            if ((!bbox0.isValid() || bbox0.isEmpty()) && !a.pointsLevel0.empty()) {
+                bbox0 = boundsFromPoints(a.pointsLevel0);
+            }
+        }
+        if (!bbox0.isValid() || bbox0.isEmpty()) {
             continue;
         }
+
+        QRectF vbox(
+            (bbox0.left() - level0Origin.x()) / downsample,
+            (bbox0.top() - level0Origin.y()) / downsample,
+            bbox0.width() / downsample,
+            bbox0.height() / downsample
+        );
+        const bool labelCandidateVisible =
+            safeCanvas.adjusted(-16.0, -16.0, 16.0, 16.0).intersects(vbox);
 
         const QColor base = classColor(a.label, false);
         QColor fillColor = base;
         QColor lineColor = base;
         int lineWidth = 2;
         if (a.isRect) {
-            // Rects are used for navigation; keep them highly visible.
-            fillColor = QColor(0, 235, 255, 170);
+            // Rects should not occlude polygon regions inside them.
             lineColor = QColor(0, 255, 255, 250);
             lineWidth = 3;
         } else {
-            fillColor.setAlpha(72);
+            fillColor.setAlpha(48);
             lineColor.setAlpha(220);
         }
 
         painter.setPen(QPen(lineColor, lineWidth));
-        painter.setBrush(QBrush(fillColor));
+        painter.setBrush(a.isRect ? Qt::NoBrush : QBrush(fillColor));
 
         if (a.isRect) {
             painter.drawRect(vbox);
@@ -99,18 +139,29 @@ void drawAnnotations(
                 );
             }
 
-            if (poly.size() >= 3) {
-                if (QLineF(poly.first(), poly.last()).length() > 1e-6) {
-                    poly << poly.first();
+            if (poly.size() >= 2) {
+                // Match annotator visibility behavior: always draw contour for polygonal regions.
+                // Fill remains for easier class perception.
+                if (poly.size() >= 3) {
+                    QPolygonF fillPoly = poly;
+                    if (QLineF(fillPoly.first(), fillPoly.last()).length() > 1e-6) {
+                        fillPoly << fillPoly.first();
+                    }
+                    QPainterPath path;
+                    path.addPolygon(fillPoly);
+                    path.closeSubpath();
+                    painter.save();
+                    painter.setPen(Qt::NoPen);
+                    painter.drawPath(path);
+                    painter.restore();
                 }
-                QPainterPath path;
-                path.addPolygon(poly);
-                path.closeSubpath();
-                painter.drawPath(path);
-            } else if (poly.size() >= 2) {
                 painter.setBrush(Qt::NoBrush);
                 painter.drawPolyline(poly);
             }
+        }
+
+        if (!labelCandidateVisible) {
+            continue;
         }
 
         const QRect tr = fm.boundingRect(a.label);

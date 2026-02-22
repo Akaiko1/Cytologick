@@ -122,10 +122,16 @@ void OverviewMapWidget::setViewportLevel0(const QRectF& viewportLevel0) {
     update();
 }
 
+void OverviewMapWidget::setRectOverlaysLevel0(const std::vector<QRectF>& rects) {
+    m_rectOverlaysLevel0 = rects;
+    update();
+}
+
 void OverviewMapWidget::clear() {
     m_overview = QImage();
     m_level0Size = QSize();
     m_viewportLevel0 = QRectF();
+    m_rectOverlaysLevel0.clear();
     m_overviewDownsample = 1.0;
     update();
 }
@@ -173,6 +179,23 @@ void OverviewMapWidget::paintEvent(QPaintEvent* event) {
     p.setPen(QPen(QColor(255, 255, 255, 120), 1));
     p.setBrush(Qt::NoBrush);
     p.drawRect(target);
+
+    if (!m_rectOverlaysLevel0.empty() && m_overviewDownsample > 0.0) {
+        const double sx = target.width() / std::max(1.0, static_cast<double>(m_overview.width()));
+        const double sy = target.height() / std::max(1.0, static_cast<double>(m_overview.height()));
+        p.setPen(QPen(QColor(0, 235, 255, 210), 1));
+        p.setBrush(QColor(0, 235, 255, 40));
+        for (const auto& r0 : m_rectOverlaysLevel0) {
+            if (!r0.isValid()) continue;
+            QRectF rr(
+                target.left() + (r0.left() / m_overviewDownsample) * sx,
+                target.top() + (r0.top() / m_overviewDownsample) * sy,
+                (r0.width() / m_overviewDownsample) * sx,
+                (r0.height() / m_overviewDownsample) * sy
+            );
+            p.drawRect(rr);
+        }
+    }
 
     if (!m_viewportLevel0.isEmpty() && m_overviewDownsample > 0.0) {
         const double sx = target.width() / std::max(1.0, static_cast<double>(m_overview.width()));
@@ -1060,6 +1083,7 @@ void AnnotatorWindow::clearAnnotations() {
     if (m_imageLabel) {
         m_imageLabel->setSelectedAnnotationIndex(-1);
     }
+    syncOverviewRectOverlays();
 }
 
 void AnnotatorWindow::reloadAnnotationsFromDisk() {
@@ -1163,6 +1187,7 @@ void AnnotatorWindow::syncAnnotationUiFromData() {
         m_imageLabel->setSelectedAnnotationIndex(m_selectedAnnotation);
         m_imageLabel->update();
     }
+    syncOverviewRectOverlays();
 }
 
 void AnnotatorWindow::recomputeRectCounter() {
@@ -1334,7 +1359,21 @@ void AnnotatorWindow::rebuildOverviewMap() {
     QImage img(rgbScaled.data, rgbScaled.cols, rgbScaled.rows, rgbScaled.step, QImage::Format_RGB888);
     auto [l0w, l0h] = m_slideReader.getLevelDimensions(0);
     m_overviewMap->setOverview(img.copy(), effectiveDownsample, QSize(static_cast<int>(l0w), static_cast<int>(l0h)));
+    syncOverviewRectOverlays();
     updateOverviewViewport();
+}
+
+void AnnotatorWindow::syncOverviewRectOverlays() {
+    if (!m_overviewMap) return;
+
+    std::vector<QRectF> rects;
+    rects.reserve(m_annotations.size());
+    for (const auto& a : m_annotations) {
+        if (a.isRect && a.bboxLevel0.isValid()) {
+            rects.push_back(a.bboxLevel0);
+        }
+    }
+    m_overviewMap->setRectOverlaysLevel0(rects);
 }
 
 void AnnotatorWindow::updateOverviewViewport() {
