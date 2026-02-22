@@ -67,6 +67,8 @@ set(SOURCES
     src/slidereader.cpp
     src/inference.cpp
     src/graphics.cpp
+    src/annotation_overlay.cpp
+    src/annotator/annotation_io.cpp
     src/mainwindow.cpp
     src/menuwindow.cpp
     src/previewwindow.cpp
@@ -78,6 +80,9 @@ set(HEADERS
     src/slidereader.h
     src/inference.h
     src/graphics.h
+    src/annotation_overlay.h
+    src/annotator/annotation_io.h
+    src/annotator/annotation_types.h
     src/mainwindow.h
     src/menuwindow.h
     src/previewwindow.h

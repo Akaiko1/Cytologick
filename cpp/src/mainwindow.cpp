@@ -3,6 +3,8 @@
 #include "previewwindow.h"
 #include "graphics.h"
 #include "workingdir_prefs.h"
+#include "annotation_overlay.h"
+#include "annotator/annotation_io.h"
 
 #include <QVBoxLayout>
 #include <QScrollBar>
@@ -55,10 +57,16 @@ void OverviewMapWidget::setViewportLevel0(const QRectF& viewportLevel0) {
     update();
 }
 
+void OverviewMapWidget::setRectOverlaysLevel0(const std::vector<QRectF>& rects) {
+    m_rectOverlaysLevel0 = rects;
+    update();
+}
+
 void OverviewMapWidget::clear() {
     m_overview = QImage();
     m_level0Size = QSize();
     m_viewportLevel0 = QRectF();
+    m_rectOverlaysLevel0.clear();
     m_overviewDownsample = 1.0;
     update();
 }
@@ -108,6 +116,23 @@ void OverviewMapWidget::paintEvent(QPaintEvent* event) {
     p.setPen(QPen(QColor(255, 255, 255, 120), 1));
     p.setBrush(Qt::NoBrush);
     p.drawRect(target);
+
+    if (!m_rectOverlaysLevel0.empty() && m_overviewDownsample > 0.0) {
+        const double sx = target.width() / std::max(1.0, static_cast<double>(m_overview.width()));
+        const double sy = target.height() / std::max(1.0, static_cast<double>(m_overview.height()));
+        p.setPen(QPen(QColor(0, 235, 255, 210), 1));
+        p.setBrush(QColor(0, 235, 255, 40));
+        for (const auto& r0 : m_rectOverlaysLevel0) {
+            if (!r0.isValid()) continue;
+            QRectF rr(
+                target.left() + (r0.left() / m_overviewDownsample) * sx,
+                target.top() + (r0.top() / m_overviewDownsample) * sy,
+                (r0.width() / m_overviewDownsample) * sx,
+                (r0.height() / m_overviewDownsample) * sy
+            );
+            p.drawRect(rr);
+        }
+    }
 
     if (!m_viewportLevel0.isEmpty() && m_overviewDownsample > 0.0) {
         const double sx = target.width() / std::max(1.0, static_cast<double>(m_overview.width()));
@@ -195,6 +220,17 @@ QRect ImageLabel::computeCacheRect(const QRect& targetRect) const {
     return expanded.intersected(rect());
 }
 
+QScrollArea* ImageLabel::owningScrollArea() const {
+    QWidget* w = parentWidget();
+    while (w) {
+        if (auto* sa = qobject_cast<QScrollArea*>(w)) {
+            return sa;
+        }
+        w = w->parentWidget();
+    }
+    return nullptr;
+}
+
 void ImageLabel::paintEvent(QPaintEvent* event) {
     if (!m_useVirtualCanvas) {
         if (m_slideImage.isNull()) {
@@ -203,7 +239,16 @@ void ImageLabel::paintEvent(QPaintEvent* event) {
         }
 
         QPainter painter(this);
+        const QRect drawRect = (event ? event->rect() : rect()).intersected(rect());
         painter.drawPixmap(rect(), m_slideImage);
+
+        if (m_mainWindow) {
+            m_mainWindow->drawSlideMarkup(
+                painter,
+                drawRect,
+                m_mainWindow->getScaleFactor()
+            );
+        }
 
         // Draw selection rectangle if dragging
         if (m_showSelection) {
@@ -248,6 +293,10 @@ void ImageLabel::paintEvent(QPaintEvent* event) {
         }
     }
 
+    if (m_mainWindow) {
+        m_mainWindow->drawSlideMarkup(painter, targetRect, m_downsample);
+    }
+
     if (m_showSelection) {
         painter.setPen(QPen(Qt::black, 2, Qt::SolidLine));
         painter.setBrush(QBrush(Qt::green, Qt::DiagCrossPattern));
@@ -256,27 +305,80 @@ void ImageLabel::paintEvent(QPaintEvent* event) {
 }
 
 void ImageLabel::mousePressEvent(QMouseEvent* event) {
+    if (!event) return;
+
+    if (event->button() == Qt::RightButton) {
+        m_panning = true;
+        m_panMoved = false;
+        m_panLastGlobal = event->globalPosition().toPoint();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+
+    if (event->button() == Qt::LeftButton) {
+        m_leftSelecting = true;
+        m_selStart = event->pos();
+        m_selEnd = m_selStart;
+        m_showSelection = false;
+        event->accept();
+        return;
+    }
+
     m_selStart = event->pos();
     m_showSelection = false;
-    m_mainWindow->updateStatusBar(QString("Click: %1, %2").arg(m_selStart.x()).arg(m_selStart.y()));
     QLabel::mousePressEvent(event);
 }
 
 void ImageLabel::mouseMoveEvent(QMouseEvent* event) {
-    if (event->buttons() & Qt::LeftButton) {
+    if (!event) return;
+
+    if (m_panning && (event->buttons() & Qt::RightButton)) {
+        const QPoint nowGlobal = event->globalPosition().toPoint();
+        const QPoint delta = nowGlobal - m_panLastGlobal;
+        if (!delta.isNull()) {
+            m_panMoved = true;
+            if (QScrollArea* sa = owningScrollArea()) {
+                sa->horizontalScrollBar()->setValue(sa->horizontalScrollBar()->value() - delta.x());
+                sa->verticalScrollBar()->setValue(sa->verticalScrollBar()->value() - delta.y());
+            }
+            m_panLastGlobal = nowGlobal;
+        }
+        event->accept();
+        return;
+    }
+
+    if (m_leftSelecting && (event->buttons() & Qt::LeftButton)) {
         m_selEnd = event->pos();
         m_showSelection = true;
         update();
+        event->accept();
+        return;
     }
     QLabel::mouseMoveEvent(event);
 }
 
 void ImageLabel::mouseReleaseEvent(QMouseEvent* event) {
-    m_selEnd = event->pos();
-    m_showSelection = false;
-    m_mainWindow->updateStatusBar(QString("Release: %1, %2").arg(m_selEnd.x()).arg(m_selEnd.y()));
-    m_mainWindow->onSelectionComplete(m_selStart, m_selEnd);
-    update();
+    if (!event) return;
+
+    if (event->button() == Qt::RightButton && m_panning) {
+        unsetCursor();
+        m_panning = false;
+        m_panMoved = false;
+        event->accept();
+        return;
+    }
+
+    if (event->button() == Qt::LeftButton && m_leftSelecting) {
+        m_selEnd = event->pos();
+        m_leftSelecting = false;
+        m_showSelection = false;
+        m_mainWindow->onSelectionComplete(m_selStart, m_selEnd);
+        update();
+        event->accept();
+        return;
+    }
+
     QLabel::mouseReleaseEvent(event);
 }
 
@@ -310,6 +412,15 @@ void MainWindow::setupUi() {
     connect(selectSlideAction, &QAction::triggered, this, &MainWindow::showSlideMenu);
     connect(selectWorkingDirAction, &QAction::triggered, this, &MainWindow::onSelectWorkingDirectory);
 
+    QMenu* viewMenu = menuBar()->addMenu("View");
+    m_toggleSlideMarkupAction = viewMenu->addAction("Show Markup");
+    m_toggleSlideMarkupAction->setCheckable(true);
+    m_toggleSlideMarkupAction->setChecked(true);
+    connect(m_toggleSlideMarkupAction, &QAction::toggled, this, [this](bool checked) {
+        m_showSlideMarkup = checked;
+        if (m_imageLabel) m_imageLabel->update();
+    });
+
     // Central widget with layout
     QWidget* centralWidget = new QWidget(this);
     QVBoxLayout* mainLayout = new QVBoxLayout(centralWidget);
@@ -325,9 +436,11 @@ void MainWindow::setupUi() {
 
     connect(m_scrollArea->horizontalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
         updateOverviewViewport();
+        updateCenterStatus();
     });
     connect(m_scrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
         updateOverviewViewport();
+        updateCenterStatus();
     });
 
     // Status bar at bottom
@@ -417,9 +530,91 @@ void MainWindow::onSlideOpened(const std::filesystem::path& path) {
     const bool changed = (path != m_slidePath);
     m_slidePath = path;
     m_levelLoaded = false;
+    reloadSlideAnnotations();
     if (changed) {
         rebuildOverviewMap();
     }
+    updateCenterStatus();
+}
+
+std::filesystem::path MainWindow::annotationPathForSlide() const {
+    if (m_slidePath.empty()) return {};
+    auto out = m_slidePath;
+    out.replace_extension(".json");
+    return out;
+}
+
+std::filesystem::path MainWindow::xmlPathForSlide() const {
+    if (m_slidePath.empty()) return {};
+    auto out = m_slidePath;
+    out.replace_extension(".xml");
+    return out;
+}
+
+void MainWindow::reloadSlideAnnotations() {
+    m_slideAnnotations.clear();
+    if (m_slidePath.empty()) {
+        if (m_imageLabel) m_imageLabel->update();
+        return;
+    }
+
+    QString err;
+    const auto jsonPath = annotationPathForSlide();
+    if (!jsonPath.empty() && std::filesystem::exists(jsonPath)) {
+        if (!annotation_io::loadJson(jsonPath, m_slideAnnotations, &err)) {
+            m_slideAnnotations.clear();
+            updateStatusBar(QString("Failed to load JSON markup: %1").arg(err));
+        }
+    }
+
+    const auto xmlPath = xmlPathForSlide();
+    if (!xmlPath.empty() && std::filesystem::exists(xmlPath)) {
+        err.clear();
+        const int added = annotation_io::mergeFromAsapXml(xmlPath, m_slideAnnotations, &err);
+        if (added < 0) {
+            updateStatusBar(QString("Failed to parse XML markup: %1").arg(err));
+        }
+    }
+
+    syncOverviewRectOverlays();
+
+    if (m_imageLabel) m_imageLabel->update();
+}
+
+void MainWindow::syncOverviewRectOverlays() {
+    if (!m_overviewMap) return;
+
+    std::vector<QRectF> rects;
+    rects.reserve(m_slideAnnotations.size());
+    for (const auto& a : m_slideAnnotations) {
+        if (a.isRect && a.bboxLevel0.isValid()) {
+            rects.push_back(a.bboxLevel0);
+        }
+    }
+    m_overviewMap->setRectOverlaysLevel0(rects);
+}
+
+void MainWindow::drawSlideMarkup(QPainter& painter, const QRect& viewRect, double downsample) const {
+    if (!m_showSlideMarkup) return;
+    if (m_slideAnnotations.empty()) return;
+    if (!m_imageLabel) return;
+    if (downsample <= 0.0) downsample = 1.0;
+
+    painter.save();
+    painter.setClipRect(viewRect, Qt::IntersectClip);
+    annotation_overlay::drawAnnotations(
+        painter,
+        m_slideAnnotations,
+        downsample,
+        QPointF(0.0, 0.0),
+        QRectF(
+            0.0,
+            0.0,
+            static_cast<double>(m_imageLabel->width()),
+            static_cast<double>(m_imageLabel->height())
+        )
+    );
+    painter.restore();
 }
 
 void MainWindow::loadSlideLevel(int levelIndex) {
@@ -469,6 +664,7 @@ void MainWindow::loadSlideLevel(int levelIndex) {
         .arg(w)
         .arg(h)
         .arg(m_scaleFactor, 0, 'f', 3));
+    updateCenterStatus();
 }
 
 void MainWindow::onSelectWorkingDirectory() {
@@ -534,6 +730,7 @@ void MainWindow::rebuildOverviewMap() {
         effectiveDownsample,
         QSize(static_cast<int>(l0w), static_cast<int>(l0h))
     );
+    syncOverviewRectOverlays();
     updateOverviewViewport();
 }
 
@@ -563,6 +760,7 @@ void MainWindow::centerViewOnLevel0(const QPointF& centerLevel0) {
     m_scrollArea->horizontalScrollBar()->setValue(newH);
     m_scrollArea->verticalScrollBar()->setValue(newV);
     updateOverviewViewport();
+    updateCenterStatus();
 }
 
 void MainWindow::onMapJumpRequested(QPointF centerLevel0) {
@@ -576,10 +774,37 @@ void MainWindow::setSlideImage(const QPixmap& pixmap, double scaleFactor) {
     // Center scroll position
     m_scrollArea->horizontalScrollBar()->setValue(m_imageLabel->width() / 3);
     m_scrollArea->verticalScrollBar()->setValue(m_imageLabel->height() / 3);
+    updateCenterStatus();
 }
 
 void MainWindow::updateStatusBar(const QString& message) {
-    m_statusLabel->setText(message);
+    m_statusMessage = message;
+    updateCenterStatus();
+}
+
+void MainWindow::updateCenterStatus() {
+    if (!m_statusLabel) return;
+
+    if (!m_scrollArea || !m_slideReader.isOpen() || m_scaleFactor <= 0.0) {
+        m_statusLabel->setText(m_statusMessage.isEmpty() ? QStringLiteral("Ready") : m_statusMessage);
+        return;
+    }
+
+    const QSize vp = m_scrollArea->viewport()->size();
+    const double cxLevel = m_scrollArea->horizontalScrollBar()->value() + vp.width() / 2.0;
+    const double cyLevel = m_scrollArea->verticalScrollBar()->value() + vp.height() / 2.0;
+    const double cx0 = cxLevel * m_scaleFactor;
+    const double cy0 = cyLevel * m_scaleFactor;
+
+    const QString centerText = QString("Center L0: (%1, %2) | Level %3")
+                                   .arg(static_cast<int>(std::llround(cx0)))
+                                   .arg(static_cast<int>(std::llround(cy0)))
+                                   .arg(m_currentLevel);
+    if (m_statusMessage.isEmpty()) {
+        m_statusLabel->setText(centerText);
+    } else {
+        m_statusLabel->setText(QString("%1 | %2").arg(m_statusMessage, centerText));
+    }
 }
 
 void MainWindow::onSelectionComplete(const QPoint& pressPos, const QPoint& releasePos) {
@@ -643,7 +868,13 @@ void MainWindow::showPreview() {
     QPixmap pixmap = QPixmap::fromImage(qImage.copy());
 
     // Show preview window
-    PreviewWindow* preview = new PreviewWindow(this, pixmap, region);
+    PreviewWindow* preview = new PreviewWindow(
+        this,
+        pixmap,
+        region,
+        m_slideAnnotations,
+        QRect(xi, yi, wi, hi)
+    );
     preview->setAttribute(Qt::WA_DeleteOnClose);
     preview->show();
 }

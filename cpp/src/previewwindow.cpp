@@ -1,6 +1,7 @@
 #include "previewwindow.h"
 #include "mainwindow.h"
 #include "graphics.h"
+#include "annotation_overlay.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -13,6 +14,49 @@
 #include <iostream>
 
 namespace cytologick {
+
+// ============================================================================
+// ToggleSwitch implementation
+// ============================================================================
+
+ToggleSwitch::ToggleSwitch(QWidget* parent)
+    : QAbstractButton(parent)
+{
+    setCheckable(true);
+    setCursor(Qt::PointingHandCursor);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+}
+
+QSize ToggleSwitch::sizeHint() const {
+    return QSize(44, 24);
+}
+
+void ToggleSwitch::paintEvent(QPaintEvent* event) {
+    Q_UNUSED(event);
+
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF r = rect().adjusted(1.0, 1.0, -1.0, -1.0);
+    const qreal radius = r.height() / 2.0;
+
+    const QColor trackOn(56, 173, 95);
+    const QColor trackOff(110, 110, 110);
+    const QColor knob(245, 245, 245);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(isChecked() ? trackOn : trackOff);
+    p.drawRoundedRect(r, radius, radius);
+
+    const qreal margin = 2.0;
+    const qreal knobDiameter = r.height() - 2.0 * margin;
+    const qreal x = isChecked()
+                        ? (r.right() - margin - knobDiameter)
+                        : (r.left() + margin);
+    const qreal y = r.top() + margin;
+    p.setBrush(knob);
+    p.drawEllipse(QRectF(x, y, knobDiameter, knobDiameter));
+}
 
 // ============================================================================
 // PreviewDisplayLabel implementation
@@ -53,13 +97,21 @@ void PreviewDisplayLabel::paintEvent(QPaintEvent* event) {
 // PreviewWindow implementation
 // ============================================================================
 
-PreviewWindow::PreviewWindow(MainWindow* parent, const QPixmap& pixmap, const cv::Mat& sourceImage)
+PreviewWindow::PreviewWindow(MainWindow* parent,
+                             const QPixmap& pixmap,
+                             const cv::Mat& sourceImage,
+                             const std::vector<Annotation>& referenceAnnotations,
+                             const QRect& sourceRectLevel0)
     : QDialog(parent)
     , m_mainWindow(parent)
     , m_originalImage(pixmap)
     , m_sourceImage(sourceImage.clone())
+    , m_referenceAnnotations(referenceAnnotations)
+    , m_sourceRectLevel0(sourceRectLevel0)
 {
     setupUi();
+    rebuildMarkupOverlay();
+    updateDisplayedOverlay();
     setMaximumSize(1600, 900);
     resize(m_originalImage.width() + 220, m_originalImage.height());
 }
@@ -111,6 +163,10 @@ void PreviewWindow::setupUi() {
     connect(m_smoothButton, &QRadioButton::toggled, this, &PreviewWindow::onModeToggled);
     connect(m_regionButton, &QRadioButton::toggled, this, &PreviewWindow::onModeToggled);
 
+    m_showMarkupToggle = new ToggleSwitch(this);
+    m_showMarkupToggle->setChecked(false);
+    connect(m_showMarkupToggle, &QAbstractButton::toggled, this, &PreviewWindow::onShowMarkupToggled);
+
     // Confidence threshold
     m_confLabel = new QLabel(this);
     updateConfidenceLabel();
@@ -137,6 +193,16 @@ void PreviewWindow::setupUi() {
     controlLayout->addWidget(m_directButton);
     controlLayout->addWidget(m_smoothButton);
     controlLayout->addWidget(m_regionButton);
+    controlLayout->addSpacing(6);
+    QWidget* markupRow = new QWidget(this);
+    QHBoxLayout* markupLayout = new QHBoxLayout(markupRow);
+    markupLayout->setContentsMargins(0, 0, 0, 0);
+    markupLayout->setSpacing(8);
+    QLabel* markupLabel = new QLabel("Show Markup", markupRow);
+    markupLayout->addWidget(markupLabel);
+    markupLayout->addStretch();
+    markupLayout->addWidget(m_showMarkupToggle);
+    controlLayout->addWidget(markupRow);
     controlLayout->addSpacing(5);
     controlLayout->addWidget(m_confLabel);
     controlLayout->addWidget(m_confSlider);
@@ -232,7 +298,8 @@ void PreviewWindow::onModeToggled(bool checked) {
     }
     m_cachedPathologyMap.release();
     m_cachedRegionBboxes.clear();
-    m_displayLabel->setImages(m_originalImage);
+    m_inferenceOverlayPixmap = QPixmap();
+    updateDisplayedOverlay();
     m_infoLabel->setText("Analysis\nResults");
 }
 
@@ -264,6 +331,8 @@ void PreviewWindow::renderOverlayFromCache(bool fullAnalysis) {
     }
 
     if (overlay.empty()) {
+        m_inferenceOverlayPixmap = QPixmap();
+        updateDisplayedOverlay();
         return;
     }
 
@@ -274,10 +343,8 @@ void PreviewWindow::renderOverlayFromCache(bool fullAnalysis) {
 
     QImage overlayImage(rgbaOverlay.data, rgbaOverlay.cols, rgbaOverlay.rows,
                         rgbaOverlay.step, QImage::Format_RGBA8888);
-    QPixmap overlayPixmap = QPixmap::fromImage(overlayImage.copy());
-
-    // Update display with overlay
-    m_displayLabel->setImages(m_originalImage, overlayPixmap);
+    m_inferenceOverlayPixmap = QPixmap::fromImage(overlayImage.copy());
+    updateDisplayedOverlay();
 }
 
 void PreviewWindow::scheduleRender() {
@@ -314,6 +381,46 @@ void PreviewWindow::scheduleRender() {
     m_renderWatcher->setFuture(future);
 }
 
+void PreviewWindow::rebuildMarkupOverlay() {
+    if (m_referenceAnnotations.empty() || m_originalImage.isNull()) {
+        m_markupOverlayPixmap = QPixmap();
+    } else {
+        m_markupOverlayPixmap = annotation_overlay::renderToPixmap(
+            m_originalImage.size(),
+            m_referenceAnnotations,
+            1.0,
+            QPointF(
+                static_cast<double>(m_sourceRectLevel0.x()),
+                static_cast<double>(m_sourceRectLevel0.y())
+            )
+        );
+    }
+
+    if (m_showMarkupToggle) {
+        m_showMarkupToggle->setEnabled(!m_markupOverlayPixmap.isNull());
+        if (m_markupOverlayPixmap.isNull() && m_showMarkupToggle->isChecked()) {
+            m_showMarkupToggle->setChecked(false);
+        }
+    }
+}
+
+void PreviewWindow::updateDisplayedOverlay() {
+    if (m_showMarkup && !m_markupOverlayPixmap.isNull()) {
+        m_displayLabel->setImages(m_originalImage, m_markupOverlayPixmap);
+        return;
+    }
+    if (!m_inferenceOverlayPixmap.isNull()) {
+        m_displayLabel->setImages(m_originalImage, m_inferenceOverlayPixmap);
+        return;
+    }
+    m_displayLabel->setImages(m_originalImage);
+}
+
+void PreviewWindow::onShowMarkupToggled(bool checked) {
+    m_showMarkup = checked;
+    updateDisplayedOverlay();
+}
+
 void PreviewWindow::onRenderFinished() {
     cv::Mat overlay = m_renderWatcher->result();
 
@@ -324,9 +431,11 @@ void PreviewWindow::onRenderFinished() {
 
         QImage overlayImage(rgbaOverlay.data, rgbaOverlay.cols, rgbaOverlay.rows,
                             rgbaOverlay.step, QImage::Format_RGBA8888);
-        QPixmap overlayPixmap = QPixmap::fromImage(overlayImage.copy());
-
-        m_displayLabel->setImages(m_originalImage, overlayPixmap);
+        m_inferenceOverlayPixmap = QPixmap::fromImage(overlayImage.copy());
+        updateDisplayedOverlay();
+    } else {
+        m_inferenceOverlayPixmap = QPixmap();
+        updateDisplayedOverlay();
     }
 
     // If there's a pending render with a different threshold, start it

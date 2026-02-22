@@ -3,6 +3,7 @@
 #include "config.h"
 #include "slidereader.h"
 #include "inference.h"
+#include "annotator/annotation_types.h"
 
 #include <QMainWindow>
 #include <QScrollArea>
@@ -14,7 +15,12 @@
 #include <QRectF>
 #include <QWidget>
 #include <QEvent>
+#include <QAction>
+#include <QString>
 #include <memory>
+#include <vector>
+
+class QPainter;
 
 namespace cytologick {
 
@@ -30,6 +36,7 @@ public:
 
     void setOverview(const QImage& image, double downsampleToLevel0, const QSize& level0Size);
     void setViewportLevel0(const QRectF& viewportLevel0);
+    void setRectOverlaysLevel0(const std::vector<QRectF>& rects);
     void clear();
 
 signals:
@@ -48,6 +55,7 @@ private:
     QImage m_overview;
     QSize m_level0Size;
     QRectF m_viewportLevel0;
+    std::vector<QRectF> m_rectOverlaysLevel0;
     double m_overviewDownsample = 1.0;
     bool m_mouseDown = false;
 };
@@ -74,12 +82,17 @@ protected:
 
 private:
     QRect computeCacheRect(const QRect& targetRect) const;
+    QScrollArea* owningScrollArea() const;
 
     MainWindow* m_mainWindow;
     QPixmap m_slideImage;
     QPoint m_selStart;
     QPoint m_selEnd;
     bool m_showSelection = false;
+    bool m_leftSelecting = false;
+    bool m_panning = false;
+    bool m_panMoved = false;
+    QPoint m_panLastGlobal;
 
     bool m_useVirtualCanvas = false;
     int m_levelIndex = 0;
@@ -117,6 +130,9 @@ public:
      * Get current scaling coefficient
      */
     double getScaleFactor() const { return m_scaleFactor; }
+    const std::vector<Annotation>& getSlideAnnotations() const { return m_slideAnnotations; }
+    bool isSlideMarkupVisible() const { return m_showSlideMarkup; }
+    void drawSlideMarkup(QPainter& painter, const QRect& viewRect, double downsample) const;
 
     // Called by ImageLabel when selection completes
     void onSelectionComplete(const QPoint& pressPos, const QPoint& releasePos);
@@ -139,6 +155,11 @@ private:
     void updateOverviewViewport();
     void centerViewOnLevel0(const QPointF& centerLevel0);
     void positionOverviewMapOverlay();
+    void updateCenterStatus();
+    void syncOverviewRectOverlays();
+    void reloadSlideAnnotations();
+    std::filesystem::path annotationPathForSlide() const;
+    std::filesystem::path xmlPathForSlide() const;
 
     // Configuration and model
     Config m_config;
@@ -150,6 +171,7 @@ private:
     ImageLabel* m_imageLabel = nullptr;
     QLabel* m_statusLabel = nullptr;
     OverviewMapWidget* m_overviewMap = nullptr;
+    QAction* m_toggleSlideMarkupAction = nullptr;
 
     // Child windows
     std::unique_ptr<MenuWindow> m_menuWindow;
@@ -161,6 +183,9 @@ private:
     int m_currentLevel = 0;
     bool m_levelLoaded = false;
     std::filesystem::path m_slidePath;
+    std::vector<Annotation> m_slideAnnotations;
+    bool m_showSlideMarkup = true;
+    QString m_statusMessage = "Ready";
 };
 
 } // namespace cytologick
