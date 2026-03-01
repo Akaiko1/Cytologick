@@ -1149,7 +1149,16 @@ def _train_model_loop(
     print(f'Training completed. Best {checkpoint_metric}: {best_score:.4f}')
 
 
-def _setup_training_components(cfg: Config, model, lr, use_amp, *, epochs: int, steps_per_epoch: int):
+def _setup_training_components(
+    cfg: Config,
+    model,
+    lr,
+    use_amp,
+    *,
+    epochs: int,
+    steps_per_epoch: int,
+    scheduler_mode: str | None = None,
+):
     """
     Setup optimizer, scheduler, criterion, and mixed precision components.
     """
@@ -1207,7 +1216,13 @@ def _setup_training_components(cfg: Config, model, lr, use_amp, *, epochs: int, 
         optimizer = torch.optim.NAdam(model.parameters(), lr=lr)
     else:
         optimizer = torch.optim.AdamW(_build_param_groups(lr), lr=lr)
-    scheduler_mode = str(getattr(cfg, 'PT_SCHEDULER', 'onecycle') or 'onecycle').strip().lower()
+    if scheduler_mode is None:
+        scheduler_mode = str(getattr(cfg, 'PT_SCHEDULER', 'onecycle') or 'onecycle')
+    scheduler_mode = str(scheduler_mode).strip().lower()
+    if scheduler_mode in {'cosine', 'cosinewarmrestarts', 'cosine_annealing_warm_restarts'}:
+        scheduler_mode = 'cawr'
+    if scheduler_mode not in {'onecycle', 'cawr'}:
+        raise ValueError(f"Unsupported scheduler mode: {scheduler_mode!r}. Use 'onecycle' or 'cawr'.")
     scheduler_step_per_batch = False
     if scheduler_mode == 'onecycle':
         pct_start = float(getattr(cfg, 'PT_ONECYCLE_PCT_START', 0.1) or 0.1)
@@ -1371,6 +1386,14 @@ def train_new_model_pytorch(
     
     if lr is None:
         lr = float(getattr(cfg, 'PT_LR', 1e-3))
+    scheduler_mode_new = str(
+        getattr(
+            cfg,
+            'PT_SCHEDULER_NEW',
+            getattr(cfg, 'PT_SCHEDULER', 'onecycle'),
+        ) or 'onecycle'
+    ).strip().lower()
+    print(f"[train_new_model_pytorch] scheduler={scheduler_mode_new}")
     criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx = _setup_training_components(
         cfg,
         model,
@@ -1378,6 +1401,7 @@ def train_new_model_pytorch(
         use_amp,
         epochs=epochs,
         steps_per_epoch=steps_per_epoch,
+        scheduler_mode=scheduler_mode_new,
     )
     
     _train_model_loop(
@@ -1423,6 +1447,14 @@ def train_current_model_pytorch(
     
     if lr is None:
         lr = float(getattr(cfg, 'PT_LR', 1e-3))
+    scheduler_mode_finetune = str(
+        getattr(
+            cfg,
+            'PT_SCHEDULER_FINETUNE',
+            getattr(cfg, 'PT_SCHEDULER', 'cawr'),
+        ) or 'cawr'
+    ).strip().lower()
+    print(f"[train_current_model_pytorch] scheduler={scheduler_mode_finetune}")
     criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx = _setup_training_components(
         cfg,
         model,
@@ -1430,6 +1462,7 @@ def train_current_model_pytorch(
         use_amp,
         epochs=epochs,
         steps_per_epoch=steps_per_epoch,
+        scheduler_mode=scheduler_mode_finetune,
     )
     
     if save_base_path is None:

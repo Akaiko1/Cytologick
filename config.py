@@ -93,7 +93,12 @@ class Config:
     # LR scheduler:
     # - 'cawr': CosineAnnealingWarmRestarts
     # - 'onecycle': OneCycleLR (stepped per-batch)
+    # Legacy/global scheduler fallback used when mode-specific values are absent.
     PT_SCHEDULER: str = 'onecycle'
+    # Scheduler for training from scratch (model_new.py).
+    PT_SCHEDULER_NEW: str = 'onecycle'
+    # Scheduler for resume/finetune (model_train.py).
+    PT_SCHEDULER_FINETUNE: str = 'cawr'
     PT_ONECYCLE_PCT_START: float = 0.1
     PT_LR: float = 1e-3
     PT_WEIGHT_DECAY: float = 1e-4
@@ -256,6 +261,10 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.PT_OPTIMIZER = str(neural['pt_optimizer']).lower()
     if 'pt_scheduler' in neural:
         cfg.PT_SCHEDULER = str(neural['pt_scheduler']).lower()
+    if 'pt_scheduler_new' in neural:
+        cfg.PT_SCHEDULER_NEW = str(neural['pt_scheduler_new']).lower()
+    if 'pt_scheduler_finetune' in neural:
+        cfg.PT_SCHEDULER_FINETUNE = str(neural['pt_scheduler_finetune']).lower()
     if 'pt_onecycle_pct_start' in neural:
         cfg.PT_ONECYCLE_PCT_START = _to_float(neural['pt_onecycle_pct_start'])
     if 'pt_lr' in neural:
@@ -409,6 +418,8 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'pt_use_encoder_preprocessing': 'PT_USE_ENCODER_PREPROCESSING',
             'pt_optimizer': 'PT_OPTIMIZER',
             'pt_scheduler': 'PT_SCHEDULER',
+            'pt_scheduler_new': 'PT_SCHEDULER_NEW',
+            'pt_scheduler_finetune': 'PT_SCHEDULER_FINETUNE',
             'pt_onecycle_pct_start': 'PT_ONECYCLE_PCT_START',
             'pt_lr': 'PT_LR',
             'pt_weight_decay': 'PT_WEIGHT_DECAY',

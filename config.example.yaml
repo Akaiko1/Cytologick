@@ -59,7 +59,14 @@ neural_network:
 
   # Training knobs (PyTorch)
   pt_optimizer: "adamw"
-  # Scheduler: 'onecycle' (recommended) or 'cawr'
+  # Scheduler modes:
+  # - onecycle: per-batch OneCycleLR
+  # - cawr: CosineAnnealingWarmRestarts
+  # model_new.py default
+  pt_scheduler_new: onecycle
+  # model_train.py default (resume / finetune)
+  pt_scheduler_finetune: cawr
+  # Legacy fallback if mode-specific keys are absent
   pt_scheduler: onecycle
   pt_onecycle_pct_start: 0.1
   pt_lr: 1.0e-3
