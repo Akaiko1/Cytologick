@@ -1314,6 +1314,106 @@ def _extract_tile_with_padding(rectangle, masks, labeled_path, y1, x1, y2, x2):
     return roi, mask, labels
 
 
+def _fit_fixed_tile(cy, cx, tile_size, h, w):
+    """Fit a fixed-size square tile around (cy, cx) into bounds."""
+    half = tile_size // 2
+    y1 = int(cy) - half
+    x1 = int(cx) - half
+    y2 = y1 + tile_size
+    x2 = x1 + tile_size
+
+    if y1 < 0:
+        y2 -= y1
+        y1 = 0
+    if x1 < 0:
+        x2 -= x1
+        x1 = 0
+    if y2 > h:
+        y1 -= (y2 - h)
+        y2 = h
+    if x2 > w:
+        x1 -= (x2 - w)
+        x2 = w
+
+    if y1 < 0 or x1 < 0 or y2 > h or x2 > w:
+        return None
+    return (y1, x1, y2, x2)
+
+
+def _backfill_normal_tiles(
+    *,
+    name_prefix,
+    rectangle,
+    masks,
+    roi_path,
+    masks_path,
+    saved_tiles,
+    normal_count,
+    target_normals,
+    min_normal_tile_size,
+    stats,
+):
+    """
+    Fill missing normal tiles by sampling additional candidates from normal pixels.
+
+    This is used when primary normal-object pass cannot reach target_normals.
+    """
+    if normal_count >= target_normals:
+        return normal_count
+
+    normal_ys, normal_xs = np.where(masks == MASK_VALUE_NORMAL)
+    if len(normal_ys) == 0:
+        return normal_count
+
+    h, w = masks.shape[:2]
+    tile_size = max(int(min_normal_tile_size), 60)
+    order = np.random.permutation(len(normal_ys))
+    # Keep runtime bounded while giving enough chances to fill deficit.
+    max_attempts = min(len(order), max(200, (target_normals - normal_count) * 80))
+    attempts = 0
+
+    for idx in order:
+        if normal_count >= target_normals or attempts >= max_attempts:
+            break
+        attempts += 1
+
+        cy = int(normal_ys[idx])
+        cx = int(normal_xs[idx])
+        tile = _fit_fixed_tile(cy, cx, tile_size, h, w)
+        if tile is None:
+            continue
+        y1, x1, y2, x2 = tile
+        tile_key = (y1, x1, y2, x2)
+        if tile_key in saved_tiles:
+            continue
+
+        tile_mask = masks[y1:y2, x1:x2]
+        # Backfill must stay pathology-free and still contain normal signal.
+        if np.any(tile_mask == MASK_VALUE_ABNORMAL):
+            continue
+        if not np.any(tile_mask == MASK_VALUE_NORMAL):
+            continue
+
+        roi = rectangle[y1:y2, x1:x2]
+        try:
+            cv2.imwrite(
+                os.path.join(roi_path, f'{name_prefix}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                cv2.cvtColor(roi, cv2.COLOR_RGBA2BGR)
+            )
+            cv2.imwrite(
+                os.path.join(masks_path, f'{name_prefix}_norm_{normal_count}_coords_{y1}_{x1}_{tile_size}.bmp'),
+                tile_mask
+            )
+            saved_tiles.add(tile_key)
+            normal_count += 1
+            stats.norm_saved += 1
+            stats.norm_backfill += 1
+        except cv2.error:
+            continue
+
+    return normal_count
+
+
 def _safe_debug_name(text):
     name = str(text or 'unknown').strip()
     name = name.replace(os.sep, '_')
@@ -1387,6 +1487,7 @@ class CropStats:
         # Normal phase
         self.norm_saved = 0
         self.norm_shifted = 0  # Required shifting
+        self.norm_backfill = 0  # Filled via fallback normal-pixel sampling
         self.norm_failed_pathology = 0  # Could not avoid pathology
         self.norm_failed_duplicate = 0
         self.norm_skipped_limit = 0  # Skipped due to target limit
@@ -1446,6 +1547,7 @@ class CropStats:
             'individual_failed_duplicate': self.ind_failed_duplicate,
                 'normal_saved': self.norm_saved,
                 'normal_shifted': self.norm_shifted,
+                'normal_backfill': self.norm_backfill,
                 'normal_failed_pathology': self.norm_failed_pathology,
                 'normal_failed_duplicate': self.norm_failed_duplicate,
                 'normal_skipped_limit': self.norm_skipped_limit,
@@ -1494,6 +1596,7 @@ class CropStats:
         print(f"  Saved:                 {self.norm_saved}")
         print(f"    - Direct:            {self.norm_saved - self.norm_shifted}")
         print(f"    - After shift:       {self.norm_shifted}")
+        print(f"    - Backfill:          {self.norm_backfill}")
         print(f"  Failed (pathology):    {self.norm_failed_pathology}")
         print(f"  Failed (duplicate):    {self.norm_failed_duplicate}")
         print(f"  Skipped (limit):       {self.norm_skipped_limit}")
@@ -1800,12 +1903,9 @@ def __crop_dataset_centered(
             stats.norm_skipped_limit += 1
             continue
 
-        # Skip small normal cells
-        obj_size = max(obj['y2'] - obj['y1'], obj['x2'] - obj['x1'])
-        if obj_size + 2 * padding < min_normal_tile_size:
-            continue
-
-        tile = _compute_tile_for_objects([obj], h, w, padding)
+        # Always try the object; enforce min tile size instead of dropping
+        # small components up front.
+        tile = _compute_tile_for_objects([obj], h, w, padding, min_tile_size=min_normal_tile_size)
         if tile is None:
             continue
 
@@ -1852,6 +1952,21 @@ def __crop_dataset_centered(
                 stats.norm_shifted += 1
         except cv2.error:
             print(f'ROI empty: {y1}, {x1}')
+
+    # Backfill pass: if we still have deficit, sample additional clean normal tiles.
+    if normal_count < target_normals:
+        normal_count = _backfill_normal_tiles(
+            name_prefix=name_prefix,
+            rectangle=rectangle,
+            masks=masks,
+            roi_path=roi_path,
+            masks_path=masks_path,
+            saved_tiles=saved_tiles,
+            normal_count=normal_count,
+            target_normals=target_normals,
+            min_normal_tile_size=min_normal_tile_size,
+            stats=stats,
+        )
 
     stats.finalize_rect(slide_id, rect_label or name_prefix)
     print(f'  {name_prefix}: {greedy_count} grp, {individual_count} ind, {normal_count} norm')
