@@ -43,6 +43,20 @@ def _to_float(value: Any) -> float:
     return float(str(value).strip())
 
 
+def _to_float_list(value: Any) -> list[float]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [_to_float(v) for v in value]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        parts = [p.strip() for p in text.split(',') if p.strip()]
+        return [_to_float(p) for p in parts]
+    raise ValueError(f'Expected list[float] or comma-separated string, got: {value!r}')
+
+
 def _to_tuple2(value: Any) -> tuple[int, int]:
     if isinstance(value, (list, tuple)) and len(value) == 2:
         return (_to_int(value[0]), _to_int(value[1]))
@@ -111,10 +125,38 @@ class Config:
     PT_WEIGHT_DECAY: float = 1e-4
     PT_ENCODER_LR_MULT: float = 0.1
     PT_GRAD_CLIP_NORM: float = 1.0
+    # Segmentation loss:
+    # - 'combined': Lovasz + CrossEntropy
+    # - 'focal_tversky_ce': Focal-Tversky + weighted CrossEntropy
+    PT_LOSS: str = 'focal_tversky_ce'
+    PT_LOSS_CE_WEIGHT: float = 0.5
+    PT_LOSS_TVERSKY_WEIGHT: float = 1.0
+    PT_TVERSKY_ALPHA: float = 0.3
+    PT_TVERSKY_BETA: float = 0.7
+    PT_TVERSKY_GAMMA: float = 1.33
+    # Additional edge-aware loss term (0 disables).
+    PT_BOUNDARY_LOSS_WEIGHT: float = 0.2
+    PT_BOUNDARY_KERNEL_SIZE: int = 3
+    PT_BOUNDARY_IGNORE_BACKGROUND: bool = True
+    # Class weights for CE ordered as [background, normal, pathology].
+    PT_CLASS_WEIGHTS: list[float] = field(default_factory=lambda: [0.25, 1.0, 2.5])
     # With mixup enabled in training loop, default to 0.0 to avoid over-regularization.
     PT_LABEL_SMOOTHING: float = 0.0
     # Mixup alpha for Beta(alpha, alpha). 0 disables mixup.
     PT_MIXUP_ALPHA: float = 0.2
+    # Train loader sampling:
+    # - 'none': standard shuffle
+    # - 'pathology_balanced': weighted sampler to target pathology/non-pathology tile ratio
+    PT_TRAIN_SAMPLER: str = 'pathology_balanced'
+    PT_SAMPLER_TARGET_PATHOLOGY_FRACTION: float = 0.5
+    PT_SAMPLER_PATHOLOGY_MIN_PIXELS: int = 10
+    PT_SAMPLER_REPLACEMENT: bool = True
+    # Stain-aware color strategy (HSV/HED + optional soft stain normalization).
+    PT_STAIN_AWARE_AUG: bool = True
+    PT_STAIN_HSV_PROB: float = 0.35
+    PT_STAIN_HED_PROB: float = 0.25
+    PT_STAIN_NORM_PROB: float = 0.20
+    PT_STAIN_NORM_BLEND_RANGE: tuple[float, float] = (0.15, 0.35)
     PT_NUM_WORKERS: int = -1  # -1 = auto; 0 disables multiprocessing DataLoader
     # Save per-epoch checkpoints (*_epochNNN.pth). Disabled by default to reduce disk usage.
     PT_SAVE_EVERY_EPOCH: bool = False
@@ -290,12 +332,55 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.PT_ENCODER_LR_MULT = _to_float(neural['pt_encoder_lr_mult'])
     if 'pt_grad_clip_norm' in neural:
         cfg.PT_GRAD_CLIP_NORM = _to_float(neural['pt_grad_clip_norm'])
+    if 'pt_loss' in neural:
+        cfg.PT_LOSS = str(neural['pt_loss']).lower()
+    if 'pt_loss_ce_weight' in neural:
+        cfg.PT_LOSS_CE_WEIGHT = _to_float(neural['pt_loss_ce_weight'])
+    if 'pt_loss_tversky_weight' in neural:
+        cfg.PT_LOSS_TVERSKY_WEIGHT = _to_float(neural['pt_loss_tversky_weight'])
+    if 'pt_tversky_alpha' in neural:
+        cfg.PT_TVERSKY_ALPHA = _to_float(neural['pt_tversky_alpha'])
+    if 'pt_tversky_beta' in neural:
+        cfg.PT_TVERSKY_BETA = _to_float(neural['pt_tversky_beta'])
+    if 'pt_tversky_gamma' in neural:
+        cfg.PT_TVERSKY_GAMMA = _to_float(neural['pt_tversky_gamma'])
+    if 'pt_boundary_loss_weight' in neural:
+        cfg.PT_BOUNDARY_LOSS_WEIGHT = _to_float(neural['pt_boundary_loss_weight'])
+    if 'pt_boundary_kernel_size' in neural:
+        cfg.PT_BOUNDARY_KERNEL_SIZE = _to_int(neural['pt_boundary_kernel_size'])
+    if 'pt_boundary_ignore_background' in neural:
+        cfg.PT_BOUNDARY_IGNORE_BACKGROUND = _to_bool(neural['pt_boundary_ignore_background'])
+    if 'pt_class_weights' in neural:
+        cfg.PT_CLASS_WEIGHTS = _to_float_list(neural['pt_class_weights'])
 
     if 'pt_label_smoothing' in neural:
         cfg.PT_LABEL_SMOOTHING = _to_float(neural['pt_label_smoothing'])
 
     if 'pt_mixup_alpha' in neural:
         cfg.PT_MIXUP_ALPHA = _to_float(neural['pt_mixup_alpha'])
+    if 'pt_train_sampler' in neural:
+        cfg.PT_TRAIN_SAMPLER = str(neural['pt_train_sampler']).lower()
+    if 'pt_sampler_target_pathology_fraction' in neural:
+        cfg.PT_SAMPLER_TARGET_PATHOLOGY_FRACTION = _to_float(neural['pt_sampler_target_pathology_fraction'])
+    if 'pt_sampler_pathology_min_pixels' in neural:
+        cfg.PT_SAMPLER_PATHOLOGY_MIN_PIXELS = _to_int(neural['pt_sampler_pathology_min_pixels'])
+    if 'pt_sampler_replacement' in neural:
+        cfg.PT_SAMPLER_REPLACEMENT = _to_bool(neural['pt_sampler_replacement'])
+    if 'pt_stain_aware_aug' in neural:
+        cfg.PT_STAIN_AWARE_AUG = _to_bool(neural['pt_stain_aware_aug'])
+    if 'pt_stain_hsv_prob' in neural:
+        cfg.PT_STAIN_HSV_PROB = _to_float(neural['pt_stain_hsv_prob'])
+    if 'pt_stain_hed_prob' in neural:
+        cfg.PT_STAIN_HED_PROB = _to_float(neural['pt_stain_hed_prob'])
+    if 'pt_stain_norm_prob' in neural:
+        cfg.PT_STAIN_NORM_PROB = _to_float(neural['pt_stain_norm_prob'])
+    if 'pt_stain_norm_blend_range' in neural:
+        blend = _to_float_list(neural['pt_stain_norm_blend_range'])
+        if len(blend) != 2:
+            raise ValueError(
+                f"pt_stain_norm_blend_range must have 2 values, got {neural['pt_stain_norm_blend_range']!r}"
+            )
+        cfg.PT_STAIN_NORM_BLEND_RANGE = (float(blend[0]), float(blend[1]))
 
     if 'pt_num_workers' in neural:
         cfg.PT_NUM_WORKERS = _to_int(neural['pt_num_workers'])
@@ -444,8 +529,27 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'pt_weight_decay': 'PT_WEIGHT_DECAY',
             'pt_encoder_lr_mult': 'PT_ENCODER_LR_MULT',
             'pt_grad_clip_norm': 'PT_GRAD_CLIP_NORM',
+            'pt_loss': 'PT_LOSS',
+            'pt_loss_ce_weight': 'PT_LOSS_CE_WEIGHT',
+            'pt_loss_tversky_weight': 'PT_LOSS_TVERSKY_WEIGHT',
+            'pt_tversky_alpha': 'PT_TVERSKY_ALPHA',
+            'pt_tversky_beta': 'PT_TVERSKY_BETA',
+            'pt_tversky_gamma': 'PT_TVERSKY_GAMMA',
+            'pt_boundary_loss_weight': 'PT_BOUNDARY_LOSS_WEIGHT',
+            'pt_boundary_kernel_size': 'PT_BOUNDARY_KERNEL_SIZE',
+            'pt_boundary_ignore_background': 'PT_BOUNDARY_IGNORE_BACKGROUND',
+            'pt_class_weights': 'PT_CLASS_WEIGHTS',
             'pt_label_smoothing': 'PT_LABEL_SMOOTHING',
             'pt_mixup_alpha': 'PT_MIXUP_ALPHA',
+            'pt_train_sampler': 'PT_TRAIN_SAMPLER',
+            'pt_sampler_target_pathology_fraction': 'PT_SAMPLER_TARGET_PATHOLOGY_FRACTION',
+            'pt_sampler_pathology_min_pixels': 'PT_SAMPLER_PATHOLOGY_MIN_PIXELS',
+            'pt_sampler_replacement': 'PT_SAMPLER_REPLACEMENT',
+            'pt_stain_aware_aug': 'PT_STAIN_AWARE_AUG',
+            'pt_stain_hsv_prob': 'PT_STAIN_HSV_PROB',
+            'pt_stain_hed_prob': 'PT_STAIN_HED_PROB',
+            'pt_stain_norm_prob': 'PT_STAIN_NORM_PROB',
+            'pt_stain_norm_blend_range': 'PT_STAIN_NORM_BLEND_RANGE',
             'pt_num_workers': 'PT_NUM_WORKERS',
             'pt_save_every_epoch': 'PT_SAVE_EVERY_EPOCH',
             'pt_checkpoint_metric': 'PT_CHECKPOINT_METRIC',

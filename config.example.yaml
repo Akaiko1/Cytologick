@@ -85,12 +85,41 @@ neural_network:
   # If training from scratch (pt_encoder_weights: null), consider 1.0.
   pt_encoder_lr_mult: 0.1
   pt_grad_clip_norm: 1.0
+  # Segmentation loss:
+  # - combined: Lovasz + CrossEntropy
+  # - focal_tversky_ce: recall-biased Focal-Tversky + weighted CrossEntropy
+  pt_loss: focal_tversky_ce
+  pt_loss_ce_weight: 0.5
+  pt_loss_tversky_weight: 1.0
+  # Tversky params: beta > alpha penalizes FN stronger (better pathology recall).
+  pt_tversky_alpha: 0.3
+  pt_tversky_beta: 0.7
+  pt_tversky_gamma: 1.33
+  # Additional border/edge term in loss (0 disables).
+  pt_boundary_loss_weight: 0.2
+  pt_boundary_kernel_size: 3
+  pt_boundary_ignore_background: true
+  # Cross-entropy class weights [background, normal, pathology].
+  pt_class_weights: [0.25, 1.0, 2.5]
 
   # Cross-entropy label smoothing (0..1). With mixup enabled, 0.0 is a good default.
   pt_label_smoothing: 0.0
 
   # Mixup alpha for Beta(alpha, alpha). 0 disables mixup.
   pt_mixup_alpha: 0.2
+  # Train sampler:
+  # - none: plain random shuffle
+  # - pathology_balanced: weighted sampler targeting pathology-rich tiles
+  pt_train_sampler: pathology_balanced
+  pt_sampler_target_pathology_fraction: 0.5
+  pt_sampler_pathology_min_pixels: 10
+  pt_sampler_replacement: true
+  # Stain-aware color strategy (HSV/HED + optional soft stain normalization).
+  pt_stain_aware_aug: true
+  pt_stain_hsv_prob: 0.35
+  pt_stain_hed_prob: 0.25
+  pt_stain_norm_prob: 0.20
+  pt_stain_norm_blend_range: [0.15, 0.35]
 
   # Validation split
   # - 'cyclic' = rotating/rolling holdout (validation set changes every epoch)
@@ -108,13 +137,13 @@ neural_network:
   pt_save_every_epoch: false
   # Best-checkpoint metric:
   # - mean_iou | mean_f1 | pathology_iou | pathology_f1 | pathology_pr_auc
-  pt_checkpoint_metric: pathology_iou
+  pt_checkpoint_metric: pathology_pr_auc
   # Class index treated as pathology/positive.
   pt_pathology_class_index: 2
   # Exclude background class (0) from mean IoU/F1 reporting.
   pt_include_background_metrics: false
   # Keep at least this fraction of pathology pixels after augmentation.
-  pt_pathology_min_keep_ratio: 0.9
+  pt_pathology_min_keep_ratio: 0.95
   # Strict pathology-safe augmentation mode:
   # true  -> no risky geometry/cutout for pathology tiles
   # false -> enables conservative risky geometry + small cutout

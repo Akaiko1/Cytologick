@@ -184,12 +184,14 @@ The viewer URL uses `web.ip_exposed` from `config.yaml`.
 Cytologick/
 ├── run.py                   # Desktop GUI entry point
 ├── run_web.py               # Web interface entry point
+├── run_audit.py             # Checkpoint audit/comparison runner
 ├── config.py                # Configuration defaults
 ├── config.yaml              # User configuration
 │
 ├── clogic/                  # Core logic
 │   ├── gui.py               # Desktop GUI (PyQt5)
 │   ├── ai_pytorch.py        # Training pipeline
+│   ├── model_audit.py       # Audit logic and metrics export
 │   ├── inference_pytorch.py # PyTorch inference
 │   ├── inference_utils.py   # Shared inference utilities
 │   └── model_loading.py     # Model discovery
@@ -281,10 +283,23 @@ By default, `model_train.py` continues from the latest checkpoint (`_new_last.pt
 
 | File | Description |
 | ---- | ----------- |
-| `_new_best.pth` | Best model by validation IoU |
+| `_new_best.pth` | Best model by `neural_network.pt_checkpoint_metric` |
 | `_new_final.pth` | Final model at training end |
 | `_new_last.pth` | Latest checkpoint |
 | `_new_epochNNN.pth` | Per-epoch checkpoints |
+
+### Step 3.5: Audit and Compare Checkpoints
+
+```bash
+# Full audit of one checkpoint
+python run_audit.py --checkpoint _new_best.pth
+
+# Compare two checkpoints on the same dataset split
+python run_audit.py --checkpoint _new_best.pth --old-checkpoint _new_final.pth
+```
+
+Outputs are written under `temp/model_error_audit_*` (single run) or
+`temp/model_error_compare_*` (comparison).
 
 ### Step 4: Deploy to GUI
 

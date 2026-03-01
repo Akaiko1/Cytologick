@@ -3,6 +3,33 @@ import cv2
 import numpy as np
 
 
+def _suspicious_component_mask(pathology_map: np.ndarray, red_mask: np.ndarray) -> np.ndarray:
+    """
+    Build mask of connected non-background components that contain any red pixel.
+
+    This helps avoid rendering mixed pathological clusters as green.
+    """
+    if pathology_map.ndim != 3 or pathology_map.shape[2] < 3:
+        return np.zeros(red_mask.shape, dtype=bool)
+    if red_mask.size == 0 or not np.any(red_mask):
+        return np.zeros(red_mask.shape, dtype=bool)
+
+    pred_class = np.argmax(pathology_map, axis=2)
+    non_background = ((pred_class == 1) | (pred_class == 2)).astype(np.uint8)
+    if not np.any(non_background):
+        return np.zeros(red_mask.shape, dtype=bool)
+
+    num_labels, labels = cv2.connectedComponents(non_background, connectivity=8)
+    suspicious = np.zeros(red_mask.shape, dtype=bool)
+
+    for label_idx in range(1, num_labels):
+        comp = labels == label_idx
+        if np.any(red_mask & comp):
+            suspicious |= comp
+
+    return suspicious
+
+
 def __get_contours(map, threshold):
     contours = cv2.findContours(map.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[-2]
     return [c for c in contours if cv2.contourArea(c) >= threshold]
@@ -50,27 +77,37 @@ def render_overlay_fast(pathology_map, threshold: float = 0.5):
 
     atypical_prob = pathology_map[..., 2]
     normal_prob = pathology_map[..., 1]
+    pred_class = np.argmax(pathology_map, axis=2)
 
     # class2_mask: where channel 2 is dominant
-    class2_mask = np.argmax(pathology_map, axis=2) == 2
+    class2_mask = pred_class == 2
 
     # Red: above threshold
     red_mask = atypical_prob >= threshold
+    suspicious_mask = _suspicious_component_mask(pathology_map, red_mask)
 
-    # Yellow: between lowThreshold and threshold
+    # Yellow warning: suspicious connected component, excluding red core.
     low_threshold = 0.3
-    yellow_mask = class2_mask & (atypical_prob >= low_threshold) & (atypical_prob < threshold)
+    yellow_mask = suspicious_mask & ~red_mask
 
     # Green from class2: below lowThreshold
-    green_class2 = class2_mask & (atypical_prob < low_threshold)
+    green_class2 = class2_mask & (atypical_prob < low_threshold) & ~suspicious_mask
 
-    # Normal cells green (channel 1 >= 0.5), excluding red and yellow
-    normal_mask = (normal_prob >= 0.5) & ~red_mask & ~yellow_mask
+    # Normal cells green, excluding suspicious components.
+    normal_mask = (
+        (pred_class == 1)
+        & (normal_prob >= 0.5)
+        & (atypical_prob < low_threshold)
+        & ~suspicious_mask
+    )
 
     # Apply colors (BGRA order for OpenCV compatibility)
     # Green fills
     overlay[green_class2] = [0, 255, 0, 40]
     overlay[normal_mask] = [0, 255, 0, 64]
+
+    # Red core fill
+    overlay[red_mask] = [0, 0, 255, 96]
 
     # Yellow on top (alpha 127 to match process_dense_pathology_map)
     overlay[yellow_mask] = [0, 255, 255, 127]
@@ -109,17 +146,12 @@ def process_dense_pathology_map(pathology_map, threshold: float = 0.5):
     class2_mask = np.argmax(pathology_map, axis=2) == 2
     # Apply configurable threshold to detect lesions
     atypical_map = np.where(pathology_map[..., 2] >= float(threshold), 1, 0)
+    red_fill = atypical_map.astype(np.uint8)
+    suspicious_mask = _suspicious_component_mask(pathology_map, red_fill > 0)
     low_threshold = 0.3
-    atypical_low_map = np.where(
-        class2_mask
-        & (pathology_map[..., 2] >= low_threshold)
-        & (pathology_map[..., 2] < float(threshold)),
-        1,
-        0,
-    )
+    atypical_low_map = np.where(suspicious_mask & (red_fill == 0), 1, 0)
     
     atypical_contours = __get_contours(atypical_map, threshold=0)
-    red_fill = atypical_map.astype(np.uint8)
 
     for idx, cnt in enumerate(atypical_contours):
         prob = __get_probability(atypical_probability_map, cnt)
@@ -135,7 +167,8 @@ def process_dense_pathology_map(pathology_map, threshold: float = 0.5):
 
     # Keep background/other channel visualization at 0.5 threshold
     markup[..., 1] = np.where(pathology_map[..., 1] >= 0.5, 255, 0)
-    markup[..., 2] = red_marks
+    # Fill red core + keep contour edges.
+    markup[..., 2] = np.where(red_fill > 0, 255, red_marks)
 
     yellow_mask = (atypical_low_map > 0) & (red_fill == 0)
     markup[..., 1] = np.where(yellow_mask, 255, markup[..., 1])
@@ -149,8 +182,8 @@ def process_dense_pathology_map(pathology_map, threshold: float = 0.5):
     )
     markup[..., 1] = np.where(low_mask, 255, markup[..., 1])
 
-    # Remove normal/green overlay only inside red areas
-    green_block = (red_fill > 0)
+    # Remove green overlay for the whole suspicious connected component.
+    green_block = suspicious_mask
     markup[..., 1] = np.where(green_block, 0, markup[..., 1])
     
     markup[:, :, 3] = np.where(markup[:, :, 1] > 0, 64, markup[:, :, 3])  # green alpha channel transparency

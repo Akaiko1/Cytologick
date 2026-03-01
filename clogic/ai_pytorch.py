@@ -25,12 +25,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import segmentation_models_pytorch as smp
 from PIL import Image
 
 from config import Config
 from clogic.preprocessing_pytorch import preprocess_rgb_image
+
+try:
+    from skimage import color as skcolor
+    _HAS_SKIMAGE_COLOR = True
+except Exception:
+    skcolor = None
+    _HAS_SKIMAGE_COLOR = False
+_PRINTED_HED_UNAVAILABLE_WARNING = False
 
 # Global configurations
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -247,6 +255,7 @@ class CytologyDataset(Dataset):
         self.transform_aggressive = transform_aggressive
         self.pathology_min_keep_ratio = float(pathology_min_keep_ratio)
         self.pathology_min_pixels_after_aug = max(1, int(pathology_min_pixels_after_aug))
+        self._pathology_pixels_cache: dict[int, int] = {}
 
         self.images = [f for f in os.listdir(images_path) if f.endswith('.bmp')]
         self.masks = [f for f in os.listdir(masks_path) if f.endswith('.bmp')]
@@ -266,6 +275,21 @@ class CytologyDataset(Dataset):
         
     def __len__(self):
         return len(self.images)
+
+    def pathology_pixels(self, idx: int) -> int:
+        """Return pathology pixel count for a sample (cached)."""
+        cached = self._pathology_pixels_cache.get(int(idx))
+        if cached is not None:
+            return int(cached)
+
+        mask_path = os.path.join(self.masks_path, self.masks[idx])
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(f'Failed to read mask: {mask_path}')
+        labels = self._convert_mask_to_labels(mask)
+        count = int(np.count_nonzero(labels == _MASK_CLASS_PATHOLOGY))
+        self._pathology_pixels_cache[int(idx)] = count
+        return count
     
     def __getitem__(self, idx):
         # Load image
@@ -443,29 +467,157 @@ def _build_gauss_noise():
     return A.NoOp(p=0.0)
 
 
-def _get_color_augmentations(noise_tf):
+def _clip_u8(image: np.ndarray) -> np.ndarray:
+    return np.clip(image, 0, 255).astype(np.uint8, copy=False)
+
+
+def _hed_stain_jitter(
+    image: np.ndarray,
+    sigma: float = 0.05,
+    bias_sigma: float = 0.01,
+    **kwargs,
+) -> np.ndarray:
+    """HED-space perturbation (safe no-op if skimage is unavailable)."""
+    if not _HAS_SKIMAGE_COLOR:
+        return image
+    if image.dtype != np.uint8:
+        image = _clip_u8(image)
+
+    rgb = image.astype(np.float32) / 255.0
+    hed = skcolor.rgb2hed(rgb)
+    hed = hed + np.random.normal(0.0, float(sigma), size=hed.shape).astype(np.float32)
+    hed = hed + np.random.normal(0.0, float(bias_sigma), size=(1, 1, 3)).astype(np.float32)
+    out = skcolor.hed2rgb(hed)
+    out = np.clip(out, 0.0, 1.0)
+    return (out * 255.0).astype(np.uint8)
+
+
+def _soft_stain_normalize(
+    image: np.ndarray,
+    blend_min: float = 0.15,
+    blend_max: float = 0.35,
+    **kwargs,
+) -> np.ndarray:
+    """
+    Soft channel-percentile normalization blended with original image.
+
+    This is lighter than strict stain normalization and reduces color outliers
+    that often trigger false pathology on bright normal nuclei.
+    """
+    if image.dtype != np.uint8:
+        image = _clip_u8(image)
+
+    x = image.astype(np.float32)
+    norm = np.empty_like(x)
+    for ch in range(3):
+        channel = x[..., ch]
+        lo = float(np.percentile(channel, 2.0))
+        hi = float(np.percentile(channel, 98.0))
+        if hi <= lo + 1e-6:
+            norm[..., ch] = channel
+        else:
+            norm[..., ch] = np.clip((channel - lo) * (255.0 / (hi - lo)), 0.0, 255.0)
+
+    blend_lo = float(min(blend_min, blend_max))
+    blend_hi = float(max(blend_min, blend_max))
+    alpha = float(np.random.uniform(blend_lo, blend_hi))
+    mixed = (1.0 - alpha) * x + alpha * norm
+    return _clip_u8(mixed)
+
+
+def _safe_prob(value: float, default: float) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        v = float(default)
+    return min(max(v, 0.0), 1.0)
+
+
+def _get_color_augmentations(cfg: Config, noise_tf):
     """Common color/stain augmentations for both pathology and normal tiles."""
+    global _PRINTED_HED_UNAVAILABLE_WARNING
+    use_stain_aware = bool(getattr(cfg, 'PT_STAIN_AWARE_AUG', True))
+    hsv_prob = _safe_prob(getattr(cfg, 'PT_STAIN_HSV_PROB', 0.35), 0.35)
+    hed_prob = _safe_prob(getattr(cfg, 'PT_STAIN_HED_PROB', 0.25), 0.25)
+    norm_prob = _safe_prob(getattr(cfg, 'PT_STAIN_NORM_PROB', 0.20), 0.20)
+    blend_range = getattr(cfg, 'PT_STAIN_NORM_BLEND_RANGE', (0.15, 0.35))
+    if not isinstance(blend_range, (list, tuple)) or len(blend_range) != 2:
+        blend_range = (0.15, 0.35)
+    blend_min = float(blend_range[0])
+    blend_max = float(blend_range[1])
+
+    stain_ops: list[tuple[A.BasicTransform, float]] = []
+    if use_stain_aware:
+        if hsv_prob > 0:
+            stain_ops.append((
+                A.HueSaturationValue(
+                    hue_shift_limit=10,
+                    sat_shift_limit=18,
+                    val_shift_limit=12,
+                    p=1.0,
+                ),
+                hsv_prob,
+            ))
+        if hed_prob > 0:
+            if _HAS_SKIMAGE_COLOR:
+                stain_ops.append((
+                    A.Lambda(
+                        image=partial(_hed_stain_jitter, sigma=0.05, bias_sigma=0.01),
+                        mask=_identity_mask,
+                        p=1.0,
+                    ),
+                    hed_prob,
+                ))
+            elif not _PRINTED_HED_UNAVAILABLE_WARNING:
+                print('[aug] skimage is unavailable, disabling HED stain jitter.')
+                _PRINTED_HED_UNAVAILABLE_WARNING = True
+        if norm_prob > 0:
+            stain_ops.append((
+                A.Lambda(
+                    image=partial(_soft_stain_normalize, blend_min=blend_min, blend_max=blend_max),
+                    mask=_identity_mask,
+                    p=1.0,
+                ),
+                norm_prob,
+            ))
+
+    if stain_ops:
+        # Reweight transform selection by repeating operations according to configured priorities.
+        weighted_ops = []
+        def _repeat_by_prob(op, p):
+            reps = max(1, int(round(10.0 * float(p))))
+            for _ in range(reps):
+                weighted_ops.append(op)
+        for op, prob in stain_ops:
+            _repeat_by_prob(op, prob)
+        ops = weighted_ops if weighted_ops else [op for op, _ in stain_ops]
+        stain_block = [A.OneOf(ops, p=0.7)]
+    else:
+        stain_block = [
+            A.OneOf([
+                A.HueSaturationValue(hue_shift_limit=12, sat_shift_limit=20, val_shift_limit=12, p=1.0),
+                A.RGBShift(r_shift_limit=12, g_shift_limit=12, b_shift_limit=12, p=1.0),
+                A.ColorJitter(brightness=0.12, contrast=0.12, saturation=0.12, hue=0.04, p=1.0),
+            ], p=0.6),
+        ]
+
     return [
-        # Color/Stain augmentation (critical for pathology - stain variability between labs)
-        A.OneOf([
-            A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.5),
-            A.RGBShift(r_shift_limit=20, g_shift_limit=20, b_shift_limit=20, p=0.5),
-            A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
-        ], p=0.7),
+        # Stain-aware color perturbation (HSV/HED/soft-normalization).
+        *stain_block,
 
         # Brightness/Contrast + CLAHE (lighting and contrast variation)
         A.OneOf([
-            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.25, p=0.5),
-            A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=0.5),
-            A.RandomGamma(gamma_limit=(80, 120), p=0.5),
-        ], p=0.5),
+            A.RandomBrightnessContrast(brightness_limit=0.12, contrast_limit=0.15, p=1.0),
+            A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=1.0),
+            A.RandomGamma(gamma_limit=(90, 110), p=1.0),
+        ], p=0.35),
 
         # Blur/Sharpness (focus varies across slides)
         A.OneOf([
-            A.GaussianBlur(blur_limit=(3, 7), p=0.5),
-            A.MotionBlur(blur_limit=5, p=0.5),
-            A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=0.5),
-        ], p=0.3),
+            A.GaussianBlur(blur_limit=(3, 5), p=1.0),
+            A.MotionBlur(blur_limit=3, p=1.0),
+            A.Sharpen(alpha=(0.1, 0.3), lightness=(0.7, 1.0), p=1.0),
+        ], p=0.20),
 
         # Noise
         noise_tf,
@@ -511,7 +663,7 @@ def get_train_transforms_aggressive(cfg: Config):
         ], p=0.3),
 
         # Color augmentations (same as conservative)
-        *_get_color_augmentations(noise_tf),
+        *_get_color_augmentations(cfg, noise_tf),
 
         # Aggressive coarse dropout (OK for normal tiles)
         A.CoarseDropout(
@@ -595,7 +747,7 @@ def get_train_transforms(cfg: Config):
         )
 
     # Color augmentations are kept in both modes.
-    transforms.extend(_get_color_augmentations(noise_tf))
+    transforms.extend(_get_color_augmentations(cfg, noise_tf))
 
     if not strict_pathology_aug:
         # Optional occlusion robustness for non-strict mode only.
@@ -673,12 +825,21 @@ class CombinedLoss(nn.Module):
     Combined Lovasz Softmax and Cross Entropy Loss (with Label Smoothing).
     """
     
-    def __init__(self, lovasz_weight=1.0, ce_weight=1.0, label_smoothing: float = 0.0):
+    def __init__(
+        self,
+        lovasz_weight=1.0,
+        ce_weight=1.0,
+        label_smoothing: float = 0.0,
+        class_weights: torch.Tensor | None = None,
+    ):
         super(CombinedLoss, self).__init__()
         # Lovasz Softmax Loss (typically for multiclass, using logit inputs)
         self.lovasz_loss = smp.losses.LovaszLoss(mode='multiclass', per_image=True)
         # Cross Entropy with Label Smoothing
-        self.ce_loss = nn.CrossEntropyLoss(label_smoothing=float(label_smoothing))
+        self.ce_loss = nn.CrossEntropyLoss(
+            weight=class_weights,
+            label_smoothing=float(label_smoothing),
+        )
         self.lovasz_weight = lovasz_weight
         self.ce_weight = ce_weight
     
@@ -694,6 +855,175 @@ class CombinedLoss(nn.Module):
         ce = self.ce_loss(y_pred, y_true)
         
         return self.lovasz_weight * lovasz + self.ce_weight * ce
+
+
+class FocalTverskyLoss(nn.Module):
+    """Multi-class focal Tversky loss with optional class weighting."""
+
+    def __init__(
+        self,
+        alpha: float = 0.3,
+        beta: float = 0.7,
+        gamma: float = 1.33,
+        smooth: float = 1e-6,
+        class_weights: torch.Tensor | None = None,
+    ):
+        super().__init__()
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+        self.gamma = float(gamma)
+        self.smooth = float(smooth)
+        if class_weights is not None:
+            self.register_buffer('class_weights', class_weights.float())
+        else:
+            self.class_weights = None
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        if y_true.dtype != torch.long:
+            y_true = y_true.long()
+        num_classes = y_pred.shape[1]
+        y_true_onehot = F.one_hot(y_true, num_classes=num_classes).permute(0, 3, 1, 2).float()
+        probs = F.softmax(y_pred, dim=1)
+
+        dims = (0, 2, 3)
+        tp = torch.sum(probs * y_true_onehot, dim=dims)
+        fp = torch.sum(probs * (1.0 - y_true_onehot), dim=dims)
+        fn = torch.sum((1.0 - probs) * y_true_onehot, dim=dims)
+
+        tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
+        focal_tversky = torch.pow(1.0 - tversky, self.gamma)
+
+        if self.class_weights is not None and self.class_weights.numel() == focal_tversky.numel():
+            weights = self.class_weights / self.class_weights.sum().clamp_min(self.smooth)
+            return torch.sum(focal_tversky * weights)
+        return focal_tversky.mean()
+
+
+class FocalTverskyCELoss(nn.Module):
+    """Recall-biased semantic segmentation loss: Focal-Tversky + CE."""
+
+    def __init__(
+        self,
+        alpha: float = 0.3,
+        beta: float = 0.7,
+        gamma: float = 1.33,
+        tversky_weight: float = 1.0,
+        ce_weight: float = 0.5,
+        label_smoothing: float = 0.0,
+        class_weights: torch.Tensor | None = None,
+    ):
+        super().__init__()
+        self.tversky_weight = float(tversky_weight)
+        self.ce_weight = float(ce_weight)
+        self.tversky_loss = FocalTverskyLoss(
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+            class_weights=class_weights,
+        )
+        self.ce_loss = nn.CrossEntropyLoss(
+            weight=class_weights,
+            label_smoothing=float(label_smoothing),
+        )
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        if y_true.dtype != torch.long:
+            y_true = y_true.long()
+        return self.tversky_weight * self.tversky_loss(y_pred, y_true) + self.ce_weight * self.ce_loss(y_pred, y_true)
+
+
+class BoundaryLoss(nn.Module):
+    """Edge-consistency loss on class boundaries (multi-class)."""
+
+    def __init__(
+        self,
+        num_classes: int,
+        kernel_size: int = 3,
+        class_weights: torch.Tensor | None = None,
+        ignore_background: bool = True,
+        smooth: float = 1e-6,
+    ):
+        super().__init__()
+        self.num_classes = int(num_classes)
+        k = int(kernel_size)
+        self.kernel_size = k if k % 2 == 1 else (k + 1)
+        self.pad = self.kernel_size // 2
+        self.ignore_background = bool(ignore_background)
+        self.smooth = float(smooth)
+        if class_weights is not None:
+            self.register_buffer('class_weights', class_weights.float())
+        else:
+            self.class_weights = None
+
+    def _boundary_map(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [N, C, H, W], values in [0,1]
+        dilated = F.max_pool2d(x, kernel_size=self.kernel_size, stride=1, padding=self.pad)
+        eroded = -F.max_pool2d(-x, kernel_size=self.kernel_size, stride=1, padding=self.pad)
+        return (dilated - eroded).clamp(min=0.0, max=1.0)
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        if y_true.dtype != torch.long:
+            y_true = y_true.long()
+
+        probs = F.softmax(y_pred, dim=1)
+        gt_onehot = F.one_hot(y_true, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
+
+        pred_b = self._boundary_map(probs)
+        gt_b = self._boundary_map(gt_onehot)
+
+        class_start = 1 if self.ignore_background and self.num_classes > 1 else 0
+        pred_b = pred_b[:, class_start:, :, :]
+        gt_b = gt_b[:, class_start:, :, :]
+
+        dims = (0, 2, 3)
+        intersection = torch.sum(pred_b * gt_b, dim=dims)
+        denom = torch.sum(pred_b, dim=dims) + torch.sum(gt_b, dim=dims)
+        dice = (2.0 * intersection + self.smooth) / (denom + self.smooth)
+        per_class_loss = 1.0 - dice
+
+        if self.class_weights is not None:
+            cw = self.class_weights[class_start:]
+            if cw.numel() == per_class_loss.numel():
+                cw = cw / cw.sum().clamp_min(self.smooth)
+                return torch.sum(per_class_loss * cw)
+        return per_class_loss.mean()
+
+
+class CompositeLoss(nn.Module):
+    """Weighted sum of base segmentation loss and boundary loss."""
+
+    def __init__(self, base_loss: nn.Module, boundary_loss: nn.Module, boundary_weight: float = 0.2):
+        super().__init__()
+        self.base_loss = base_loss
+        self.boundary_loss = boundary_loss
+        self.boundary_weight = float(max(0.0, boundary_weight))
+
+    def forward(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+        base = self.base_loss(y_pred, y_true)
+        if self.boundary_weight <= 0.0:
+            return base
+        return base + self.boundary_weight * self.boundary_loss(y_pred, y_true)
+
+
+def _resolve_class_weights(cfg: Config, num_classes: int) -> torch.Tensor | None:
+    raw_weights = getattr(cfg, 'PT_CLASS_WEIGHTS', None)
+    if raw_weights is None:
+        return None
+    if not isinstance(raw_weights, (list, tuple)) or len(raw_weights) == 0:
+        return None
+
+    weights = [float(w) for w in raw_weights]
+    if len(weights) < num_classes:
+        weights.extend([1.0] * (num_classes - len(weights)))
+    if len(weights) > num_classes:
+        weights = weights[:num_classes]
+
+    if all(w <= 0 for w in weights):
+        return None
+    weights = [max(0.0, w) for w in weights]
+    if sum(weights) <= 0:
+        return None
+    return torch.tensor(weights, dtype=torch.float32, device=DEVICE)
 
 
 def _iter_metric_classes(num_classes: int, include_background: bool) -> range:
@@ -1166,7 +1496,55 @@ def _setup_training_components(
     if not (0.0 <= label_smoothing <= 1.0):
         raise ValueError(f'PT_LABEL_SMOOTHING must be in [0, 1], got {label_smoothing}')
 
-    criterion = CombinedLoss(label_smoothing=label_smoothing)
+    num_classes = int(getattr(cfg, 'CLASSES', 3) or 3)
+    class_weights = _resolve_class_weights(cfg, num_classes=num_classes)
+    loss_mode = str(getattr(cfg, 'PT_LOSS', 'focal_tversky_ce') or 'focal_tversky_ce').strip().lower()
+    if loss_mode in {'lovasz_ce', 'combined_loss', 'combined'}:
+        criterion_base = CombinedLoss(
+            label_smoothing=label_smoothing,
+            class_weights=class_weights,
+        )
+    elif loss_mode in {'focal_tversky', 'focal_tversky_ce', 'tversky_ce'}:
+        alpha = float(getattr(cfg, 'PT_TVERSKY_ALPHA', 0.3) or 0.3)
+        beta = float(getattr(cfg, 'PT_TVERSKY_BETA', 0.7) or 0.7)
+        gamma = float(getattr(cfg, 'PT_TVERSKY_GAMMA', 1.33) or 1.33)
+        ce_w = float(getattr(cfg, 'PT_LOSS_CE_WEIGHT', 0.5) or 0.5)
+        tv_w = float(getattr(cfg, 'PT_LOSS_TVERSKY_WEIGHT', 1.0) or 1.0)
+        if alpha < 0 or beta < 0:
+            raise ValueError(f'PT_TVERSKY_ALPHA/PT_TVERSKY_BETA must be >= 0, got alpha={alpha}, beta={beta}')
+        if gamma <= 0:
+            raise ValueError(f'PT_TVERSKY_GAMMA must be > 0, got {gamma}')
+        criterion_base = FocalTverskyCELoss(
+            alpha=alpha,
+            beta=beta,
+            gamma=gamma,
+            tversky_weight=tv_w,
+            ce_weight=ce_w,
+            label_smoothing=label_smoothing,
+            class_weights=class_weights,
+        )
+    else:
+        raise ValueError(
+            f"Unsupported PT_LOSS={loss_mode!r}. Use 'combined' or 'focal_tversky_ce'."
+        )
+
+    boundary_weight = float(getattr(cfg, 'PT_BOUNDARY_LOSS_WEIGHT', 0.0) or 0.0)
+    if boundary_weight > 0.0:
+        boundary_kernel_size = int(getattr(cfg, 'PT_BOUNDARY_KERNEL_SIZE', 3) or 3)
+        boundary_ignore_bg = bool(getattr(cfg, 'PT_BOUNDARY_IGNORE_BACKGROUND', True))
+        boundary_loss = BoundaryLoss(
+            num_classes=num_classes,
+            kernel_size=boundary_kernel_size,
+            class_weights=class_weights,
+            ignore_background=boundary_ignore_bg,
+        )
+        criterion = CompositeLoss(
+            base_loss=criterion_base,
+            boundary_loss=boundary_loss,
+            boundary_weight=boundary_weight,
+        )
+    else:
+        criterion = criterion_base
 
     pt_optimizer = str(getattr(cfg, 'PT_OPTIMIZER', 'adamw')).lower()
     weight_decay = float(getattr(cfg, 'PT_WEIGHT_DECAY', 1e-4))
@@ -1265,6 +1643,57 @@ def _setup_training_components(
     return criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx
 
 
+def _build_train_sampler(cfg: Config, train_subset) -> WeightedRandomSampler | None:
+    sampler_mode = str(getattr(cfg, 'PT_TRAIN_SAMPLER', 'none') or 'none').strip().lower()
+    if sampler_mode in {'none', 'off', 'false', 'shuffle'}:
+        return None
+    if sampler_mode not in {'pathology_balanced', 'pathology', 'balanced'}:
+        raise ValueError(
+            f"Unsupported PT_TRAIN_SAMPLER={sampler_mode!r}. Use 'none' or 'pathology_balanced'."
+        )
+
+    base_dataset = getattr(train_subset, 'dataset', None)
+    subset_indices = list(getattr(train_subset, 'indices', []))
+    if not isinstance(base_dataset, CytologyDataset) or not subset_indices:
+        return None
+
+    min_pixels = int(
+        getattr(cfg, 'PT_SAMPLER_PATHOLOGY_MIN_PIXELS', getattr(cfg, 'MIN_PATHOLOGY_PIXELS', 10)) or 10
+    )
+    min_pixels = max(1, min_pixels)
+    target_pos_fraction = float(getattr(cfg, 'PT_SAMPLER_TARGET_PATHOLOGY_FRACTION', 0.5) or 0.5)
+    target_pos_fraction = min(max(target_pos_fraction, 0.05), 0.95)
+    replacement = bool(getattr(cfg, 'PT_SAMPLER_REPLACEMENT', True))
+
+    pos_flags = np.zeros(len(subset_indices), dtype=np.uint8)
+    for i, src_idx in enumerate(subset_indices):
+        pos_flags[i] = 1 if base_dataset.pathology_pixels(int(src_idx)) >= min_pixels else 0
+
+    pos_count = int(pos_flags.sum())
+    neg_count = int(len(pos_flags) - pos_count)
+    if pos_count == 0 or neg_count == 0:
+        print(
+            '[sampler] pathology_balanced disabled: '
+            f'pos_count={pos_count}, neg_count={neg_count}, min_pixels={min_pixels}'
+        )
+        return None
+
+    pos_weight = target_pos_fraction / max(1, pos_count)
+    neg_weight = (1.0 - target_pos_fraction) / max(1, neg_count)
+    weights = np.where(pos_flags == 1, pos_weight, neg_weight).astype(np.float64)
+    sampler = WeightedRandomSampler(
+        weights=torch.from_numpy(weights),
+        num_samples=len(weights),
+        replacement=replacement,
+    )
+    print(
+        '[sampler] pathology_balanced enabled: '
+        f'pos={pos_count}, neg={neg_count}, target_pos_fraction={target_pos_fraction:.2f}, '
+        f'min_pixels={min_pixels}, replacement={replacement}'
+    )
+    return sampler
+
+
 def _prepare_data_loaders(cfg: Config, batch_size, *, epoch: int = 0):
     """
     Create data loaders from config paths.
@@ -1298,10 +1727,14 @@ def _prepare_data_loaders(cfg: Config, batch_size, *, epoch: int = 0):
             num_workers = min(4, os.cpu_count() or 4)
     pin_mem = torch.cuda.is_available()
     
+    train_sampler = _build_train_sampler(cfg, train_dataset)
+    train_shuffle = train_sampler is None
+
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
-        shuffle=True, 
+        shuffle=train_shuffle,
+        sampler=train_sampler,
         num_workers=num_workers, 
         pin_memory=pin_mem,
         persistent_workers=bool(num_workers)
@@ -1404,6 +1837,11 @@ def train_new_model_pytorch(
     
     lr = _resolve_base_lr(cfg, explicit_lr=lr)
     print(f"[train_new_model_pytorch] base_lr={lr:.3e}")
+    print(f"[train_new_model_pytorch] loss={str(getattr(cfg, 'PT_LOSS', 'focal_tversky_ce')).lower()}")
+    print(
+        f"[train_new_model_pytorch] boundary_loss_weight="
+        f"{float(getattr(cfg, 'PT_BOUNDARY_LOSS_WEIGHT', 0.0) or 0.0):.3f}"
+    )
     scheduler_mode_new = str(
         getattr(
             cfg,
@@ -1465,6 +1903,11 @@ def train_current_model_pytorch(
     
     lr = _resolve_base_lr(cfg, explicit_lr=lr)
     print(f"[train_current_model_pytorch] base_lr={lr:.3e}")
+    print(f"[train_current_model_pytorch] loss={str(getattr(cfg, 'PT_LOSS', 'focal_tversky_ce')).lower()}")
+    print(
+        f"[train_current_model_pytorch] boundary_loss_weight="
+        f"{float(getattr(cfg, 'PT_BOUNDARY_LOSS_WEIGHT', 0.0) or 0.0):.3f}"
+    )
     scheduler_mode_finetune = str(
         getattr(
             cfg,
