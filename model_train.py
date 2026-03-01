@@ -23,7 +23,7 @@ if __name__ == '__main__':
         resume_path = next((p for p in candidates if os.path.exists(p)), None)
         if resume_path:
             print(f'Continuing training from {resume_path} (saving under {model_path}_*.pth)')
-            ai.train_current_model_pytorch(cfg, resume_path, 50, batch_size=64, save_base_path=model_path)
+            ai.train_current_model_pytorch(cfg, resume_path, 200, batch_size=64, save_base_path=model_path)
         else:
             print(f'Training new model, will save to {model_path}')
             ai.train_new_model_pytorch(cfg, model_path, cfg.CLASSES, epochs=50, batch_size=64)

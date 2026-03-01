@@ -81,6 +81,11 @@ class Config:
     PT_USE_ENCODER_PREPROCESSING: bool = False
 
     PT_OPTIMIZER: str = 'adamw'
+    # LR scheduler:
+    # - 'cawr': CosineAnnealingWarmRestarts
+    # - 'onecycle': OneCycleLR (stepped per-batch)
+    PT_SCHEDULER: str = 'onecycle'
+    PT_ONECYCLE_PCT_START: float = 0.1
     PT_LR: float = 1e-3
     PT_WEIGHT_DECAY: float = 1e-4
     PT_ENCODER_LR_MULT: float = 0.1
@@ -90,11 +95,24 @@ class Config:
     # Mixup alpha for Beta(alpha, alpha). 0 disables mixup.
     PT_MIXUP_ALPHA: float = 0.2
     PT_NUM_WORKERS: int = -1  # -1 = auto; 0 disables multiprocessing DataLoader
+    # Save per-epoch checkpoints (*_epochNNN.pth). Disabled by default to reduce disk usage.
+    PT_SAVE_EVERY_EPOCH: bool = False
+    # Which validation metric to use for best-checkpoint selection.
+    # Options: 'mean_iou', 'mean_f1', 'pathology_iou', 'pathology_f1', 'pathology_pr_auc'
+    PT_CHECKPOINT_METRIC: str = 'pathology_iou'
+    # Class index used as pathology/positive class for class-specific metrics.
+    PT_PATHOLOGY_CLASS_INDEX: int = 2
+    # Whether to include background class (0) in mean IoU/F1 reporting.
+    PT_INCLUDE_BACKGROUND_METRICS: bool = False
+    # Pathology augmentation safety: keep at least this fraction of pathology pixels.
+    PT_PATHOLOGY_MIN_KEEP_RATIO: float = 0.7
+    # Max random rotation (degrees) for pathology-tiles conservative transform.
+    PT_PATHOLOGY_ROTATE_LIMIT: int = 30
 
     # Validation split strategy
     # - 'cyclic': rotating/rolling holdout. Each epoch uses a different validation subset.
     # - 'static': a single random holdout subset used for all epochs.
-    PT_VAL_STRATEGY: str = 'cyclic'
+    PT_VAL_STRATEGY: str = 'static'
     # Fraction of samples to use for validation (0..1). Default 0.2 -> 80/20.
     PT_VAL_FRACTION: float = 0.2
     # Seed for deterministic train/val split permutation.
@@ -223,6 +241,10 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
 
     if 'pt_optimizer' in neural:
         cfg.PT_OPTIMIZER = str(neural['pt_optimizer']).lower()
+    if 'pt_scheduler' in neural:
+        cfg.PT_SCHEDULER = str(neural['pt_scheduler']).lower()
+    if 'pt_onecycle_pct_start' in neural:
+        cfg.PT_ONECYCLE_PCT_START = _to_float(neural['pt_onecycle_pct_start'])
     if 'pt_lr' in neural:
         cfg.PT_LR = _to_float(neural['pt_lr'])
     if 'pt_weight_decay' in neural:
@@ -240,6 +262,18 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
 
     if 'pt_num_workers' in neural:
         cfg.PT_NUM_WORKERS = _to_int(neural['pt_num_workers'])
+    if 'pt_save_every_epoch' in neural:
+        cfg.PT_SAVE_EVERY_EPOCH = _to_bool(neural['pt_save_every_epoch'])
+    if 'pt_checkpoint_metric' in neural:
+        cfg.PT_CHECKPOINT_METRIC = str(neural['pt_checkpoint_metric']).lower()
+    if 'pt_pathology_class_index' in neural:
+        cfg.PT_PATHOLOGY_CLASS_INDEX = _to_int(neural['pt_pathology_class_index'])
+    if 'pt_include_background_metrics' in neural:
+        cfg.PT_INCLUDE_BACKGROUND_METRICS = _to_bool(neural['pt_include_background_metrics'])
+    if 'pt_pathology_min_keep_ratio' in neural:
+        cfg.PT_PATHOLOGY_MIN_KEEP_RATIO = _to_float(neural['pt_pathology_min_keep_ratio'])
+    if 'pt_pathology_rotate_limit' in neural:
+        cfg.PT_PATHOLOGY_ROTATE_LIMIT = _to_int(neural['pt_pathology_rotate_limit'])
 
     if 'pt_val_strategy' in neural:
         cfg.PT_VAL_STRATEGY = str(neural['pt_val_strategy']).lower()
@@ -358,6 +392,8 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'pt_encoder_weights': 'PT_ENCODER_WEIGHTS',
             'pt_use_encoder_preprocessing': 'PT_USE_ENCODER_PREPROCESSING',
             'pt_optimizer': 'PT_OPTIMIZER',
+            'pt_scheduler': 'PT_SCHEDULER',
+            'pt_onecycle_pct_start': 'PT_ONECYCLE_PCT_START',
             'pt_lr': 'PT_LR',
             'pt_weight_decay': 'PT_WEIGHT_DECAY',
             'pt_encoder_lr_mult': 'PT_ENCODER_LR_MULT',
@@ -365,6 +401,12 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'pt_label_smoothing': 'PT_LABEL_SMOOTHING',
             'pt_mixup_alpha': 'PT_MIXUP_ALPHA',
             'pt_num_workers': 'PT_NUM_WORKERS',
+            'pt_save_every_epoch': 'PT_SAVE_EVERY_EPOCH',
+            'pt_checkpoint_metric': 'PT_CHECKPOINT_METRIC',
+            'pt_pathology_class_index': 'PT_PATHOLOGY_CLASS_INDEX',
+            'pt_include_background_metrics': 'PT_INCLUDE_BACKGROUND_METRICS',
+            'pt_pathology_min_keep_ratio': 'PT_PATHOLOGY_MIN_KEEP_RATIO',
+            'pt_pathology_rotate_limit': 'PT_PATHOLOGY_ROTATE_LIMIT',
             'pt_val_strategy': 'PT_VAL_STRATEGY',
             'pt_val_fraction': 'PT_VAL_FRACTION',
             'pt_val_seed': 'PT_VAL_SEED',

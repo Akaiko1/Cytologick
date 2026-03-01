@@ -11,6 +11,10 @@ import sys
 from contextlib import nullcontext
 from functools import partial
 from typing import Tuple, Optional, Union
+
+# Avoid network calls/version-check noise in restricted environments.
+os.environ.setdefault('NO_ALBUMENTATIONS_UPDATE', '1')
+
 import albumentations as A
 import inspect
 from albumentations.pytorch import ToTensorV2
@@ -222,6 +226,7 @@ class CytologyDataset(Dataset):
         masks_path: str,
         transform=None,
         transform_aggressive=None,
+        pathology_min_keep_ratio: float = 0.7,
         sanity_check: bool = True,
         sanity_check_max_masks: int = 200,
     ):
@@ -239,6 +244,7 @@ class CytologyDataset(Dataset):
         self.masks_path = masks_path
         self.transform = transform
         self.transform_aggressive = transform_aggressive
+        self.pathology_min_keep_ratio = float(pathology_min_keep_ratio)
 
         self.images = [f for f in os.listdir(images_path) if f.endswith('.bmp')]
         self.masks = [f for f in os.listdir(masks_path) if f.endswith('.bmp')]
@@ -281,7 +287,7 @@ class CytologyDataset(Dataset):
             if has_pathology:
                 # Use conservative transform with retry for pathology tiles
                 max_attempts = 3
-                min_ratio = 0.4  # Keep at least 40% of pathology
+                min_ratio = self.pathology_min_keep_ratio
 
                 # Store original for fallback (before any transform)
                 original_image = image.copy()
@@ -537,6 +543,8 @@ def get_train_transforms(cfg: Config):
     """
     noise_tf = _build_gauss_noise()
     h, w = int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1])
+    rotate_limit = int(getattr(cfg, 'PT_PATHOLOGY_ROTATE_LIMIT', 30) or 30)
+    rotate_limit = max(0, rotate_limit)
 
     # Geometric transforms - split into safe (rotation/flip) and risky (translate/scale)
     # Rotation and flips are safe - they don't remove content
@@ -544,7 +552,7 @@ def get_train_transforms(cfg: Config):
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.RandomRotate90(p=0.5),
-        A.Rotate(limit=360, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+        A.Rotate(limit=rotate_limit, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
     ])
 
     # Affine with conservative translate (max 15% instead of 35%)
@@ -678,7 +686,12 @@ class CombinedLoss(nn.Module):
         return self.lovasz_weight * lovasz + self.ce_weight * ce
 
 
-def iou_score(y_pred, y_true, num_classes=3):
+def _iter_metric_classes(num_classes: int, include_background: bool) -> range:
+    start = 0 if include_background else 1
+    return range(start, num_classes)
+
+
+def iou_score(y_pred, y_true, num_classes=3, *, include_background: bool = False):
     """
     Calculate IoU score for segmentation.
     
@@ -697,7 +710,7 @@ def iou_score(y_pred, y_true, num_classes=3):
     y_pred = torch.argmax(y_pred, dim=1)
     
     ious = []
-    for cls in range(num_classes):
+    for cls in _iter_metric_classes(num_classes, include_background):
         pred_cls = (y_pred == cls)
         true_cls = (y_true == cls)
         
@@ -709,10 +722,10 @@ def iou_score(y_pred, y_true, num_classes=3):
         else:
             ious.append((intersection / union).item())
     
-    return np.mean(ious)
+    return float(np.mean(ious)) if ious else 0.0
 
 
-def f1_score(y_pred, y_true, num_classes=3):
+def f1_score(y_pred, y_true, num_classes=3, *, include_background: bool = False):
     """
     Calculate F1 score for segmentation.
     
@@ -731,7 +744,7 @@ def f1_score(y_pred, y_true, num_classes=3):
     y_pred = torch.argmax(y_pred, dim=1)
     
     f1_scores = []
-    for cls in range(num_classes):
+    for cls in _iter_metric_classes(num_classes, include_background):
         pred_cls = (y_pred == cls)
         true_cls = (y_true == cls)
         
@@ -747,7 +760,56 @@ def f1_score(y_pred, y_true, num_classes=3):
             f1 = (2 * tp) / (denom + 1e-7)
             f1_scores.append(f1.item())
     
-    return np.mean(f1_scores)
+    return float(np.mean(f1_scores)) if f1_scores else 0.0
+
+
+def class_iou_score(y_pred, y_true, class_idx: int = 2):
+    if y_true.dtype != torch.long:
+        y_true = y_true.long()
+    y_pred = torch.argmax(y_pred, dim=1)
+
+    pred_cls = (y_pred == class_idx)
+    true_cls = (y_true == class_idx)
+    intersection = (pred_cls & true_cls).float().sum()
+    union = (pred_cls | true_cls).float().sum()
+    if union.item() == 0:
+        return 1.0
+    return (intersection / union).item()
+
+
+def class_f1_score(y_pred, y_true, class_idx: int = 2):
+    if y_true.dtype != torch.long:
+        y_true = y_true.long()
+    y_pred = torch.argmax(y_pred, dim=1)
+
+    pred_cls = (y_pred == class_idx)
+    true_cls = (y_true == class_idx)
+    tp = (pred_cls & true_cls).float().sum()
+    fp = (pred_cls & ~true_cls).float().sum()
+    fn = (~pred_cls & true_cls).float().sum()
+    denom = (2 * tp + fp + fn)
+    if denom.item() == 0:
+        return 1.0
+    return ((2 * tp) / (denom + 1e-7)).item()
+
+
+def binary_average_precision_score(y_prob: np.ndarray, y_true: np.ndarray) -> float:
+    """
+    Compute binary average precision (AP) without external deps.
+    """
+    y_prob = np.asarray(y_prob, dtype=np.float64).reshape(-1)
+    y_true = np.asarray(y_true, dtype=np.uint8).reshape(-1)
+    positives = int(y_true.sum())
+    if positives <= 0:
+        return 0.0
+
+    order = np.argsort(-y_prob, kind='mergesort')
+    y_sorted = y_true[order]
+    tp = np.cumsum(y_sorted)
+    fp = np.cumsum(1 - y_sorted)
+    precision = tp / np.maximum(tp + fp, 1)
+    ap = float(precision[y_sorted == 1].sum() / positives)
+    return ap
 
 
 def get_datasets(
@@ -842,6 +904,7 @@ def get_datasets(
         masks_path,
         transform=get_train_transforms(cfg),
         transform_aggressive=get_train_transforms_aggressive(cfg),
+        pathology_min_keep_ratio=float(getattr(cfg, 'PT_PATHOLOGY_MIN_KEEP_RATIO', 0.7) or 0.7),
     )
     val_dataset = CytologyDataset(images_path, masks_path, transform=get_val_transforms(cfg))
 
@@ -858,6 +921,7 @@ def _train_model_loop(
     criterion,
     optimizer,
     scheduler,
+    scheduler_step_per_batch: bool,
     scaler,
     amp_ctx,
     epochs,
@@ -869,8 +933,22 @@ def _train_model_loop(
     """
     Common training loop for PyTorch models.
     """
-    best_iou = 0.0
+    best_score = float('-inf')
     base_path = os.path.splitext(save_base_path or model_path)[0]
+    pathology_class_idx = int(getattr(cfg, 'PT_PATHOLOGY_CLASS_INDEX', 2) or 2)
+    include_background_metrics = bool(getattr(cfg, 'PT_INCLUDE_BACKGROUND_METRICS', False))
+    checkpoint_metric = str(getattr(cfg, 'PT_CHECKPOINT_METRIC', 'pathology_iou') or 'pathology_iou').strip().lower()
+    allowed_checkpoint_metrics = {
+        'mean_iou',
+        'mean_f1',
+        'pathology_iou',
+        'pathology_f1',
+        'pathology_pr_auc',
+    }
+    if checkpoint_metric not in allowed_checkpoint_metrics:
+        raise ValueError(
+            f"PT_CHECKPOINT_METRIC must be one of {sorted(allowed_checkpoint_metrics)}, got {checkpoint_metric!r}"
+        )
     
     # Prepare loaders. For cyclic validation we rebuild loaders each epoch.
     val_strategy = str(getattr(cfg, 'PT_VAL_STRATEGY', 'cyclic') or 'cyclic').strip().lower()
@@ -932,6 +1010,12 @@ def _train_model_loop(
                 if clip_norm > 0:
                     clip_grad_norm_(model.parameters(), max_norm=clip_norm)
                 optimizer.step()
+
+            if scheduler is not None and scheduler_step_per_batch:
+                try:
+                    scheduler.step()
+                except Exception:
+                    pass
             
             running_loss += loss.item()
             if hasattr(pbar, 'set_postfix'):
@@ -947,6 +1031,10 @@ def _train_model_loop(
         model.eval()
         val_iou = 0.0
         val_f1 = 0.0
+        val_path_iou = 0.0
+        val_path_f1 = 0.0
+        pr_probs: list[np.ndarray] = []
+        pr_labels: list[np.ndarray] = []
         
         with torch.no_grad():
             vbar = tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False, dynamic_ncols=True)
@@ -957,43 +1045,100 @@ def _train_model_loop(
                 outputs = model(images)
                 
                 # Calculate metrics
-                iou = iou_score(outputs, masks, output_classes_metrics)
-                f1 = f1_score(outputs, masks, output_classes_metrics)
+                iou = iou_score(
+                    outputs,
+                    masks,
+                    output_classes_metrics,
+                    include_background=include_background_metrics,
+                )
+                f1 = f1_score(
+                    outputs,
+                    masks,
+                    output_classes_metrics,
+                    include_background=include_background_metrics,
+                )
+                path_iou = class_iou_score(outputs, masks, pathology_class_idx)
+                path_f1 = class_f1_score(outputs, masks, pathology_class_idx)
                 
                 val_iou += iou
                 val_f1 += f1
+                val_path_iou += path_iou
+                val_path_f1 += path_f1
+
+                if checkpoint_metric == 'pathology_pr_auc':
+                    probs = torch.softmax(outputs, dim=1)[:, pathology_class_idx]
+                    labels = (masks == pathology_class_idx)
+                    pr_probs.append(probs.detach().float().cpu().numpy().reshape(-1))
+                    pr_labels.append(labels.detach().cpu().numpy().astype(np.uint8).reshape(-1))
                 if hasattr(vbar, 'set_postfix'):
                     seen = max(1, vbar.n)
-                    vbar.set_postfix(iou=f"{val_iou/seen:.4f}", f1=f"{val_f1/seen:.4f}")
+                    vbar.set_postfix(
+                        iou=f"{val_iou/seen:.4f}",
+                        f1=f"{val_f1/seen:.4f}",
+                        p_iou=f"{val_path_iou/seen:.4f}",
+                    )
         
-        avg_val_iou = val_iou / len(val_loader)
-        avg_val_f1 = val_f1 / len(val_loader)
+        val_batches = max(1, len(val_loader))
+        avg_val_iou = val_iou / val_batches
+        avg_val_f1 = val_f1 / val_batches
+        avg_val_path_iou = val_path_iou / val_batches
+        avg_val_path_f1 = val_path_f1 / val_batches
+        avg_val_path_pr_auc = 0.0
+        if checkpoint_metric == 'pathology_pr_auc':
+            if pr_probs and pr_labels:
+                avg_val_path_pr_auc = binary_average_precision_score(
+                    np.concatenate(pr_probs),
+                    np.concatenate(pr_labels),
+                )
+            else:
+                avg_val_path_pr_auc = 0.0
         
-        print(f'Epoch {epoch+1}/{epochs}: Train Loss: {avg_train_loss:.4f}, Val IoU: {avg_val_iou:.4f}, Val F1: {avg_val_f1:.4f}')
+        msg = (
+            f'Epoch {epoch+1}/{epochs}: '
+            f'Train Loss: {avg_train_loss:.4f}, '
+            f'Val IoU: {avg_val_iou:.4f}, '
+            f'Val F1: {avg_val_f1:.4f}, '
+            f'Path IoU: {avg_val_path_iou:.4f}, '
+            f'Path F1: {avg_val_path_f1:.4f}'
+        )
+        if checkpoint_metric == 'pathology_pr_auc':
+            msg += f', Path PR AUC: {avg_val_path_pr_auc:.4f}'
+        print(msg)
 
         # Step LR scheduler
-        try:
-            scheduler.step(epoch + 1)
-        except Exception:
-            pass
+        if scheduler is not None and not scheduler_step_per_batch:
+            try:
+                scheduler.step(epoch + 1)
+            except Exception:
+                pass
 
-        # Save weights every epoch
-        epoch_weights = f"{base_path}_epoch{epoch+1:03d}.pth"
-        torch.save(model.state_dict(), epoch_weights)
+        # Optional per-epoch checkpointing (can generate many large files).
+        if bool(getattr(cfg, 'PT_SAVE_EVERY_EPOCH', False)):
+            epoch_weights = f"{base_path}_epoch{epoch+1:03d}.pth"
+            torch.save(model.state_dict(), epoch_weights)
         torch.save(model.state_dict(), f"{base_path}_last.pth")
 
+        metric_values = {
+            'mean_iou': avg_val_iou,
+            'mean_f1': avg_val_f1,
+            'pathology_iou': avg_val_path_iou,
+            'pathology_f1': avg_val_path_f1,
+            'pathology_pr_auc': avg_val_path_pr_auc,
+        }
+        current_score = metric_values[checkpoint_metric]
+
         # Save best model
-        if avg_val_iou > best_iou:
-            best_iou = avg_val_iou
+        if current_score > best_score:
+            best_score = current_score
             torch.save(model.state_dict(), f"{base_path}_best.pth")
-            print(f'New best model saved with IoU: {best_iou:.4f}')
+            print(f'New best model saved with {checkpoint_metric}: {best_score:.4f}')
     
     # Save final model
     torch.save(model.state_dict(), f"{base_path}_final.pth")
-    print(f'Training completed. Best IoU: {best_iou:.4f}')
+    print(f'Training completed. Best {checkpoint_metric}: {best_score:.4f}')
 
 
-def _setup_training_components(cfg: Config, model, lr, use_amp):
+def _setup_training_components(cfg: Config, model, lr, use_amp, *, epochs: int, steps_per_epoch: int):
     """
     Setup optimizer, scheduler, criterion, and mixed precision components.
     """
@@ -1051,8 +1196,25 @@ def _setup_training_components(cfg: Config, model, lr, use_amp):
         optimizer = torch.optim.NAdam(model.parameters(), lr=lr)
     else:
         optimizer = torch.optim.AdamW(_build_param_groups(lr), lr=lr)
-    # Note: T_mult=2 matches original train_new_model implementation
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
+    scheduler_mode = str(getattr(cfg, 'PT_SCHEDULER', 'onecycle') or 'onecycle').strip().lower()
+    scheduler_step_per_batch = False
+    if scheduler_mode == 'onecycle':
+        pct_start = float(getattr(cfg, 'PT_ONECYCLE_PCT_START', 0.1) or 0.1)
+        pct_start = min(max(pct_start, 0.01), 0.99)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=lr,
+            epochs=max(1, int(epochs)),
+            steps_per_epoch=max(1, int(steps_per_epoch)),
+            pct_start=pct_start,
+            anneal_strategy='cos',
+            div_factor=25.0,
+            final_div_factor=1e4,
+        )
+        scheduler_step_per_batch = True
+    else:
+        # Note: T_mult=2 matches original train_new_model implementation.
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2)
     
     if torch.cuda.is_available():
         # PyTorch AMP APIs differ slightly across versions.
@@ -1074,7 +1236,7 @@ def _setup_training_components(cfg: Config, model, lr, use_amp):
         def amp_ctx():
             return nullcontext()
         
-    return criterion, optimizer, scheduler, scaler, amp_ctx
+    return criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx
 
 
 def _prepare_data_loaders(cfg: Config, batch_size, *, epoch: int = 0):
@@ -1101,10 +1263,10 @@ def _prepare_data_loaders(cfg: Config, batch_size, *, epoch: int = 0):
     if int(getattr(cfg, 'PT_NUM_WORKERS', -1)) >= 0:
         num_workers = int(cfg.PT_NUM_WORKERS)
     else:
-        # On macOS the multiprocessing start method is spawn, which often adds
-        # overhead for cv2/albumentations-heavy pipelines. Default to 0 unless
-        # explicitly configured.
-        if sys.platform == 'darwin':
+        # On macOS/Windows, multiprocessing workers frequently add instability or
+        # overhead for cv2/albumentations-heavy pipelines (WinError 1455 shared map,
+        # spawn overhead on macOS). Default to 0 unless explicitly configured.
+        if sys.platform in {'darwin', 'win32'}:
             num_workers = 0
         else:
             num_workers = min(4, os.cpu_count() or 4)
@@ -1145,8 +1307,9 @@ def train_new_model_pytorch(
     set_seed(42)
     _log_device_selection(prefix="[train_new_model_pytorch]")
     
-    # Print total samples once (epoch 0 split).
-    _, _, total_samples = _prepare_data_loaders(cfg, batch_size, epoch=0)
+    # Warm up loaders once (epoch 0 split): validates dataset and gives step count.
+    train_loader_0, _, total_samples = _prepare_data_loaders(cfg, batch_size, epoch=0)
+    steps_per_epoch = len(train_loader_0)
     print(f"Total samples: {total_samples}")
     
     model = smp.Unet(
@@ -1159,10 +1322,17 @@ def train_new_model_pytorch(
     
     if lr is None:
         lr = float(getattr(cfg, 'PT_LR', 1e-3))
-    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(cfg, model, lr, use_amp)
+    criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx = _setup_training_components(
+        cfg,
+        model,
+        lr,
+        use_amp,
+        epochs=epochs,
+        steps_per_epoch=steps_per_epoch,
+    )
     
     _train_model_loop(
-        cfg, model, criterion, optimizer, scheduler, scaler, amp_ctx,
+        cfg, model, criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx,
         epochs, model_path, output_classes, batch_size=batch_size, save_base_path=model_path
     )
 
@@ -1182,8 +1352,9 @@ def train_current_model_pytorch(
     set_seed(42)
     _log_device_selection(prefix="[train_current_model_pytorch]")
     
-    # Warm up loaders (epoch 0 split) to validate dataset and print device info early.
-    _prepare_data_loaders(cfg, batch_size, epoch=0)
+    # Warm up loaders (epoch 0 split) to validate dataset and capture step count.
+    train_loader_0, _, _ = _prepare_data_loaders(cfg, batch_size, epoch=0)
+    steps_per_epoch = len(train_loader_0)
     
     # Load existing architecture
     model = smp.Unet(
@@ -1201,7 +1372,14 @@ def train_current_model_pytorch(
     
     if lr is None:
         lr = float(getattr(cfg, 'PT_LR', 1e-3))
-    criterion, optimizer, scheduler, scaler, amp_ctx = _setup_training_components(cfg, model, lr, use_amp)
+    criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx = _setup_training_components(
+        cfg,
+        model,
+        lr,
+        use_amp,
+        epochs=epochs,
+        steps_per_epoch=steps_per_epoch,
+    )
     
     if save_base_path is None:
         save_base_path = model_path
@@ -1214,7 +1392,7 @@ def train_current_model_pytorch(
                 save_base_path = save_base_path.rsplit('_epoch', 1)[0]
 
     _train_model_loop(
-        cfg, model, criterion, optimizer, scheduler, scaler, amp_ctx,
+        cfg, model, criterion, optimizer, scheduler, scheduler_step_per_batch, scaler, amp_ctx,
         epochs, model_path, cfg.CLASSES, batch_size=batch_size, save_base_path=save_base_path
     )
 

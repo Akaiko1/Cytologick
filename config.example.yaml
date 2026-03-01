@@ -50,6 +50,9 @@ neural_network:
 
   # Training knobs (PyTorch)
   pt_optimizer: "adamw"
+  # Scheduler: 'onecycle' (recommended) or 'cawr'
+  pt_scheduler: onecycle
+  pt_onecycle_pct_start: 0.1
   pt_lr: 1.0e-3
   pt_weight_decay: 1.0e-4
   pt_encoder_lr_mult: 0.1
@@ -64,7 +67,7 @@ neural_network:
   # Validation split
   # - 'cyclic' = rotating/rolling holdout (validation set changes every epoch)
   # - 'static' = a single random holdout split for all epochs
-  pt_val_strategy: cyclic
+  pt_val_strategy: static
   # Fraction of samples used for validation (0..1). 0.2 -> 80/20.
   pt_val_fraction: 0.2
   # Seed for deterministic split permutation.
@@ -73,6 +76,19 @@ neural_network:
   # DataLoader multiprocessing
   # -1 = auto, 0 = single-process, >0 = worker processes
   pt_num_workers: -1
+  # Save per-epoch checkpoints (*_epochNNN.pth). Disable to save disk space.
+  pt_save_every_epoch: false
+  # Best-checkpoint metric:
+  # - mean_iou | mean_f1 | pathology_iou | pathology_f1 | pathology_pr_auc
+  pt_checkpoint_metric: pathology_iou
+  # Class index treated as pathology/positive.
+  pt_pathology_class_index: 2
+  # Exclude background class (0) from mean IoU/F1 reporting.
+  pt_include_background_metrics: false
+  # Keep at least this fraction of pathology pixels after augmentation.
+  pt_pathology_min_keep_ratio: 0.7
+  # Max rotation (deg) for pathology-tiles conservative transform.
+  pt_pathology_rotate_limit: 30
 
   # Label mapping used by the XML/annotation parsing pipeline.
   labels:

@@ -48,3 +48,7 @@ cpp/build-annotator/.qt/
 current/**/*.json
 
 gui_map.png
+
+clogic/__pycache__/
+
+__pycache__/
