@@ -10,11 +10,19 @@ Example:
 """
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 import torch
-import segmentation_models_pytorch as smp
+
+# Make project root importable when script is run from cpp/scripts.
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from config import load_config
+from clogic.ai_pytorch import _build_segmentation_model
 
 
 def find_model_file(search_dir: Path) -> Path | None:
@@ -44,18 +52,14 @@ def find_model_file(search_dir: Path) -> Path | None:
     return None
 
 
-def create_model(num_classes: int = 3) -> torch.nn.Module:
-    """Create U-Net model matching the training architecture."""
-    model = smp.Unet(
-        encoder_name="efficientnet-b3",
-        encoder_weights=None,  # Will load from state dict
-        classes=num_classes,
-        activation=None,  # Returns logits
-    )
+def create_model(cfg, num_classes: int = 3) -> torch.nn.Module:
+    """Create model matching current project config architecture."""
+    model = _build_segmentation_model(cfg, num_classes)
     return model
 
 
 def export_to_onnx(
+    cfg,
     model_path: Path,
     output_path: Path,
     num_classes: int = 3,
@@ -78,7 +82,7 @@ def export_to_onnx(
     print(f"Loading model from: {model_path}")
 
     # Create model architecture
-    model = create_model(num_classes)
+    model = create_model(cfg, num_classes)
 
     # Load state dict
     state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
@@ -118,15 +122,26 @@ def export_to_onnx(
     print(f"  - Output file: {output_path}")
     print(f"  - File size: {output_path.stat().st_size / 1024 / 1024:.2f} MB")
 
-    # Verify the exported model
+    # Verify in a separate process so native checker crashes don't abort export.
+    verify_cmd = [
+        sys.executable,
+        "-c",
+        (
+            "import onnx; "
+            f"m=onnx.load(r'{str(output_path)}'); "
+            "onnx.checker.check_model(m); "
+            "print('ok')"
+        ),
+    ]
     try:
-        import onnx
-
-        onnx_model = onnx.load(str(output_path))
-        onnx.checker.check_model(onnx_model)
-        print("  - ONNX model verification: passed")
-    except ImportError:
-        print("  - ONNX verification skipped (onnx package not installed)")
+        proc = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=120)
+        if proc.returncode == 0:
+            print("  - ONNX model verification: passed")
+        else:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            if not detail:
+                detail = f"checker exited with code {proc.returncode}"
+            print(f"  - ONNX verification warning: {detail}")
     except Exception as e:
         print(f"  - ONNX verification warning: {e}")
 
@@ -153,15 +168,21 @@ def main():
         "--classes",
         "-c",
         type=int,
-        default=3,
-        help="Number of output classes (default: 3)",
+        default=None,
+        help="Number of output classes (default: from config)",
     )
     parser.add_argument(
         "--size",
         "-s",
         type=int,
-        default=128,
-        help="Input size (height=width, default: 128)",
+        default=None,
+        help="Input size (height=width, default: from config IMAGE_SHAPE)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=ROOT_DIR / "config.yaml",
+        help="Path to project config.yaml (default: <repo>/config.yaml)",
     )
 
     args = parser.parse_args()
@@ -188,18 +209,34 @@ def main():
         print(f"Error: Model file not found: {model_path}")
         sys.exit(1)
 
+    # Load config to get architecture/input defaults.
+    cfg = load_config(str(args.config))
+
     # Determine output path
     if args.output:
         output_path = args.output
     else:
         output_path = model_path.with_suffix(".onnx")
 
+    num_classes = int(args.classes) if args.classes is not None else int(cfg.CLASSES)
+    if args.size is not None:
+        input_size = (int(args.size), int(args.size))
+    else:
+        input_size = (int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1]))
+
+    print(
+        f"Using config: arch={getattr(cfg, 'PT_MODEL_ARCH', 'unknown')}, "
+        f"encoder={getattr(cfg, 'PT_ENCODER_NAME', 'unknown')}, "
+        f"classes={num_classes}, input={input_size}"
+    )
+
     # Export
     success = export_to_onnx(
+        cfg=cfg,
         model_path=model_path,
         output_path=output_path,
-        num_classes=args.classes,
-        input_size=(args.size, args.size),
+        num_classes=num_classes,
+        input_size=input_size,
     )
 
     sys.exit(0 if success else 1)

@@ -52,3 +52,5 @@ gui_map.png
 clogic/__pycache__/
 
 __pycache__/
+
+*.onnx
