@@ -226,7 +226,8 @@ class CytologyDataset(Dataset):
         masks_path: str,
         transform=None,
         transform_aggressive=None,
-        pathology_min_keep_ratio: float = 0.7,
+        pathology_min_keep_ratio: float = 0.9,
+        pathology_min_pixels_after_aug: int = 10,
         sanity_check: bool = True,
         sanity_check_max_masks: int = 200,
     ):
@@ -245,6 +246,7 @@ class CytologyDataset(Dataset):
         self.transform = transform
         self.transform_aggressive = transform_aggressive
         self.pathology_min_keep_ratio = float(pathology_min_keep_ratio)
+        self.pathology_min_pixels_after_aug = max(1, int(pathology_min_pixels_after_aug))
 
         self.images = [f for f in os.listdir(images_path) if f.endswith('.bmp')]
         self.masks = [f for f in os.listdir(masks_path) if f.endswith('.bmp')]
@@ -304,9 +306,12 @@ class CytologyDataset(Dataset):
                     else:
                         new_pathology_area = np.sum(new_mask == _MASK_CLASS_PATHOLOGY)
 
+                    required_by_ratio = int(np.ceil(float(min_ratio) * float(original_pathology_area)))
+                    required_by_abs = min(self.pathology_min_pixels_after_aug, int(original_pathology_area))
+                    required_area = max(required_by_ratio, required_by_abs)
                     ratio = new_pathology_area / original_pathology_area if original_pathology_area > 0 else 1.0
 
-                    if ratio >= min_ratio:
+                    if ratio >= min_ratio and int(new_pathology_area) >= int(required_area):
                         image = transformed['image']
                         mask = new_mask
                         break
@@ -545,6 +550,7 @@ def get_train_transforms(cfg: Config):
     h, w = int(cfg.IMAGE_SHAPE[0]), int(cfg.IMAGE_SHAPE[1])
     rotate_limit = int(getattr(cfg, 'PT_PATHOLOGY_ROTATE_LIMIT', 30) or 30)
     rotate_limit = max(0, rotate_limit)
+    strict_pathology_aug = bool(getattr(cfg, 'PT_PATHOLOGY_STRICT_AUG', True))
 
     # Geometric transforms - split into safe (rotation/flip) and risky (translate/scale)
     # Rotation and flips are safe - they don't remove content
@@ -555,54 +561,56 @@ def get_train_transforms(cfg: Config):
         A.Rotate(limit=rotate_limit, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
     ])
 
-    # Affine with conservative translate (max 15% instead of 35%)
-    # Small translations are OK - they simulate slight positioning variation
-    risky_geometric = A.OneOf([
-        A.Affine(
-            translate_percent=(-0.15, 0.15),  # Conservative: max 15% shift
-            scale=(0.9, 1.1),  # Conservative: max 10% scale change
-            rotate=(-15, 15),  # Small additional rotation
-            border_mode=cv2.BORDER_REFLECT_101,
-            p=0.5
-        ),
-        # Elastic/grid distortion (cells deform naturally) - generally safe
-        A.ElasticTransform(
-            alpha=80,  # Reduced from 120
-            sigma=80 * 0.05,
-            border_mode=cv2.BORDER_REFLECT_101,
-            p=0.5
-        ),
-        A.GridDistortion(
-            num_steps=5,
-            distort_limit=0.2,  # Reduced from 0.3
-            border_mode=cv2.BORDER_REFLECT_101,
-            p=0.5
-        ),
-    ], p=0.5)
-
-    return A.Compose([
+    transforms = [
         A.Resize(h, w),
-
         # Safe geometric augmentations (don't remove content)
         safe_geometric,
+    ]
 
-        # Risky geometric (conservative params to avoid truncating pathology)
-        risky_geometric,
+    if not strict_pathology_aug:
+        # Optional risky geometry for non-strict mode.
+        transforms.append(
+            A.OneOf([
+                A.Affine(
+                    translate_percent=(-0.15, 0.15),  # Conservative: max 15% shift
+                    scale=(0.9, 1.1),  # Conservative: max 10% scale change
+                    rotate=(-15, 15),  # Small additional rotation
+                    border_mode=cv2.BORDER_REFLECT_101,
+                    p=0.5
+                ),
+                # Elastic/grid distortion (cells deform naturally) - generally safe
+                A.ElasticTransform(
+                    alpha=80,  # Reduced from 120
+                    sigma=80 * 0.05,
+                    border_mode=cv2.BORDER_REFLECT_101,
+                    p=0.5
+                ),
+                A.GridDistortion(
+                    num_steps=5,
+                    distort_limit=0.2,  # Reduced from 0.3
+                    border_mode=cv2.BORDER_REFLECT_101,
+                    p=0.5
+                ),
+            ], p=0.5)
+        )
 
-        # Color augmentations
-        *_get_color_augmentations(noise_tf),
+    # Color augmentations are kept in both modes.
+    transforms.extend(_get_color_augmentations(noise_tf))
 
-        # Coarse dropout / cutout (occlusion robustness)
-        # Small holes only - won't remove significant pathology
-        A.CoarseDropout(
-            num_holes_range=(1, 4),  # Reduced from (1, 8)
-            hole_height_range=(int(h * 0.03), int(h * 0.08)),  # Smaller holes
-            hole_width_range=(int(w * 0.03), int(w * 0.08)),
-            fill=0,
-            p=0.2  # Reduced probability
-        ),
+    if not strict_pathology_aug:
+        # Optional occlusion robustness for non-strict mode only.
+        transforms.append(
+            A.CoarseDropout(
+                num_holes_range=(1, 4),  # Reduced from (1, 8)
+                hole_height_range=(int(h * 0.03), int(h * 0.08)),  # Smaller holes
+                hole_width_range=(int(w * 0.03), int(w * 0.08)),
+                fill=0,
+                p=0.2  # Reduced probability
+            )
+        )
 
-        # Preprocessing (encoder-specific normalization)
+    # Preprocessing (encoder-specific normalization)
+    transforms.extend([
         A.Lambda(
             image=partial(
                 _preprocess_image,
@@ -614,6 +622,8 @@ def get_train_transforms(cfg: Config):
         ),
         ToTensorV2(),
     ])
+
+    return A.Compose(transforms)
 
 
 def get_val_transforms(cfg: Config):
@@ -904,7 +914,8 @@ def get_datasets(
         masks_path,
         transform=get_train_transforms(cfg),
         transform_aggressive=get_train_transforms_aggressive(cfg),
-        pathology_min_keep_ratio=float(getattr(cfg, 'PT_PATHOLOGY_MIN_KEEP_RATIO', 0.7) or 0.7),
+        pathology_min_keep_ratio=float(getattr(cfg, 'PT_PATHOLOGY_MIN_KEEP_RATIO', 0.9) or 0.9),
+        pathology_min_pixels_after_aug=int(getattr(cfg, 'MIN_PATHOLOGY_PIXELS', 10) or 10),
     )
     val_dataset = CytologyDataset(images_path, masks_path, transform=get_val_transforms(cfg))
 

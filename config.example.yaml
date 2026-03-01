@@ -86,7 +86,11 @@ neural_network:
   # Exclude background class (0) from mean IoU/F1 reporting.
   pt_include_background_metrics: false
   # Keep at least this fraction of pathology pixels after augmentation.
-  pt_pathology_min_keep_ratio: 0.7
+  pt_pathology_min_keep_ratio: 0.9
+  # Strict pathology-safe augmentation mode:
+  # true  -> no risky geometry/cutout for pathology tiles
+  # false -> enables conservative risky geometry + small cutout
+  pt_pathology_strict_aug: true
   # Max rotation (deg) for pathology-tiles conservative transform.
   pt_pathology_rotate_limit: 30
 
