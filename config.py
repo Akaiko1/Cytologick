@@ -100,7 +100,14 @@ class Config:
     # Scheduler for resume/finetune (model_train.py).
     PT_SCHEDULER_FINETUNE: str = 'cawr'
     PT_ONECYCLE_PCT_START: float = 0.1
+    # Global LR fallback. Prefer architecture-specific LR defaults below.
     PT_LR: float = 1e-3
+    # Use architecture-specific learning rates by default.
+    PT_USE_ARCH_LR_DEFAULTS: bool = True
+    # Architecture LR defaults (tuned for this project setup; see config comments).
+    PT_LR_UNETPLUSPLUS: float = 1e-3
+    PT_LR_DEEPLABV3PLUS: float = 1e-3
+    PT_LR_SEGFORMER: float = 2.4e-4
     PT_WEIGHT_DECAY: float = 1e-4
     PT_ENCODER_LR_MULT: float = 0.1
     PT_GRAD_CLIP_NORM: float = 1.0
@@ -269,6 +276,14 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.PT_ONECYCLE_PCT_START = _to_float(neural['pt_onecycle_pct_start'])
     if 'pt_lr' in neural:
         cfg.PT_LR = _to_float(neural['pt_lr'])
+    if 'pt_use_arch_lr_defaults' in neural:
+        cfg.PT_USE_ARCH_LR_DEFAULTS = _to_bool(neural['pt_use_arch_lr_defaults'])
+    if 'pt_lr_unetplusplus' in neural:
+        cfg.PT_LR_UNETPLUSPLUS = _to_float(neural['pt_lr_unetplusplus'])
+    if 'pt_lr_deeplabv3plus' in neural:
+        cfg.PT_LR_DEEPLABV3PLUS = _to_float(neural['pt_lr_deeplabv3plus'])
+    if 'pt_lr_segformer' in neural:
+        cfg.PT_LR_SEGFORMER = _to_float(neural['pt_lr_segformer'])
     if 'pt_weight_decay' in neural:
         cfg.PT_WEIGHT_DECAY = _to_float(neural['pt_weight_decay'])
     if 'pt_encoder_lr_mult' in neural:
@@ -422,6 +437,10 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'pt_scheduler_finetune': 'PT_SCHEDULER_FINETUNE',
             'pt_onecycle_pct_start': 'PT_ONECYCLE_PCT_START',
             'pt_lr': 'PT_LR',
+            'pt_use_arch_lr_defaults': 'PT_USE_ARCH_LR_DEFAULTS',
+            'pt_lr_unetplusplus': 'PT_LR_UNETPLUSPLUS',
+            'pt_lr_deeplabv3plus': 'PT_LR_DEEPLABV3PLUS',
+            'pt_lr_segformer': 'PT_LR_SEGFORMER',
             'pt_weight_decay': 'PT_WEIGHT_DECAY',
             'pt_encoder_lr_mult': 'PT_ENCODER_LR_MULT',
             'pt_grad_clip_norm': 'PT_GRAD_CLIP_NORM',

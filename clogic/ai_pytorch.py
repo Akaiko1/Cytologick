@@ -1329,6 +1329,24 @@ def _normalize_model_arch(raw_arch: str) -> str:
     return arch
 
 
+def _resolve_base_lr(cfg: Config, *, explicit_lr: float | None) -> float:
+    if explicit_lr is not None:
+        return float(explicit_lr)
+
+    fallback_lr = float(getattr(cfg, 'PT_LR', 1e-3))
+    use_arch_defaults = bool(getattr(cfg, 'PT_USE_ARCH_LR_DEFAULTS', True))
+    if not use_arch_defaults:
+        return fallback_lr
+
+    arch = _normalize_model_arch(getattr(cfg, 'PT_MODEL_ARCH', 'segformer'))
+    arch_lr_map = {
+        'unetplusplus': float(getattr(cfg, 'PT_LR_UNETPLUSPLUS', fallback_lr)),
+        'deeplabv3plus': float(getattr(cfg, 'PT_LR_DEEPLABV3PLUS', fallback_lr)),
+        'segformer': float(getattr(cfg, 'PT_LR_SEGFORMER', fallback_lr)),
+    }
+    return arch_lr_map.get(arch, fallback_lr)
+
+
 def _build_segmentation_model(cfg: Config, classes: int):
     arch = _normalize_model_arch(getattr(cfg, 'PT_MODEL_ARCH', 'segformer'))
     encoder_name = str(cfg.PT_ENCODER_NAME)
@@ -1384,8 +1402,8 @@ def train_new_model_pytorch(
     model = _build_segmentation_model(cfg, output_classes)
     model = model.to(DEVICE)
     
-    if lr is None:
-        lr = float(getattr(cfg, 'PT_LR', 1e-3))
+    lr = _resolve_base_lr(cfg, explicit_lr=lr)
+    print(f"[train_new_model_pytorch] base_lr={lr:.3e}")
     scheduler_mode_new = str(
         getattr(
             cfg,
@@ -1445,8 +1463,8 @@ def train_current_model_pytorch(
         ) from e
     model = model.to(DEVICE)
     
-    if lr is None:
-        lr = float(getattr(cfg, 'PT_LR', 1e-3))
+    lr = _resolve_base_lr(cfg, explicit_lr=lr)
+    print(f"[train_current_model_pytorch] base_lr={lr:.3e}")
     scheduler_mode_finetune = str(
         getattr(
             cfg,

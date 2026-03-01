@@ -69,8 +69,20 @@ neural_network:
   # Legacy fallback if mode-specific keys are absent
   pt_scheduler: onecycle
   pt_onecycle_pct_start: 0.1
+  # Global LR fallback. Usually unused when pt_use_arch_lr_defaults=true.
   pt_lr: 1.0e-3
+  # Use architecture-specific LR defaults.
+  pt_use_arch_lr_defaults: true
+  # Architecture LR defaults:
+  # - unetplusplus: common Adam/AdamW start around 1e-3
+  # - deeplabv3plus: official DeepLab code exposes adam_learning_rate=1e-3
+  # - segformer: MMseg base is 6e-5 for bs=16; scaled x4 to ~2.4e-4 for bs=64
+  pt_lr_unetplusplus: 1.0e-3
+  pt_lr_deeplabv3plus: 1.0e-3
+  pt_lr_segformer: 2.4e-4
   pt_weight_decay: 1.0e-4
+  # For pretrained encoders, 0.1 is a common safe multiplier.
+  # If training from scratch (pt_encoder_weights: null), consider 1.0.
   pt_encoder_lr_mult: 0.1
   pt_grad_clip_norm: 1.0
 
