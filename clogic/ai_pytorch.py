@@ -58,6 +58,15 @@ def _log_device_selection(prefix: str = ""):
     else:
         print(f"{prefix}CUDA available: False | torch device: {DEVICE}")
 
+
+def _resolve_hw_tuple(value, fallback=(256, 256)) -> tuple[int, int]:
+    try:
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
+            return int(value[0]), int(value[1])
+    except Exception:
+        pass
+    return int(fallback[0]), int(fallback[1])
+
 # Progress bar (tqdm) - optional
 try:
     from tqdm import tqdm
@@ -1322,6 +1331,7 @@ def _train_model_loop(
             masks = masks.to(DEVICE).long()
             
             optimizer.zero_grad(set_to_none=True)
+            did_optimizer_step = False
 
             mixup_alpha = float(getattr(cfg, 'PT_MIXUP_ALPHA', 0.2) or 0.2)
             if mixup_alpha < 0:
@@ -1340,19 +1350,25 @@ def _train_model_loop(
                 
             clip_norm = float(getattr(cfg, 'PT_GRAD_CLIP_NORM', 0.0) or 0.0)
             if scaler is not None:
+                scale_before = float(scaler.get_scale())
                 scaler.scale(loss).backward()
                 if clip_norm > 0:
                     scaler.unscale_(optimizer)
                     clip_grad_norm_(model.parameters(), max_norm=clip_norm)
                 scaler.step(optimizer)
                 scaler.update()
+                scale_after = float(scaler.get_scale())
+                # GradScaler skips optimizer.step() on inf/nan gradients.
+                # In that case we must not advance OneCycle per-batch scheduler.
+                did_optimizer_step = scale_after >= scale_before
             else:
                 loss.backward()
                 if clip_norm > 0:
                     clip_grad_norm_(model.parameters(), max_norm=clip_norm)
                 optimizer.step()
+                did_optimizer_step = True
 
-            if scheduler is not None and scheduler_step_per_batch:
+            if scheduler is not None and scheduler_step_per_batch and did_optimizer_step:
                 try:
                     scheduler.step()
                 except Exception:
@@ -1826,6 +1842,9 @@ def train_new_model_pytorch(
     """Train a new segmentation model using PyTorch."""
     set_seed(42)
     _log_device_selection(prefix="[train_new_model_pytorch]")
+    image_shape = _resolve_hw_tuple(getattr(cfg, 'IMAGE_SHAPE', (256, 256)))
+    image_chunk = _resolve_hw_tuple(getattr(cfg, 'IMAGE_CHUNK', image_shape), fallback=image_shape)
+    print(f"[train_new_model_pytorch] image_shape={image_shape}, image_chunk={image_chunk}")
     
     # Warm up loaders once (epoch 0 split): validates dataset and gives step count.
     train_loader_0, _, total_samples = _prepare_data_loaders(cfg, batch_size, epoch=0)
@@ -1880,6 +1899,9 @@ def train_current_model_pytorch(
     """
     set_seed(42)
     _log_device_selection(prefix="[train_current_model_pytorch]")
+    image_shape = _resolve_hw_tuple(getattr(cfg, 'IMAGE_SHAPE', (256, 256)))
+    image_chunk = _resolve_hw_tuple(getattr(cfg, 'IMAGE_CHUNK', image_shape), fallback=image_shape)
+    print(f"[train_current_model_pytorch] image_shape={image_shape}, image_chunk={image_chunk}")
     
     # Warm up loaders (epoch 0 split) to validate dataset and capture step count.
     train_loader_0, _, _ = _prepare_data_loaders(cfg, batch_size, epoch=0)

@@ -341,7 +341,7 @@ neural_network:
   masks_folder: masks
   images_folder: rois
   classes: 3
-  image_shape: [128, 128]
+  image_shape: [256, 256]
   pt_lr: 1.0e-3
   pt_num_workers: -1
   labels:

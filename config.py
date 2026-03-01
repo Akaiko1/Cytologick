@@ -9,6 +9,10 @@ from typing import Any, Mapping, Optional
 
 import yaml
 
+DEFAULT_IMAGE_SIZE: tuple[int, int] = (256, 256)
+DEFAULT_IMAGE_SHAPE: tuple[int, int] = DEFAULT_IMAGE_SIZE
+DEFAULT_IMAGE_CHUNK: tuple[int, int] = DEFAULT_IMAGE_SIZE
+
 
 def _abs_path(path: str) -> str:
     return os.path.abspath(path)
@@ -67,6 +71,26 @@ def _to_tuple2(value: Any) -> tuple[int, int]:
     raise ValueError(f'Expected 2-tuple, got: {value!r}')
 
 
+def get_image_shape(cfg: Optional[Any] = None) -> tuple[int, int]:
+    value = getattr(cfg, 'IMAGE_SHAPE', None) if cfg is not None else None
+    if value is None:
+        return DEFAULT_IMAGE_SHAPE
+    try:
+        return _to_tuple2(value)
+    except Exception:
+        return DEFAULT_IMAGE_SHAPE
+
+
+def get_image_chunk(cfg: Optional[Any] = None) -> tuple[int, int]:
+    value = getattr(cfg, 'IMAGE_CHUNK', None) if cfg is not None else None
+    if value is None:
+        return DEFAULT_IMAGE_CHUNK
+    try:
+        return _to_tuple2(value)
+    except Exception:
+        return DEFAULT_IMAGE_CHUNK
+
+
 @dataclass
 class Config:
     # ---------------------------------------------------------------------
@@ -86,8 +110,8 @@ class Config:
     DATASET_FOLDER: str = 'dataset'
     MASKS_FOLDER: str = 'masks'
     IMAGES_FOLDER: str = 'rois'
-    IMAGE_CHUNK: tuple[int, int] = (256, 256)
-    IMAGE_SHAPE: tuple[int, int] = (128, 128)
+    IMAGE_CHUNK: tuple[int, int] = DEFAULT_IMAGE_CHUNK
+    IMAGE_SHAPE: tuple[int, int] = DEFAULT_IMAGE_SHAPE
     CLASSES: int = 3
 
     # Segmentation architecture:

@@ -14,7 +14,7 @@ from typing import Optional, Tuple, Any
 import numpy as np
 import cv2
 
-from config import Config
+from config import Config, get_image_shape, get_image_chunk
 
 
 # -----------------------------------------------------------------------------
@@ -70,7 +70,7 @@ def run_inference(
     model: Any,
     mode: str = 'direct',
     classes: int = 3,
-    shapes: Tuple[int, int] = (128, 128),
+    shapes: Optional[Tuple[int, int]] = None,
     threshold: float = 0.5
 ) -> Tuple[np.ndarray, list]:
     """
@@ -81,7 +81,7 @@ def run_inference(
         model: Loaded model object (PyTorch or TensorFlow).
         mode: Inference mode - 'direct', 'smooth', 'region', or 'remote'.
         classes: Number of output classes.
-        shapes: Model input shape (height, width).
+        shapes: Model input shape (height, width). If None, uses cfg.IMAGE_SHAPE.
         threshold: Confidence threshold for region mode atypical detection.
 
     Returns:
@@ -95,12 +95,14 @@ def run_inference(
         raise RuntimeError('TensorFlow inference is deprecated; set FRAMEWORK=pytorch')
 
     import clogic.inference_pytorch as inference
+    if shapes is None:
+        shapes = get_image_shape(cfg)
 
     if mode == 'remote':
         import tfs_connector as tfs
 
         resize_opts = tfs.ResizeOptions(
-            chunk_size=(256, 256),
+            chunk_size=get_image_chunk(cfg),
             model_input_size=tuple(shapes),
         )
         endpoint = get_endpoint_url(cfg)

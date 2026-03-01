@@ -21,7 +21,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from config import load_config
+from config import load_config, get_image_shape
 from clogic.ai_pytorch import _build_segmentation_model
 
 
@@ -63,7 +63,7 @@ def export_to_onnx(
     model_path: Path,
     output_path: Path,
     num_classes: int = 3,
-    input_size: tuple[int, int] = (128, 128),
+    input_size: tuple[int, int] | None = None,
     opset_version: int = 17,
 ) -> bool:
     """
@@ -79,6 +79,8 @@ def export_to_onnx(
     Returns:
         True if export successful
     """
+    input_size = get_image_shape(cfg) if input_size is None else input_size
+
     print(f"Loading model from: {model_path}")
 
     # Create model architecture

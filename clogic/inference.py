@@ -20,7 +20,7 @@ import cv2
 import clogic.ai as ai
 import tfs_connector as tfs
 import clogic.smooth as smooth
-from config import Config, load_config
+from config import Config, load_config, get_image_shape, get_image_chunk
 
 
 def _resolve_cfg(cfg: Config | None) -> Config:
@@ -30,7 +30,7 @@ def _resolve_cfg(cfg: Config | None) -> Config:
 def image_to_tensor(image, add_dim: bool = True, cfg: Config | None = None, shapes=None):
     cfg = _resolve_cfg(cfg)
     if shapes is None:
-        shapes = tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))
+        shapes = get_image_shape(cfg)
 
     image = tf.convert_to_tensor(image/255.0)
     image = tf.image.resize(image, shapes)
@@ -44,7 +44,7 @@ def image_to_tensor(image, add_dim: bool = True, cfg: Config | None = None, shap
 def apply_model(source, model, shapes=None, cfg: Config | None = None):
     cfg = _resolve_cfg(cfg)
     if shapes is None:
-        shapes = tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))
+        shapes = get_image_shape(cfg)
 
     pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
     pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
@@ -65,7 +65,7 @@ def apply_model(source, model, shapes=None, cfg: Config | None = None):
 def apply_model_raw(source, model, classes, shapes=None, cfg: Config | None = None):
     cfg = _resolve_cfg(cfg)
     if shapes is None:
-        shapes = tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))
+        shapes = get_image_shape(cfg)
 
     pad_h = (shapes[0] - (source.shape[0] % shapes[0])) % shapes[0]
     pad_w = (shapes[1] - (source.shape[1] % shapes[1])) % shapes[1]
@@ -83,9 +83,24 @@ def apply_model_raw(source, model, classes, shapes=None, cfg: Config | None = No
     return pathology_map[:source.shape[0], :source.shape[1]]
 
 
-def apply_remote(source, chunk_size=(256, 256), model_input_size=(128, 128), endpoint_url='http://51.250.28.160:7500',
-                  model_name='demetra', batch_size=2, parallelism_mode=1, thread_count=4):
+def apply_remote(
+    source,
+    chunk_size=None,
+    model_input_size=None,
+    endpoint_url='http://51.250.28.160:7500',
+    model_name='demetra',
+    batch_size=2,
+    parallelism_mode=1,
+    thread_count=4,
+    cfg: Config | None = None,
+):
     """Aplly cloud model"""
+    cfg = _resolve_cfg(cfg)
+    if chunk_size is None:
+        chunk_size = get_image_chunk(cfg)
+    if model_input_size is None:
+        model_input_size = get_image_shape(cfg)
+
     resize_ops = tfs.ResizeOptions(chunk_size=chunk_size, model_input_size=model_input_size)
     pathology_map = tfs.apply_segmentation_model_parallel([source], endpoint_url=endpoint_url, model_name=model_name, batch_size=batch_size,
                                                   resize_options=resize_ops, normalization=lambda x: x/255, parallelism_mode=parallelism_mode, thread_count=thread_count)
@@ -96,7 +111,7 @@ def apply_remote(source, chunk_size=(256, 256), model_input_size=(128, 128), end
 def apply_model_smooth(source, model, shape=None, cfg: Config | None = None, classes: int | None = None):
         cfg = _resolve_cfg(cfg)
         if shape is None:
-            shape = int(tuple(getattr(cfg, 'IMAGE_SHAPE', (128, 128)))[0])
+            shape = int(get_image_shape(cfg)[0])
         if classes is None:
             classes = int(getattr(cfg, 'CLASSES', 3))
            

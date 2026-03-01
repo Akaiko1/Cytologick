@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 
 from config import Config
-from clogic.ai_pytorch import _build_segmentation_model, binary_average_precision_score
+from clogic.ai_pytorch import _build_segmentation_model
 from clogic.preprocessing_pytorch import preprocess_rgb_image
 
 
@@ -128,6 +128,33 @@ def _cluster_core_issue_count(gt: np.ndarray, pred: np.ndarray, min_area: int = 
     return issues
 
 
+def _pr_auc_from_hist(pos_hist: np.ndarray, neg_hist: np.ndarray) -> float:
+    """
+    Memory-safe AP approximation from binned score histograms.
+
+    Scores are quantized into fixed bins in [0, 1]. We then traverse thresholds
+    from high to low and accumulate precision-weighted recall increments.
+    """
+    total_pos = int(np.sum(pos_hist))
+    if total_pos <= 0:
+        return 0.0
+
+    tp = 0
+    fp = 0
+    ap = 0.0
+    for b in range(int(len(pos_hist)) - 1, -1, -1):
+        pos_b = int(pos_hist[b])
+        neg_b = int(neg_hist[b])
+        tp += pos_b
+        fp += neg_b
+        if pos_b <= 0:
+            continue
+        precision = float(tp / max(tp + fp, 1))
+        recall_inc = float(pos_b / total_pos)
+        ap += precision * recall_inc
+    return float(ap)
+
+
 def _copy_top(src_all: Path, dst: Path, sample_rows: list[dict[str, Any]], key: str, top_k: int) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     rows = sorted(sample_rows, key=lambda r: float(r[key]), reverse=True)[: int(top_k)]
@@ -201,8 +228,10 @@ def run_model_error_audit(cfg: Config, run_cfg: AuditRunConfig) -> Path:
     n_classes = int(cfg.CLASSES)
     conf = np.zeros((n_classes, n_classes), dtype=np.int64)
     sample_rows: list[dict[str, Any]] = []
-    pr_probs: list[np.ndarray] = []
-    pr_labels: list[np.ndarray] = []
+    # Memory-safe PR AUC accumulator (quantized score histograms).
+    pr_bins = 4096
+    pr_pos_hist = np.zeros(pr_bins, dtype=np.int64)
+    pr_neg_hist = np.zeros(pr_bins, dtype=np.int64)
 
     print(f"[audit] samples={len(files)} checkpoint={ckpt} device={device} input=({h},{w})")
 
@@ -251,8 +280,14 @@ def run_model_error_audit(cfg: Config, run_cfg: AuditRunConfig) -> Path:
         for i, name in enumerate(used_names):
             gt = gts[i]
             pred = preds[i]
-            pr_probs.append(probs_hw[i, :, :, 2].reshape(-1).astype(np.float32))
-            pr_labels.append((gt == 2).astype(np.uint8).reshape(-1))
+            path_prob = probs_hw[i, :, :, 2].reshape(-1).astype(np.float32, copy=False)
+            gt_path = (gt == 2).reshape(-1)
+            score_bins = np.clip((path_prob * float(pr_bins - 1)).astype(np.int32), 0, pr_bins - 1)
+            if np.any(gt_path):
+                pr_pos_hist += np.bincount(score_bins[gt_path], minlength=pr_bins)
+            inv_gt = ~gt_path
+            if np.any(inv_gt):
+                pr_neg_hist += np.bincount(score_bins[inv_gt], minlength=pr_bins)
 
             idx = (gt.reshape(-1) * n_classes + pred.reshape(-1)).astype(np.int64)
             binc = np.bincount(idx, minlength=n_classes * n_classes).reshape(n_classes, n_classes)
@@ -297,7 +332,7 @@ def run_model_error_audit(cfg: Config, run_cfg: AuditRunConfig) -> Path:
     path_prec = float(tp_path / (tp_path + fp_path)) if (tp_path + fp_path) > 0 else 1.0
     path_rec = float(tp_path / (tp_path + fn_path)) if (tp_path + fn_path) > 0 else 1.0
     path_f1 = float((2 * tp_path) / (2 * tp_path + fp_path + fn_path)) if (2 * tp_path + fp_path + fn_path) > 0 else 1.0
-    pr_auc = float(binary_average_precision_score(np.concatenate(pr_probs), np.concatenate(pr_labels))) if pr_probs else 0.0
+    pr_auc = _pr_auc_from_hist(pr_pos_hist, pr_neg_hist)
 
     mean_cluster_issue = float(np.mean([r["cluster_core_issue_count"] for r in sample_rows])) if sample_rows else 0.0
     samples_with_cluster_issue = int(np.sum([r["cluster_core_issue_count"] > 0 for r in sample_rows])) if sample_rows else 0

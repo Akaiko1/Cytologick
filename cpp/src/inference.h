@@ -98,7 +98,7 @@ private:
     std::vector<const char*> m_outputNames;
     std::vector<std::string> m_inputNameStrings;
     std::vector<std::string> m_outputNameStrings;
-    std::pair<int, int> m_inputShape = {128, 128};
+    std::pair<int, int> m_inputShape = {Config{}.imageShape[0], Config{}.imageShape[1]};
     int m_numClasses = 3;
 
     mutable std::string m_lastError;

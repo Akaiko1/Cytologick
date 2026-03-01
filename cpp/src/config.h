@@ -13,7 +13,7 @@ namespace cytologick {
  */
 struct Config {
     // Image processing
-    std::array<int, 2> imageShape = {128, 128};   // Model input size
+    std::array<int, 2> imageShape = {256, 256};   // Model input size
     std::array<int, 2> imageChunk = {256, 256};   // Processing chunk size
     int classes = 3;                               // Number of output classes
 

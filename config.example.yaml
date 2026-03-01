@@ -37,7 +37,7 @@ neural_network:
   masks_folder: "masks"
   images_folder: "rois"
   image_chunk: [256, 256]
-  image_shape: [128, 128]
+  image_shape: [256, 256]
   classes: 3
 
   # PyTorch / segmentation-models-pytorch encoder config
