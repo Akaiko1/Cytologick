@@ -76,7 +76,16 @@ class Config:
     IMAGE_SHAPE: tuple[int, int] = (128, 128)
     CLASSES: int = 3
 
-    PT_ENCODER_NAME: str = 'efficientnet-b3'
+    # Segmentation architecture:
+    # - 'unetplusplus'
+    # - 'deeplabv3plus'
+    # - 'segformer'
+    PT_MODEL_ARCH: str = 'segformer'
+    # Encoder backbone depends on PT_MODEL_ARCH, e.g.:
+    # - segformer: mit_b2
+    # - deeplabv3plus: resnet50 or mit_b2
+    # - unetplusplus: resnet34 or resnet50
+    PT_ENCODER_NAME: str = 'mit_b2'
     PT_ENCODER_WEIGHTS: Any = 'imagenet'
     PT_USE_ENCODER_PREPROCESSING: bool = False
 
@@ -236,6 +245,8 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
 
     if 'pt_encoder_name' in neural:
         cfg.PT_ENCODER_NAME = str(neural['pt_encoder_name'])
+    if 'pt_model_arch' in neural:
+        cfg.PT_MODEL_ARCH = str(neural['pt_model_arch']).lower()
     if 'pt_encoder_weights' in neural:
         cfg.PT_ENCODER_WEIGHTS = neural['pt_encoder_weights']
     if 'pt_use_encoder_preprocessing' in neural:
@@ -393,6 +404,7 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'image_shape': 'IMAGE_SHAPE',
             'classes': 'CLASSES',
             'pt_encoder_name': 'PT_ENCODER_NAME',
+            'pt_model_arch': 'PT_MODEL_ARCH',
             'pt_encoder_weights': 'PT_ENCODER_WEIGHTS',
             'pt_use_encoder_preprocessing': 'PT_USE_ENCODER_PREPROCESSING',
             'pt_optimizer': 'PT_OPTIMIZER',

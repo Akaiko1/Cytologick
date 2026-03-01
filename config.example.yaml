@@ -41,7 +41,16 @@ neural_network:
   classes: 3
 
   # PyTorch / segmentation-models-pytorch encoder config
-  pt_encoder_name: "efficientnet-b3"
+  # Model architecture options:
+  # - unetplusplus
+  # - deeplabv3plus
+  # - segformer
+  pt_model_arch: segformer
+  # Encoder backbone (depends on architecture):
+  # - segformer: mit_b2 (recommended)
+  # - deeplabv3plus: resnet50 or mit_b2
+  # - unetplusplus: resnet34 or resnet50
+  pt_encoder_name: "mit_b2"
   pt_encoder_weights: "imagenet"
 
   # Backwards-compatible default (resize + /255 scaling). Set true to use SMP

@@ -1303,6 +1303,51 @@ def _prepare_data_loaders(cfg: Config, batch_size, *, epoch: int = 0):
     return train_loader, val_loader, total_samples
 
 
+def _normalize_model_arch(raw_arch: str) -> str:
+    arch = str(raw_arch or '').strip().lower()
+    if arch in {'unet++', 'unet_plus_plus', 'unet-plus-plus', 'unetpp'}:
+        return 'unetplusplus'
+    if arch in {'deeplabv3+', 'deeplabv3_plus', 'deeplab-v3-plus'}:
+        return 'deeplabv3plus'
+    if arch == 'segformer':
+        return 'segformer'
+    return arch
+
+
+def _build_segmentation_model(cfg: Config, classes: int):
+    arch = _normalize_model_arch(getattr(cfg, 'PT_MODEL_ARCH', 'segformer'))
+    encoder_name = str(cfg.PT_ENCODER_NAME)
+    encoder_weights = cfg.PT_ENCODER_WEIGHTS
+    kwargs = dict(
+        encoder_name=encoder_name,
+        encoder_weights=encoder_weights,
+        classes=int(classes),
+        activation=None,
+    )
+
+    if arch == 'unetplusplus':
+        ctor = smp.UnetPlusPlus
+    elif arch == 'deeplabv3plus':
+        ctor = smp.DeepLabV3Plus
+    elif arch == 'segformer':
+        ctor = smp.Segformer
+    else:
+        raise ValueError(
+            "PT_MODEL_ARCH must be one of {'unetplusplus', 'deeplabv3plus', 'segformer'}, "
+            f"got {getattr(cfg, 'PT_MODEL_ARCH', None)!r}"
+        )
+    try:
+        return ctor(**kwargs)
+    except Exception as e:
+        raise ValueError(
+            f"Failed to build model for PT_MODEL_ARCH={arch!r} with PT_ENCODER_NAME={encoder_name!r}. "
+            "Recommended encoders: "
+            "unetplusplus -> resnet34/resnet50; "
+            "deeplabv3plus -> resnet50/mit_b2; "
+            "segformer -> mit_b2."
+        ) from e
+
+
 def train_new_model_pytorch(
     cfg: Config,
     model_path: str,
@@ -1312,9 +1357,7 @@ def train_new_model_pytorch(
     lr: float | None = None,
     use_amp: bool = True,
 ):
-    """
-    Train a new U-Net model using PyTorch.
-    """
+    """Train a new segmentation model using PyTorch."""
     set_seed(42)
     _log_device_selection(prefix="[train_new_model_pytorch]")
     
@@ -1323,12 +1366,7 @@ def train_new_model_pytorch(
     steps_per_epoch = len(train_loader_0)
     print(f"Total samples: {total_samples}")
     
-    model = smp.Unet(
-        encoder_name=str(cfg.PT_ENCODER_NAME),
-        encoder_weights=cfg.PT_ENCODER_WEIGHTS,
-        classes=output_classes,
-        activation=None
-    )
+    model = _build_segmentation_model(cfg, output_classes)
     model = model.to(DEVICE)
     
     if lr is None:
@@ -1367,18 +1405,20 @@ def train_current_model_pytorch(
     train_loader_0, _, _ = _prepare_data_loaders(cfg, batch_size, epoch=0)
     steps_per_epoch = len(train_loader_0)
     
-    # Load existing architecture
-    model = smp.Unet(
-        encoder_name=str(cfg.PT_ENCODER_NAME),
-        encoder_weights=cfg.PT_ENCODER_WEIGHTS,
-        classes=cfg.CLASSES,
-        activation=None
-    )
+    # Load existing architecture selected in config.
+    model = _build_segmentation_model(cfg, cfg.CLASSES)
     try:
         state = torch.load(model_path, map_location=DEVICE, weights_only=True)
     except TypeError:  # older torch
         state = torch.load(model_path, map_location=DEVICE)
-    model.load_state_dict(state)
+    try:
+        model.load_state_dict(state)
+    except RuntimeError as e:
+        raise RuntimeError(
+            f'Failed to load checkpoint {model_path!r} into {getattr(cfg, "PT_MODEL_ARCH", "unknown")!r}. '
+            'Most likely architecture/encoder in config does not match checkpoint. '
+            'Use matching PT_MODEL_ARCH/PT_ENCODER_NAME or start training from scratch.'
+        ) from e
     model = model.to(DEVICE)
     
     if lr is None:
