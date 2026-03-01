@@ -144,6 +144,9 @@ neural_network:
   pt_include_background_metrics: false
   # Keep at least this fraction of pathology pixels after augmentation.
   pt_pathology_min_keep_ratio: 0.95
+  # Probability to skip all stochastic train augmentations for a sample
+  # (resize + preprocessing are still applied).
+  pt_aug_skip_prob: 0.2
   # Strict pathology-safe augmentation mode:
   # true  -> no risky geometry/cutout for pathology tiles
   # false -> enables conservative risky geometry + small cutout

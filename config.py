@@ -193,6 +193,9 @@ class Config:
     PT_INCLUDE_BACKGROUND_METRICS: bool = False
     # Pathology augmentation safety: keep at least this fraction of pathology pixels.
     PT_PATHOLOGY_MIN_KEEP_RATIO: float = 0.9
+    # Probability to skip all stochastic train augmentations for a sample.
+    # Resize + preprocessing + tensor conversion are still applied.
+    PT_AUG_SKIP_PROB: float = 0.2
     # Strict pathology augmentation mode: disable risky geometry/occlusion transforms.
     PT_PATHOLOGY_STRICT_AUG: bool = True
     # Max random rotation (degrees) for pathology-tiles conservative transform.
@@ -418,6 +421,8 @@ def _apply_mapping(cfg: Config, data: Mapping[str, Any]) -> None:
         cfg.PT_INCLUDE_BACKGROUND_METRICS = _to_bool(neural['pt_include_background_metrics'])
     if 'pt_pathology_min_keep_ratio' in neural:
         cfg.PT_PATHOLOGY_MIN_KEEP_RATIO = _to_float(neural['pt_pathology_min_keep_ratio'])
+    if 'pt_aug_skip_prob' in neural:
+        cfg.PT_AUG_SKIP_PROB = _to_float(neural['pt_aug_skip_prob'])
     if 'pt_pathology_strict_aug' in neural:
         cfg.PT_PATHOLOGY_STRICT_AUG = _to_bool(neural['pt_pathology_strict_aug'])
     if 'pt_pathology_rotate_limit' in neural:
@@ -580,6 +585,7 @@ def _report_missing_yaml_keys(path: str, data: Mapping[str, Any], defaults: Conf
             'pt_pathology_class_index': 'PT_PATHOLOGY_CLASS_INDEX',
             'pt_include_background_metrics': 'PT_INCLUDE_BACKGROUND_METRICS',
             'pt_pathology_min_keep_ratio': 'PT_PATHOLOGY_MIN_KEEP_RATIO',
+            'pt_aug_skip_prob': 'PT_AUG_SKIP_PROB',
             'pt_pathology_strict_aug': 'PT_PATHOLOGY_STRICT_AUG',
             'pt_pathology_rotate_limit': 'PT_PATHOLOGY_ROTATE_LIMIT',
             'pt_val_strategy': 'PT_VAL_STRATEGY',

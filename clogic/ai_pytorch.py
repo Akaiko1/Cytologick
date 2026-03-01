@@ -245,6 +245,7 @@ class CytologyDataset(Dataset):
         transform_aggressive=None,
         pathology_min_keep_ratio: float = 0.9,
         pathology_min_pixels_after_aug: int = 10,
+        aug_skip_prob: float = 0.2,
         sanity_check: bool = True,
         sanity_check_max_masks: int = 200,
     ):
@@ -264,6 +265,7 @@ class CytologyDataset(Dataset):
         self.transform_aggressive = transform_aggressive
         self.pathology_min_keep_ratio = float(pathology_min_keep_ratio)
         self.pathology_min_pixels_after_aug = max(1, int(pathology_min_pixels_after_aug))
+        self.aug_skip_prob = float(min(max(float(aug_skip_prob), 0.0), 1.0))
         self._pathology_pixels_cache: dict[int, int] = {}
 
         self.images = [f for f in os.listdir(images_path) if f.endswith('.bmp')]
@@ -281,6 +283,29 @@ class CytologyDataset(Dataset):
                 self.masks,
                 max_masks=sanity_check_max_masks,
             )
+
+    @staticmethod
+    def _apply_resize_preprocess_only(image: np.ndarray, mask: np.ndarray, transform_to_use) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply deterministic train path: resize + encoder preprocess + tensor conversion."""
+        h, w = image.shape[:2]
+        if transform_to_use is not None and hasattr(transform_to_use, 'transforms'):
+            for t in transform_to_use.transforms:
+                if isinstance(t, A.Resize):
+                    h = int(t.height)
+                    w = int(t.width)
+                    break
+        image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
+        mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+        if transform_to_use is not None and hasattr(transform_to_use, 'transforms'):
+            for t in transform_to_use.transforms:
+                if isinstance(t, A.Lambda) and hasattr(t, 'image'):
+                    image = t.image(image)
+                    break
+
+        image_t = torch.from_numpy(image.transpose(2, 0, 1)).float()
+        mask_t = torch.from_numpy(mask)
+        return image_t, mask_t
         
     def __len__(self):
         return len(self.images)
@@ -318,8 +343,14 @@ class CytologyDataset(Dataset):
         if self.transform:
             original_pathology_area = np.sum(mask == _MASK_CLASS_PATHOLOGY)
             has_pathology = original_pathology_area > 0
+            transform_to_use = self.transform if has_pathology else (self.transform_aggressive or self.transform)
+            skip_augs = False
 
-            if has_pathology:
+            if self.aug_skip_prob > 0.0 and random.random() < self.aug_skip_prob:
+                image, mask = self._apply_resize_preprocess_only(image, mask, transform_to_use)
+                skip_augs = True
+
+            if not skip_augs and has_pathology:
                 # Use conservative transform with retry for pathology tiles
                 max_attempts = 3
                 min_ratio = self.pathology_min_keep_ratio
@@ -350,25 +381,9 @@ class CytologyDataset(Dataset):
                         break
                 else:
                     # All attempts failed - use original without augmentation
-                    # Apply only resize and preprocessing (no geometric transforms)
-                    # This matches validation transforms behavior
-                    h, w = self.transform.transforms[0].height, self.transform.transforms[0].width
-                    image = cv2.resize(original_image, (w, h))
-                    mask = cv2.resize(original_mask, (w, h), interpolation=cv2.INTER_NEAREST)
-
-                    # Apply encoder preprocessing (same as in transform pipeline)
-                    # Find the Lambda transform in the pipeline and apply its image function
-                    for t in self.transform.transforms:
-                        if isinstance(t, A.Lambda) and hasattr(t, 'image'):
-                            image = t.image(image)
-                            break
-
-                    # Convert to tensor format
-                    image = torch.from_numpy(image.transpose(2, 0, 1)).float()
-                    mask = torch.from_numpy(mask)
-            else:
+                    image, mask = self._apply_resize_preprocess_only(original_image, original_mask, self.transform)
+            elif not skip_augs:
                 # No pathology - use aggressive transform if available
-                transform_to_use = self.transform_aggressive or self.transform
                 transformed = transform_to_use(image=image, mask=mask)
                 image = transformed['image']
                 mask = transformed['mask']
@@ -1255,6 +1270,7 @@ def get_datasets(
         transform_aggressive=get_train_transforms_aggressive(cfg),
         pathology_min_keep_ratio=float(getattr(cfg, 'PT_PATHOLOGY_MIN_KEEP_RATIO', 0.9) or 0.9),
         pathology_min_pixels_after_aug=int(getattr(cfg, 'MIN_PATHOLOGY_PIXELS', 10) or 10),
+        aug_skip_prob=float(getattr(cfg, 'PT_AUG_SKIP_PROB', 0.2) or 0.0),
     )
     val_dataset = CytologyDataset(images_path, masks_path, transform=get_val_transforms(cfg))
 
@@ -1845,6 +1861,10 @@ def train_new_model_pytorch(
     image_shape = _resolve_hw_tuple(getattr(cfg, 'IMAGE_SHAPE', (256, 256)))
     image_chunk = _resolve_hw_tuple(getattr(cfg, 'IMAGE_CHUNK', image_shape), fallback=image_shape)
     print(f"[train_new_model_pytorch] image_shape={image_shape}, image_chunk={image_chunk}")
+    print(
+        f"[train_new_model_pytorch] aug_skip_prob="
+        f"{float(getattr(cfg, 'PT_AUG_SKIP_PROB', 0.2) or 0.0):.2f}"
+    )
     
     # Warm up loaders once (epoch 0 split): validates dataset and gives step count.
     train_loader_0, _, total_samples = _prepare_data_loaders(cfg, batch_size, epoch=0)
@@ -1902,6 +1922,10 @@ def train_current_model_pytorch(
     image_shape = _resolve_hw_tuple(getattr(cfg, 'IMAGE_SHAPE', (256, 256)))
     image_chunk = _resolve_hw_tuple(getattr(cfg, 'IMAGE_CHUNK', image_shape), fallback=image_shape)
     print(f"[train_current_model_pytorch] image_shape={image_shape}, image_chunk={image_chunk}")
+    print(
+        f"[train_current_model_pytorch] aug_skip_prob="
+        f"{float(getattr(cfg, 'PT_AUG_SKIP_PROB', 0.2) or 0.0):.2f}"
+    )
     
     # Warm up loaders (epoch 0 split) to validate dataset and capture step count.
     train_loader_0, _, _ = _prepare_data_loaders(cfg, batch_size, epoch=0)
